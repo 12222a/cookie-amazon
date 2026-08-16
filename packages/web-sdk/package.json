@@ -1,0 +1,12 @@
+{
+  "name": "@cookie-amazon/web-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@cookie-amazon/protocol": "workspace:*",
+    "webext-bridge": "^6.0.1"
+  },
+  "scripts": { "typecheck": "tsc -p tsconfig.json --noEmit", "test": "vitest run" }
+}

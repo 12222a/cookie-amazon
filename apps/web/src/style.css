@@ -1,0 +1,8 @@
+:root { font-family: system-ui, sans-serif; color: #172033; background: #f4f7fb; }
+body { margin: 0; min-width: 320px; }
+main { max-width: 680px; margin: 12vh auto; padding: 2.5rem; background: white; border: 1px solid #dbe3ef; border-radius: 18px; box-shadow: 0 12px 40px #17203312; }
+button { padding: .7rem 1rem; border: 0; border-radius: 8px; color: white; background: #1769e0; cursor: pointer; }
+button:disabled { opacity: .6; cursor: wait; }
+dl { display: grid; grid-template-columns: 8rem 1fr; gap: .5rem; margin-top: 1rem; }
+dt { color: #667085; } dd { margin: 0; font-weight: 600; }
+[role="alert"] { color: #b42318; }

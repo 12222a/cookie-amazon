@@ -1,0 +1,21 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "cookie-amazon-config-worker",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-08-16",
+	"assets": {
+		"directory": "../../apps/web/dist",
+		"binding": "ASSETS"
+	},
+	"kv_namespaces": [
+		{
+			"binding": "EXTENSION_CONFIG",
+			"id": "d9f3925ced4f4d49bd8aca0522a67c81",
+			"remote": true
+		}
+	],
+	"vars": {
+		"CONFIG_ENVIRONMENT": "production",
+		"CONFIG_TTL_MS": "1800000"
+	}
+}

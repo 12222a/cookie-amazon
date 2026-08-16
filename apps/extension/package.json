@@ -1,0 +1,17 @@
+{
+  "name": "@cookie-amazon/extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@cookie-amazon/protocol": "workspace:*",
+    "webext-bridge": "^6.0.1"
+  },
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "typecheck": "wxt prepare && tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": { "typescript": "^5.9.3", "wxt": "^0.21.3" }
+}

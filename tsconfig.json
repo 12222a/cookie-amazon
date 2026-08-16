@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.base.json",
+  "files": [],
+  "references": [
+    { "path": "./packages/protocol" },
+    { "path": "./packages/web-sdk" },
+    { "path": "./apps/web" },
+    { "path": "./apps/extension" },
+    { "path": "./cloudflare/config-worker" }
+  ]
+}

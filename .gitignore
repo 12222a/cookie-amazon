@@ -1,0 +1,9 @@
+node_modules/
+apps/*/node_modules/
+cloudflare/*/node_modules/
+apps/extension/.wxt/
+apps/extension/.output/
+apps/web/dist/
+cloudflare/config-worker/.wrangler/
+*.tsbuildinfo
+.env*
