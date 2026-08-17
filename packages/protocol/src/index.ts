@@ -9,6 +9,7 @@ export const CAPABILITIES = [
   'GET_TARGET_STATUS',
   'REQUEST_TARGET_PERMISSION',
   'REMOVE_TARGET_PERMISSION',
+  'CHECK_LOGIN',
 ] as const
 
 export type Capability = (typeof CAPABILITIES)[number]
@@ -23,7 +24,13 @@ export type ProtocolErrorCode =
   | 'TARGET_DISABLED'
   | 'TARGET_PERMISSION_MISSING'
   | 'PERMISSION_REQUEST_DENIED'
-
+  | 'TARGET_OPERATION_UNKNOWN'
+  | 'OPERATION_DISABLED'
+  | 'TARGET_RESPONSE_INVALID'
+  | 'TARGET_RATE_LIMITED'
+  | 'TARGET_API_ERROR'
+  | 'NETWORK_ERROR'
+  | 'TARGET_NOT_LOGGED_IN'
 export type PingRequest = {
   namespace: typeof MESSAGE_NAMESPACE
   kind: 'request'
@@ -104,6 +111,7 @@ export const TARGET_ACTIONS = [
   'GET_TARGET_STATUS',
   'REQUEST_TARGET_PERMISSION',
   'REMOVE_TARGET_PERMISSION',
+  'CHECK_LOGIN',
 ] as const
 
 export type TargetAction = (typeof TARGET_ACTIONS)[number]
@@ -135,7 +143,11 @@ export type TargetPermissionData = {
   granted: boolean
   status: Exclude<TargetState, 'unknown'>
 }
-export type TargetResponseData = TargetListData | TargetStatusData | TargetPermissionData
+export type TargetLoginData = {
+  targetId: string
+  loggedIn: boolean
+}
+export type TargetResponseData = TargetListData | TargetStatusData | TargetPermissionData | TargetLoginData
 export type TargetSuccess = {
   namespace: typeof MESSAGE_NAMESPACE
   kind: 'response'
@@ -202,6 +214,9 @@ export const isTargetResponse = (value: unknown): value is TargetResponse => {
   }
   if (value.action === 'GET_TARGET_STATUS') {
     return isTargetDescriptor(value.data) && typeof (value.data as TargetStatusData).granted === 'boolean'
+  }
+  if (value.action === 'CHECK_LOGIN') {
+    return typeof value.data.targetId === 'string' && typeof value.data.loggedIn === 'boolean'
   }
   return typeof value.data.targetId === 'string'
     && typeof value.data.granted === 'boolean'

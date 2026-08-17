@@ -1,9 +1,17 @@
+import type { TargetClient } from './client'
+import {
+  createExampleOperationPolicy,
+  type TargetOperationPolicy,
+} from './policy'
+
 export type TargetAdapter = {
   targetId: string
   displayName: string
   origin: `https://${string}`
   permissionOrigins: readonly [`https://${string}/*`]
   enabled: boolean
+  operations: Readonly<Record<'CHECK_LOGIN', TargetOperationPolicy>>
+  checkLogin: (client: TargetClient) => Promise<{ loggedIn: boolean }>
 }
 
 const TARGET_ID_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/
@@ -43,6 +51,9 @@ export const isValidTargetAdapter = (value: unknown): value is TargetAdapter => 
     && adapter.permissionOrigins[0] === `${adapter.origin}/*`
     && isTrustedPermissionOrigin(adapter.permissionOrigins[0])
     && typeof adapter.enabled === 'boolean'
+    && typeof adapter.operations === 'object'
+    && adapter.operations !== null
+    && typeof adapter.checkLogin === 'function'
 }
 
 export const createTargetAdapter = (input: {
@@ -50,13 +61,16 @@ export const createTargetAdapter = (input: {
   displayName: string
   origin: `https://${string}`
   enabled?: boolean
+  operations?: Readonly<Record<'CHECK_LOGIN', TargetOperationPolicy>>
 }): TargetAdapter => {
-  const adapter = {
+  const adapter: TargetAdapter = {
     targetId: input.targetId,
     displayName: input.displayName,
     origin: input.origin,
     permissionOrigins: [`${input.origin}/*`] as [`https://${string}/*`],
     enabled: input.enabled ?? true,
+    operations: input.operations ?? createExampleOperationPolicy(),
+    checkLogin: (client) => client.executeLoginCheck(),
   }
   if (!isValidTargetAdapter(adapter)) throw new Error('INVALID_TARGET_ADAPTER')
   return Object.freeze(adapter)

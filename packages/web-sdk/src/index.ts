@@ -1,4 +1,5 @@
 export {
+  checkLogin,
   getExtensionStatus,
   getTargetStatus,
   listTargets,

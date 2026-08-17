@@ -1,3 +1,5 @@
 export * from './adapter'
+export * from './client'
 export * from './permissions'
+export * from './policy'
 export * from './registry'

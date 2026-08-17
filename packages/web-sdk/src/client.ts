@@ -11,6 +11,7 @@ import {
   type TargetAction,
   type TargetDescriptor,
   type TargetListData,
+  type TargetLoginData,
   type TargetPermissionData,
   type TargetRequest,
   type TargetStatusData,
@@ -33,13 +34,18 @@ const requestWithTimeout = async (
   request: PingRequest | TargetRequest,
   timeoutMs: number,
 ): Promise<unknown> => {
+  let timeoutId: number | undefined
   const timeout = new Promise<never>((_, reject) => {
-    window.setTimeout(() => reject(new WebSdkError('TIMEOUT')), timeoutMs)
+    timeoutId = window.setTimeout(() => reject(new WebSdkError('TIMEOUT')), timeoutMs)
   })
-  return Promise.race([
-    sendMessage(action, request, 'background') as Promise<unknown>,
-    timeout,
-  ])
+  try {
+    return await Promise.race([
+      sendMessage(action, request, 'content-script') as Promise<unknown>,
+      timeout,
+    ])
+  } finally {
+    if (timeoutId !== undefined) window.clearTimeout(timeoutId)
+  }
 }
 
 export const ping = async (options: WebSdkOptions = {}): Promise<ExtensionStatus> => {
@@ -87,6 +93,9 @@ export const requestTargetPermission = async (targetId: string, options: WebSdkO
 
 export const removeTargetPermission = async (targetId: string, options: WebSdkOptions = {}): Promise<TargetPermissionData> =>
   sendTargetRequest<TargetPermissionData>('REMOVE_TARGET_PERMISSION', targetId, options)
+
+export const checkLogin = async (targetId: string, options: WebSdkOptions = {}): Promise<TargetLoginData> =>
+  sendTargetRequest<TargetLoginData>('CHECK_LOGIN', targetId, options)
 
 export const getExtensionStatus = ping
 export type { TargetDescriptor }

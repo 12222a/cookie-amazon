@@ -12,6 +12,7 @@ import {
   type TargetResponse,
   type TargetSuccess,
 } from '@cookie-amazon/protocol'
+import { TargetClient, TargetClientError } from '../src/targets/client'
 import { TargetPermissionManager } from '../src/targets/permissions'
 import { TARGET_REGISTRY } from '../src/targets/registry'
 
@@ -95,6 +96,24 @@ const handleTargetMessage = async ({ data }: { data: unknown }): Promise<TargetR
     } satisfies TargetSuccess
   }
 
+  if (data.action === 'CHECK_LOGIN') {
+    if (!(await permissionManager.hasPermission(targetId))) {
+      return targetError(data.requestId, 'TARGET_PERMISSION_MISSING')
+    }
+    const client = new TargetClient(adapter)
+    try {
+      const result = await adapter.checkLogin(client)
+      return {
+        namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION,
+        requestId: data.requestId, action: data.action, ok: true,
+        data: { targetId, loggedIn: result.loggedIn },
+      } satisfies TargetSuccess
+    } catch (error: unknown) {
+      if (error instanceof TargetClientError) return targetError(data.requestId, error.code)
+      return targetError(data.requestId, 'TARGET_API_ERROR')
+    }
+  }
+
   const removed = await permissionManager.removePermission(targetId)
   const granted = removed ? await permissionManager.hasPermission(targetId) : true
   return {
@@ -114,7 +133,7 @@ export default defineBackground(() => {
         connected: true,
         extensionVersion: browser.runtime.getManifest().version,
         protocolVersion: PROTOCOL_VERSION,
-        capabilities: [...CAPABILITIES, ...TARGET_ACTIONS],
+        capabilities: [...CAPABILITIES],
       },
     } satisfies PingResponse
   })

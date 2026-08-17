@@ -41,5 +41,10 @@ describe('protocol', () => {
         enabled: true, status: 'permission-required', granted: false,
       },
     })).toBe(true)
+    expect(isTargetResponse({
+      namespace: 'cookie-amazon-platform', kind: 'response', protocolVersion: 1,
+      requestId: 'request-4', action: 'CHECK_LOGIN', ok: true,
+      data: { targetId: 'example', loggedIn: false },
+    })).toBe(true)
   })
 })
