@@ -3,9 +3,11 @@ import {
   CAPABILITIES,
   MESSAGE_NAMESPACE,
   PROTOCOL_VERSION,
+  COMPETITOR_RESEARCH_ACTION,
   SELLERSPRITE_KEYWORD_REVERSE_ACTION,
   TARGET_ACTIONS,
   isPingRequest,
+  isSellerSpriteCompetitorRequest,
   isSellerSpriteKeywordReverseRequest,
   isTargetRequest,
   type PingResponse,
@@ -21,7 +23,7 @@ import { ExtensionRemoteConfigManager } from '../src/remote-config'
 import { TargetClient, TargetClientError } from '../src/targets/client'
 import { TargetPermissionManager } from '../src/targets/permissions'
 import { TARGET_REGISTRY } from '../src/targets/registry'
-import { reverseSellerSpriteKeywords } from '../src/targets/sellersprite'
+import { reverseSellerSpriteKeywords, researchSellerSpriteCompetitors } from '../src/targets/sellersprite'
 import { resolveRuntimeTargetPolicy } from '../src/targets/runtime-policy'
 
 const permissionManager = new TargetPermissionManager(TARGET_REGISTRY, browser.permissions)
@@ -199,6 +201,27 @@ const handleKeywordReverseMessage = async ({ data }: { data: unknown }): Promise
   }
 }
 
+const handleCompetitorMessage = async ({ data }: { data: unknown }): Promise<import('@cookie-amazon/protocol').SellerSpriteCompetitorResponse> => {
+  if (!isSellerSpriteCompetitorRequest(data)) return invalidMessage()
+  const { requestId } = data
+  const adapter = TARGET_REGISTRY.get(data.payload.targetId)
+  if (!adapter || adapter.targetId !== 'sellersprite') return targetError(requestId, 'UNKNOWN_TARGET')
+  const runtimePolicy = resolveRuntimeTargetPolicy(adapter, await configManager.load())
+  if (!runtimePolicy.enabled) return targetError(requestId, 'TARGET_DISABLED')
+  if (!runtimePolicy.capabilities.includes(COMPETITOR_RESEARCH_ACTION)) return targetError(requestId, 'OPERATION_DISABLED')
+  if (!(await permissionManager.hasPermission(adapter.targetId))) return targetError(requestId, 'TARGET_PERMISSION_MISSING')
+  try {
+    const result = await researchSellerSpriteCompetitors(new TargetClient(adapter, undefined, runtimePolicy.operationOverrides), data.payload.input)
+    return {
+      namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION,
+      requestId, action: COMPETITOR_RESEARCH_ACTION, ok: true, data: result,
+    }
+  } catch (error: unknown) {
+    if (error instanceof TargetClientError) return targetError(requestId, error.code)
+    return targetError(requestId, 'TARGET_API_ERROR')
+  }
+}
+
 export default defineBackground(() => {
   onMessage('PING', ({ data }: { data: unknown }) => {
     if (!isPingRequest(data)) return invalidMessage()
@@ -216,6 +239,7 @@ export default defineBackground(() => {
 
   for (const action of TARGET_ACTIONS) onMessage(action, handleTargetMessage)
   onMessage(SELLERSPRITE_KEYWORD_REVERSE_ACTION, handleKeywordReverseMessage)
+  onMessage(COMPETITOR_RESEARCH_ACTION, handleCompetitorMessage)
 })
 
 export { handleTargetMessage }

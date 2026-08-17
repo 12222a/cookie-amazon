@@ -1,16 +1,22 @@
 import { sendMessage, setNamespace } from 'webext-bridge/window'
 import {
   createPingRequest,
+  createSellerSpriteCompetitorRequest,
   createSellerSpriteKeywordReverseRequest,
   createTargetRequest,
   isAllowedWebOrigin,
   isPingResponse,
+  isSellerSpriteCompetitorResponse,
   isSellerSpriteKeywordReverseResponse,
   isTargetResponse,
   MESSAGE_NAMESPACE,
+  COMPETITOR_RESEARCH_ACTION,
   SELLERSPRITE_KEYWORD_REVERSE_ACTION,
   type ExtensionStatus,
   type PingRequest,
+  type SellerSpriteCompetitorData,
+  type SellerSpriteCompetitorInput,
+  type SellerSpriteCompetitorRequest,
   type SellerSpriteKeywordReverseData,
   type SellerSpriteKeywordReverseInput,
   type SellerSpriteKeywordReverseRequest,
@@ -38,7 +44,7 @@ const initializeBridge = (): void => {
 
 const requestWithTimeout = async (
   action: string,
-  request: PingRequest | TargetRequest | SellerSpriteKeywordReverseRequest,
+  request: PingRequest | TargetRequest | SellerSpriteKeywordReverseRequest | SellerSpriteCompetitorRequest,
   timeoutMs: number,
 ): Promise<unknown> => {
   let timeoutId: number | undefined
@@ -129,5 +135,29 @@ export const reverseSellerSpriteKeywords = async (
   }
 }
 
+export const researchSellerSpriteCompetitors = async (
+  input: SellerSpriteCompetitorInput,
+  options: WebSdkOptions = {},
+): Promise<SellerSpriteCompetitorData> => {
+  if (!isAllowedWebOrigin(window.location.origin)) throw new WebSdkError('INVALID_ORIGIN')
+  initializeBridge()
+  const request = createSellerSpriteCompetitorRequest(createRequestId(), 'sellersprite', input)
+  try {
+    const response = await requestWithTimeout(COMPETITOR_RESEARCH_ACTION, request, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    if (!isSellerSpriteCompetitorResponse(response)) throw new WebSdkError('INVALID_MESSAGE')
+    if (!response.ok) throw new WebSdkError(response.error.code)
+    return response.data
+  } catch (error: unknown) {
+    if (error instanceof WebSdkError) throw error
+    throw new WebSdkError('EXTENSION_UNAVAILABLE')
+  }
+}
+
 export const getExtensionStatus = ping
-export type { SellerSpriteKeywordReverseData, SellerSpriteKeywordReverseInput, TargetDescriptor }
+export type {
+  SellerSpriteCompetitorData,
+  SellerSpriteCompetitorInput,
+  SellerSpriteKeywordReverseData,
+  SellerSpriteKeywordReverseInput,
+  TargetDescriptor,
+}

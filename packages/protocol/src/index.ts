@@ -12,6 +12,7 @@ export const CAPABILITIES = [
   'CHECK_LOGIN',
   'GET_PROFILE',
   'SELLERSPRITE_KEYWORD_REVERSE',
+  'COMPETITOR_RESEARCH',
 ] as const
 
 export type Capability = (typeof CAPABILITIES)[number]
@@ -432,4 +433,145 @@ export const isSellerSpriteKeywordReverseResponse = (
     && typeof value.data.asin === 'string'
     && Array.isArray(value.data.items)
     && value.data.items.every(isKeywordItem)
+}
+
+export const COMPETITOR_RESEARCH_ACTION = 'COMPETITOR_RESEARCH' as const
+
+export type SellerSpriteCompetitorInput = {
+  asins: JsonPrimitive[]
+  lowPrice: string
+  market: string
+  monthName: string
+  nodeIdPaths: JsonPrimitive[]
+  order: { desc: boolean; field: string }
+  page: number
+  size: number
+  symbolFlag: boolean
+}
+
+export type SellerSpriteCompetitorItem = {
+  asin: string
+  title: string | null
+  brand: string | null
+  imageUrl: string | null
+  price: number | null
+  rating: number | null
+  reviews: number | null
+  estimatedSales: number | null
+}
+
+export type SellerSpriteCompetitorData = {
+  page: number
+  pages: number
+  size: number
+  total: number
+  hasNextPage: boolean
+  items: SellerSpriteCompetitorItem[]
+}
+
+export type SellerSpriteCompetitorRequest = {
+  namespace: typeof MESSAGE_NAMESPACE
+  kind: 'request'
+  protocolVersion: typeof PROTOCOL_VERSION
+  action: typeof COMPETITOR_RESEARCH_ACTION
+  requestId: string
+  payload: { targetId: string; input: SellerSpriteCompetitorInput }
+}
+
+export type SellerSpriteCompetitorSuccess = {
+  namespace: typeof MESSAGE_NAMESPACE
+  kind: 'response'
+  protocolVersion: typeof PROTOCOL_VERSION
+  requestId: string
+  action: typeof COMPETITOR_RESEARCH_ACTION
+  ok: true
+  data: SellerSpriteCompetitorData
+}
+
+export type SellerSpriteCompetitorResponse = SellerSpriteCompetitorSuccess | ProtocolError
+
+const COMPETITOR_INPUT_KEYS = [
+  'asins', 'lowPrice', 'market', 'monthName', 'nodeIdPaths', 'order', 'page', 'size', 'symbolFlag',
+] as const
+
+const isPrimitiveArray = (value: unknown): value is JsonPrimitive[] =>
+  Array.isArray(value) && value.length <= 100 && value.every(isJsonPrimitive)
+
+export const isSellerSpriteCompetitorInput = (
+  value: unknown,
+): value is SellerSpriteCompetitorInput => {
+  if (!isRecord(value) || Object.keys(value).length !== COMPETITOR_INPUT_KEYS.length) return false
+  if (!COMPETITOR_INPUT_KEYS.every((key) => Object.hasOwn(value, key))) return false
+  return isPrimitiveArray(value.asins)
+    && isBoundedString(value.lowPrice, 64)
+    && isBoundedString(value.market, 32)
+    && isBoundedString(value.monthName, 32)
+    && isPrimitiveArray(value.nodeIdPaths)
+    && isRecord(value.order)
+    && Object.keys(value.order).length === 2
+    && typeof value.order.desc === 'boolean'
+    && isBoundedString(value.order.field, 64)
+    && typeof value.page === 'number'
+    && Number.isInteger(value.page) && value.page > 0 && value.page <= 10_000
+    && typeof value.size === 'number'
+    && Number.isInteger(value.size) && value.size > 0 && value.size <= 100
+    && typeof value.symbolFlag === 'boolean'
+}
+
+export const createSellerSpriteCompetitorRequest = (
+  requestId: string,
+  targetId: string,
+  input: SellerSpriteCompetitorInput,
+): SellerSpriteCompetitorRequest => ({
+  namespace: MESSAGE_NAMESPACE,
+  kind: 'request',
+  protocolVersion: PROTOCOL_VERSION,
+  action: COMPETITOR_RESEARCH_ACTION,
+  requestId,
+  payload: { targetId, input },
+})
+
+export const isSellerSpriteCompetitorRequest = (
+  value: unknown,
+): value is SellerSpriteCompetitorRequest => {
+  if (!isRecord(value) || value.namespace !== MESSAGE_NAMESPACE || value.kind !== 'request') return false
+  if (value.protocolVersion !== PROTOCOL_VERSION
+    || value.action !== COMPETITOR_RESEARCH_ACTION
+    || !isBoundedString(value.requestId, 256)
+    || !isRecord(value.payload)
+    || Object.keys(value.payload).length !== 2
+    || !isBoundedString(value.payload.targetId, 64)) return false
+  return isSellerSpriteCompetitorInput(value.payload.input)
+}
+
+const isNullableString = (value: unknown): value is string | null =>
+  value === null || typeof value === 'string'
+
+const isCompetitorItem = (value: unknown): value is SellerSpriteCompetitorItem =>
+  isRecord(value)
+  && Object.keys(value).length === 8
+  && typeof value.asin === 'string'
+  && isNullableString(value.title)
+  && isNullableString(value.brand)
+  && isNullableString(value.imageUrl)
+  && isNullableFiniteNumber(value.price)
+  && isNullableFiniteNumber(value.rating)
+  && isNullableFiniteNumber(value.reviews)
+  && isNullableFiniteNumber(value.estimatedSales)
+
+export const isSellerSpriteCompetitorResponse = (
+  value: unknown,
+): value is SellerSpriteCompetitorResponse => {
+  if (!isRecord(value) || value.namespace !== MESSAGE_NAMESPACE || value.kind !== 'response') return false
+  if (value.protocolVersion !== PROTOCOL_VERSION || typeof value.requestId !== 'string') return false
+  if (value.ok === false) return isRecord(value.error) && typeof value.error.code === 'string'
+  if (value.ok !== true || value.action !== COMPETITOR_RESEARCH_ACTION || !isRecord(value.data)) return false
+  return Object.keys(value.data).length === 6
+    && typeof value.data.page === 'number'
+    && typeof value.data.pages === 'number'
+    && typeof value.data.size === 'number'
+    && typeof value.data.total === 'number'
+    && typeof value.data.hasNextPage === 'boolean'
+    && Array.isArray(value.data.items)
+    && value.data.items.every(isCompetitorItem)
 }

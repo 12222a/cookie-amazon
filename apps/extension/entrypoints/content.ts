@@ -2,14 +2,17 @@ import { allowWindowMessaging, onMessage, sendMessage } from 'webext-bridge/cont
 import {
   MESSAGE_NAMESPACE,
   PROTOCOL_VERSION,
+  COMPETITOR_RESEARCH_ACTION,
   SELLERSPRITE_KEYWORD_REVERSE_ACTION,
   TARGET_ACTIONS,
   isAllowedWebOrigin,
   isPingRequest,
+  isSellerSpriteCompetitorRequest,
   isSellerSpriteKeywordReverseRequest,
   isTargetRequest,
   type PingResponse,
   type ProtocolError,
+  type SellerSpriteCompetitorResponse,
   type SellerSpriteKeywordReverseResponse,
   type TargetResponse,
 } from '@cookie-amazon/protocol'
@@ -42,6 +45,14 @@ const relayKeywordReverseMessage = async ({ data }: { data: unknown }): Promise<
   }
 }
 
+const relayCompetitorMessage = async ({ data }: { data: unknown }): Promise<SellerSpriteCompetitorResponse> => {
+  if (!isAllowedWebOrigin(location.origin) || !isSellerSpriteCompetitorRequest(data)) return invalidMessage()
+  try {
+    return await sendMessage(data.action, data, 'background') as unknown as SellerSpriteCompetitorResponse
+  } catch {
+    return extensionUnavailable(data.requestId)
+  }
+}
 export default defineContentScript({
   matches: ['http://localhost:5173/*'],
   runAt: 'document_start',
@@ -57,5 +68,6 @@ export default defineContentScript({
     })
     for (const action of TARGET_ACTIONS) onMessage(action, relayTargetMessage)
     onMessage(SELLERSPRITE_KEYWORD_REVERSE_ACTION, relayKeywordReverseMessage)
+    onMessage(COMPETITOR_RESEARCH_ACTION, relayCompetitorMessage)
   },
 })

@@ -7,6 +7,9 @@ import type {
   SellerSpriteKeywordReverseData,
   SellerSpriteKeywordReverseInput,
   SellerSpriteKeywordTrend,
+  SellerSpriteCompetitorData,
+  SellerSpriteCompetitorInput,
+  SellerSpriteCompetitorItem,
 } from '@cookie-amazon/protocol'
 import { createTargetAdapter } from './adapter'
 import { TargetClient, TargetClientError } from './client'
@@ -135,6 +138,63 @@ export const reverseSellerSpriteKeywords = (
   )
 }
 
+const readNullableString = (value: unknown): string | null | undefined =>
+  value === null || value === undefined ? null : typeof value === 'string' ? value : undefined
+
+const readCompetitorItem = (value: unknown): SellerSpriteCompetitorItem | undefined => {
+  if (!isRecord(value) || typeof value.asin !== 'string') return undefined
+  const title = readNullableString(value.title)
+  const brand = readNullableString(value.brand)
+  const imageUrl = readNullableString(value.imageUrl)
+  const price = readNullableNumber(value.price)
+  const rating = readNullableNumber(value.rating)
+  const reviews = readNullableNumber(value.reviews)
+  const estimatedSales = readNullableNumber(value.estimatedSales)
+  return [title, brand, imageUrl, price, rating, reviews, estimatedSales].some((item) => item === undefined)
+    ? undefined
+    : { asin: value.asin, title: title!, brand: brand!, imageUrl: imageUrl!, price: price!, rating: rating!, reviews: reviews!, estimatedSales: estimatedSales! }
+}
+
+const readCompetitorResponse = async (response: Response): Promise<SellerSpriteCompetitorData> => {
+  if (response.status === 401 || response.status === 403) {
+    throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status)
+  }
+  if (response.status === 429) throw new TargetClientError('TARGET_RATE_LIMITED', response.status)
+  if (!response.ok) throw new TargetClientError('TARGET_API_ERROR', response.status)
+  let payload: unknown
+  try {
+    payload = await response.json()
+  } catch {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  }
+  if (!isRecord(payload) || !isRecord(payload.data)) {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  }
+  const data = payload.data
+  const numericKeys = ['page', 'pages', 'size', 'total'] as const
+  const numbers = Object.fromEntries(numericKeys.map((key) => [key, readNullableNumber(data[key])])) as Record<(typeof numericKeys)[number], number | null | undefined>
+  if (Object.values(numbers).some((item) => item === undefined || item === null)
+    || typeof data.hasNextPage !== 'boolean'
+    || !Array.isArray(data.items)) {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  }
+  const items = data.items.map(readCompetitorItem)
+  if (items.some((item) => item === undefined)) throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  return {
+    page: numbers.page!, pages: numbers.pages!, size: numbers.size!, total: numbers.total!,
+    hasNextPage: data.hasNextPage, items: items as SellerSpriteCompetitorItem[],
+  }
+}
+
+export const researchSellerSpriteCompetitors = (
+  client: TargetClient,
+  input: SellerSpriteCompetitorInput,
+): Promise<SellerSpriteCompetitorData> => client.executeJsonPost(
+  'COMPETITOR_RESEARCH',
+  {},
+  input,
+  readCompetitorResponse,
+)
 export const SELLERSPRITE_ADAPTER = createTargetAdapter({
   targetId: SELLERSPRITE_TARGET_ID,
   displayName: '卖家精灵',
