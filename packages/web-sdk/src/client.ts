@@ -13,6 +13,7 @@ import {
   type TargetListData,
   type TargetLoginData,
   type TargetPermissionData,
+  type TargetProfileData,
   type TargetRequest,
   type TargetStatusData,
 } from '@cookie-amazon/protocol'
@@ -96,6 +97,9 @@ export const removeTargetPermission = async (targetId: string, options: WebSdkOp
 
 export const checkLogin = async (targetId: string, options: WebSdkOptions = {}): Promise<TargetLoginData> =>
   sendTargetRequest<TargetLoginData>('CHECK_LOGIN', targetId, options)
+
+export const getProfile = async (targetId: string, options: WebSdkOptions = {}): Promise<TargetProfileData> =>
+  sendTargetRequest<TargetProfileData>('GET_PROFILE', targetId, options)
 
 export const getExtensionStatus = ping
 export type { TargetDescriptor }

@@ -1,6 +1,7 @@
 export {
   checkLogin,
   getExtensionStatus,
+  getProfile,
   getTargetStatus,
   listTargets,
   ping,

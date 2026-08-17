@@ -1,8 +1,14 @@
 import type { TargetClient } from './client'
 import {
   createExampleOperationPolicy,
+  type TargetOperation,
   type TargetOperationPolicy,
 } from './policy'
+
+export type TargetProfile = {
+  userId: string
+  displayName: string
+}
 
 export type TargetAdapter = {
   targetId: string
@@ -10,8 +16,9 @@ export type TargetAdapter = {
   origin: `https://${string}`
   permissionOrigins: readonly [`https://${string}/*`]
   enabled: boolean
-  operations: Readonly<Record<'CHECK_LOGIN', TargetOperationPolicy>>
+  operations: Readonly<Record<TargetOperation, TargetOperationPolicy>>
   checkLogin: (client: TargetClient) => Promise<{ loggedIn: boolean }>
+  getProfile: (client: TargetClient) => Promise<TargetProfile>
 }
 
 const TARGET_ID_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/
@@ -54,6 +61,7 @@ export const isValidTargetAdapter = (value: unknown): value is TargetAdapter => 
     && typeof adapter.operations === 'object'
     && adapter.operations !== null
     && typeof adapter.checkLogin === 'function'
+    && typeof adapter.getProfile === 'function'
 }
 
 export const createTargetAdapter = (input: {
@@ -61,7 +69,7 @@ export const createTargetAdapter = (input: {
   displayName: string
   origin: `https://${string}`
   enabled?: boolean
-  operations?: Readonly<Record<'CHECK_LOGIN', TargetOperationPolicy>>
+  operations?: Readonly<Record<TargetOperation, TargetOperationPolicy>>
 }): TargetAdapter => {
   const adapter: TargetAdapter = {
     targetId: input.targetId,
@@ -71,6 +79,7 @@ export const createTargetAdapter = (input: {
     enabled: input.enabled ?? true,
     operations: input.operations ?? createExampleOperationPolicy(),
     checkLogin: (client) => client.executeLoginCheck(),
+    getProfile: (client) => client.executeGetProfile(),
   }
   if (!isValidTargetAdapter(adapter)) throw new Error('INVALID_TARGET_ADAPTER')
   return Object.freeze(adapter)

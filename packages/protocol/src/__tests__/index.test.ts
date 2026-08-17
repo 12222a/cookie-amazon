@@ -39,6 +39,7 @@ describe('protocol', () => {
       data: {
         targetId: 'example', displayName: 'Example', origin: 'https://example.com',
         enabled: true, status: 'permission-required', granted: false,
+        capabilities: ['CHECK_LOGIN', 'GET_PROFILE'],
       },
     })).toBe(true)
     expect(isTargetResponse({
@@ -46,5 +47,15 @@ describe('protocol', () => {
       requestId: 'request-4', action: 'CHECK_LOGIN', ok: true,
       data: { targetId: 'example', loggedIn: false },
     })).toBe(true)
+    expect(isTargetResponse({
+      namespace: 'cookie-amazon-platform', kind: 'response', protocolVersion: 1,
+      requestId: 'request-5', action: 'GET_PROFILE', ok: true,
+      data: { targetId: 'example', profile: { userId: 'user-1', displayName: 'Example User' } },
+    })).toBe(true)
+    expect(isTargetResponse({
+      namespace: 'cookie-amazon-platform', kind: 'response', protocolVersion: 1,
+      requestId: 'request-6', action: 'GET_PROFILE', ok: true,
+      data: { targetId: 'example', profile: { userId: 'user-1', displayName: 'Example User', token: 'secret' } },
+    })).toBe(false)
   })
 })

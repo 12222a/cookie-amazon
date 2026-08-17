@@ -19,12 +19,16 @@ const response = (body: unknown, init?: ResponseInit): Response =>
 describe('target operation policy', () => {
   it('allows only the local operation and safe relative endpoint', () => {
     expect(resolveOperationPolicy(adapter.operations, 'CHECK_LOGIN')?.path).toBe('/api/me')
-    expect(resolveOperationPolicy(adapter.operations, 'GET_PROFILE')).toBeUndefined()
+    expect(resolveOperationPolicy(adapter.operations, 'GET_PROFILE')?.path).toBe('/api/v2/profile')
+    expect(resolveOperationPolicy(adapter.operations, 'UNKNOWN')).toBeUndefined()
     expect(resolveOperationPolicy(adapter.operations, 'CHECK_LOGIN', {
       CHECK_LOGIN: { path: 'https://evil.example/steal' },
     })).toBeUndefined()
     expect(resolveOperationPolicy(adapter.operations, 'CHECK_LOGIN', {
-      CHECK_LOGIN: { path: '/v2/../cookie' },
+      CHECK_LOGIN: { path: '/api/other' },
+    })).toBeUndefined()
+    expect(resolveOperationPolicy(adapter.operations, 'CHECK_LOGIN', {
+      CHECK_LOGIN: { timeoutMs: adapter.operations.CHECK_LOGIN.timeoutMs + 1 },
     })).toBeUndefined()
   })
 })
@@ -52,6 +56,22 @@ describe('TargetClient', () => {
     await expect(malformed.checkLogin()).rejects.toMatchObject({ code: 'TARGET_RESPONSE_INVALID' })
   })
 
+  it('validates and minimizes profile responses', async () => {
+    const fetcher = vi.fn(async () => response({
+      userId: 'user-1',
+      displayName: 'Example User',
+      cookie: 'must-not-leak',
+      token: 'must-not-leak',
+    }))
+    await expect(new TargetClient(adapter, fetcher).getProfile()).resolves.toEqual({
+      userId: 'user-1',
+      displayName: 'Example User',
+    })
+
+    const malformed = new TargetClient(adapter, async () => response({ userId: '', displayName: 'User' }))
+    await expect(malformed.getProfile()).rejects.toMatchObject({ code: 'TARGET_RESPONSE_INVALID' })
+  })
+
   it('maps rejected fetches and timeout aborts', async () => {
     const network = new TargetClient(adapter, async () => { throw new Error('offline') })
     await expect(network.checkLogin()).rejects.toMatchObject({ code: 'NETWORK_ERROR' })
@@ -59,7 +79,10 @@ describe('TargetClient', () => {
     vi.useFakeTimers()
     const timeoutAdapter = createTargetAdapter({
       targetId: 'slow', displayName: 'Slow', origin: 'https://slow.example',
-      operations: { CHECK_LOGIN: { ...adapter.operations.CHECK_LOGIN, timeoutMs: 100, path: '/api/me' } },
+      operations: {
+        CHECK_LOGIN: { ...adapter.operations.CHECK_LOGIN, timeoutMs: 100, path: '/api/me' },
+        GET_PROFILE: adapter.operations.GET_PROFILE,
+      },
     })
     const slow = new TargetClient(timeoutAdapter, (_input, init) => new Promise((_resolve, reject) => {
       init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))

@@ -1,5 +1,5 @@
 import type { ProtocolErrorCode } from '@cookie-amazon/protocol'
-import type { TargetAdapter } from './adapter'
+import type { TargetAdapter, TargetProfile } from './adapter'
 import {
   resolveOperationPolicy,
   type TargetOperation,
@@ -42,6 +42,26 @@ const readLoginStatus = async (response: Response): Promise<{ loggedIn: boolean 
   return { loggedIn: body.loggedIn ?? body.authenticated ?? false }
 }
 
+const readProfile = async (response: Response): Promise<TargetProfile> => {
+  if (response.status === 401) throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status)
+  if (response.status === 429) throw new TargetClientError('TARGET_RATE_LIMITED', response.status)
+  if (!response.ok) throw new TargetClientError('TARGET_API_ERROR', response.status)
+  let body: unknown
+  try {
+    body = await response.json()
+  } catch {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  }
+  if (!isRecord(body)) throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  const userId = typeof body.userId === 'string' ? body.userId : body.id
+  const displayName = typeof body.displayName === 'string' ? body.displayName : body.name
+  if (typeof userId !== 'string' || userId.length === 0 || userId.length > 256
+    || typeof displayName !== 'string' || displayName.length === 0 || displayName.length > 256) {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  }
+  return { userId, displayName }
+}
+
 export class TargetClient {
   private readonly fetcher: FetchImplementation
 
@@ -59,6 +79,14 @@ export class TargetClient {
 
   public async executeLoginCheck(): Promise<{ loggedIn: boolean }> {
     return this.execute('CHECK_LOGIN', readLoginStatus)
+  }
+
+  public async getProfile(): Promise<TargetProfile> {
+    return this.adapter.getProfile(this)
+  }
+
+  public async executeGetProfile(): Promise<TargetProfile> {
+    return this.execute('GET_PROFILE', readProfile)
   }
 
   private async execute<T>(

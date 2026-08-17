@@ -3,6 +3,7 @@ import { useState } from 'react'
 import {
   checkLogin,
   getExtensionStatus,
+  getProfile,
   listTargets,
   removeTargetPermission,
   requestTargetPermission,
@@ -51,7 +52,7 @@ export function App(): ReactElement {
 
   return <main>
     <h1>Cookie Amazon Platform</h1>
-    <p>Phase 4 · Target 权限与安全登录检查</p>
+    <p>Phase 5 · Profile、Feature Flag 与 Kill Switch</p>
     <button type="button" onClick={() => void checkExtension()} disabled={checking}>
       {checking ? '检测中…' : '检测扩展'}
     </button>
@@ -85,6 +86,13 @@ export function App(): ReactElement {
               return `${target.displayName} 登录状态：${result.loggedIn ? '已登录' : '未登录'}`
             },
           )}>检查登录</button>
+          <button type="button" disabled={targetBusy === target.targetId || target.status !== 'ready'} onClick={() => void runTargetAction(
+            target.targetId,
+            async () => {
+              const result = await getProfile(target.targetId, { timeoutMs: 12_000 })
+              return `${target.displayName} 资料：${result.profile.displayName} (${result.profile.userId})`
+            },
+          )}>读取资料</button>
           <button type="button" disabled={targetBusy === target.targetId || target.status !== 'ready'} onClick={() => void runTargetAction(
             target.targetId,
             async () => {

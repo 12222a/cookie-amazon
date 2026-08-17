@@ -10,6 +10,7 @@ export const CAPABILITIES = [
   'REQUEST_TARGET_PERMISSION',
   'REMOVE_TARGET_PERMISSION',
   'CHECK_LOGIN',
+  'GET_PROFILE',
 ] as const
 
 export type Capability = (typeof CAPABILITIES)[number]
@@ -26,6 +27,7 @@ export type ProtocolErrorCode =
   | 'PERMISSION_REQUEST_DENIED'
   | 'TARGET_OPERATION_UNKNOWN'
   | 'OPERATION_DISABLED'
+  | 'FEATURE_DISABLED'
   | 'TARGET_RESPONSE_INVALID'
   | 'TARGET_RATE_LIMITED'
   | 'TARGET_API_ERROR'
@@ -112,6 +114,7 @@ export const TARGET_ACTIONS = [
   'REQUEST_TARGET_PERMISSION',
   'REMOVE_TARGET_PERMISSION',
   'CHECK_LOGIN',
+  'GET_PROFILE',
 ] as const
 
 export type TargetAction = (typeof TARGET_ACTIONS)[number]
@@ -137,7 +140,10 @@ export type TargetDescriptor = {
 }
 
 export type TargetListData = { targets: readonly TargetDescriptor[] }
-export type TargetStatusData = TargetDescriptor & { granted: boolean }
+export type TargetStatusData = TargetDescriptor & {
+  granted: boolean
+  capabilities: readonly TargetAction[]
+}
 export type TargetPermissionData = {
   targetId: string
   granted: boolean
@@ -147,7 +153,15 @@ export type TargetLoginData = {
   targetId: string
   loggedIn: boolean
 }
-export type TargetResponseData = TargetListData | TargetStatusData | TargetPermissionData | TargetLoginData
+export type TargetProfile = {
+  userId: string
+  displayName: string
+}
+export type TargetProfileData = {
+  targetId: string
+  profile: TargetProfile
+}
+export type TargetResponseData = TargetListData | TargetStatusData | TargetPermissionData | TargetLoginData | TargetProfileData
 export type TargetSuccess = {
   namespace: typeof MESSAGE_NAMESPACE
   kind: 'response'
@@ -213,10 +227,23 @@ export const isTargetResponse = (value: unknown): value is TargetResponse => {
     return Array.isArray(value.data.targets) && value.data.targets.every(isTargetDescriptor)
   }
   if (value.action === 'GET_TARGET_STATUS') {
-    return isTargetDescriptor(value.data) && typeof (value.data as TargetStatusData).granted === 'boolean'
+    return isTargetDescriptor(value.data)
+      && typeof (value.data as TargetStatusData).granted === 'boolean'
+      && Array.isArray((value.data as TargetStatusData).capabilities)
+      && (value.data as TargetStatusData).capabilities.every(isTargetAction)
   }
   if (value.action === 'CHECK_LOGIN') {
     return typeof value.data.targetId === 'string' && typeof value.data.loggedIn === 'boolean'
+  }
+  if (value.action === 'GET_PROFILE') {
+    return Object.keys(value.data).length === 2
+      && typeof value.data.targetId === 'string'
+      && isRecord(value.data.profile)
+      && typeof value.data.profile.userId === 'string'
+      && value.data.profile.userId.length > 0
+      && typeof value.data.profile.displayName === 'string'
+      && value.data.profile.displayName.length > 0
+      && Object.keys(value.data.profile).length === 2
   }
   return typeof value.data.targetId === 'string'
     && typeof value.data.granted === 'boolean'

@@ -1,6 +1,6 @@
 export type ConfigHttpMethod = 'GET' | 'POST'
 
-export const TARGET_OPERATIONS = ['CHECK_LOGIN'] as const
+export const TARGET_OPERATIONS = ['CHECK_LOGIN', 'GET_PROFILE'] as const
 export type TargetOperation = (typeof TARGET_OPERATIONS)[number]
 
 export type TargetOperationPolicy = {
@@ -8,7 +8,7 @@ export type TargetOperationPolicy = {
   path: `/${string}`
   method: ConfigHttpMethod
   timeoutMs: number
-  response: 'login-status'
+  response: 'login-status' | 'profile'
 }
 
 export type TargetOperationOverrides = Readonly<Record<string, {
@@ -16,7 +16,7 @@ export type TargetOperationOverrides = Readonly<Record<string, {
   path?: string
   method?: ConfigHttpMethod
   timeoutMs?: number
-  response?: 'login-status'
+  response?: TargetOperationPolicy['response']
 }>>
 
 export const isTargetOperation = (value: string): value is TargetOperation =>
@@ -40,11 +40,12 @@ export const resolveOperationPolicy = (
   if (!override) return base
   const resolved = { ...base, ...override }
   if (!isSafeEndpointPath(resolved.path)
-    || (resolved.method !== 'GET' && resolved.method !== 'POST')
+    || resolved.path !== base.path
+    || resolved.method !== base.method
     || !Number.isInteger(resolved.timeoutMs)
     || resolved.timeoutMs < 100
-    || resolved.timeoutMs > 30_000
-    || resolved.response !== 'login-status'
+    || resolved.timeoutMs > base.timeoutMs
+    || resolved.response !== base.response
     || typeof resolved.enabled !== 'boolean') return undefined
   return resolved as TargetOperationPolicy
 }
@@ -56,5 +57,12 @@ export const createExampleOperationPolicy = (): Readonly<Record<TargetOperation,
     method: 'GET',
     timeoutMs: 8_000,
     response: 'login-status',
+  }),
+  GET_PROFILE: Object.freeze({
+    enabled: true,
+    path: '/api/v2/profile',
+    method: 'GET',
+    timeoutMs: 10_000,
+    response: 'profile',
   }),
 })
