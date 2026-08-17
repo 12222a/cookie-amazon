@@ -11,6 +11,7 @@ export const CAPABILITIES = [
   'REMOVE_TARGET_PERMISSION',
   'CHECK_LOGIN',
   'GET_PROFILE',
+  'SELLERSPRITE_KEYWORD_REVERSE',
 ] as const
 
 export type Capability = (typeof CAPABILITIES)[number]
@@ -143,7 +144,7 @@ export type TargetDescriptor = {
 export type TargetListData = { targets: readonly TargetDescriptor[] }
 export type TargetStatusData = TargetDescriptor & {
   granted: boolean
-  capabilities: readonly TargetAction[]
+  capabilities: readonly Capability[]
 }
 export type TargetPermissionData = {
   targetId: string
@@ -231,7 +232,7 @@ export const isTargetResponse = (value: unknown): value is TargetResponse => {
     return isTargetDescriptor(value.data)
       && typeof (value.data as TargetStatusData).granted === 'boolean'
       && Array.isArray((value.data as TargetStatusData).capabilities)
-      && (value.data as TargetStatusData).capabilities.every(isTargetAction)
+      && (value.data as TargetStatusData).capabilities.every((item) => CAPABILITIES.includes(item as Capability))
   }
   if (value.action === 'CHECK_LOGIN') {
     return typeof value.data.targetId === 'string' && typeof value.data.loggedIn === 'boolean'
@@ -249,4 +250,186 @@ export const isTargetResponse = (value: unknown): value is TargetResponse => {
   return typeof value.data.targetId === 'string'
     && typeof value.data.granted === 'boolean'
     && isTargetState(value.data.status)
+}
+
+export const SELLERSPRITE_KEYWORD_REVERSE_ACTION = 'SELLERSPRITE_KEYWORD_REVERSE' as const
+
+export type JsonPrimitive = string | number | boolean | null
+
+export type SellerSpriteKeywordReverseInput = {
+  market: string
+  ac: boolean
+  asin: string
+  badges: JsonPrimitive[]
+  conversionKeywordTypes: JsonPrimitive[]
+  desc: boolean
+  exactly: boolean
+  filterDeletedKeywords: boolean
+  keywordBidMatchType: string
+  limit: number
+  month: string
+  order: string
+  skip: number
+  trafficKeywordTypes: JsonPrimitive[]
+}
+
+export type SellerSpriteKeywordTrend = {
+  month: string
+  searchRank: number | null
+  searches: number | null
+}
+
+export type SellerSpriteKeywordItem = {
+  keywords: string
+  searches: number | null
+  products: number | null
+  supplyDemandRatio: number | null
+  trafficPercentage: number | null
+  purchaseRate: number | null
+  bid: number | null
+  bidMin: number | null
+  bidMax: number | null
+  avgPrice: number | null
+  avgRating: number | null
+  avgReviews: number | null
+  searchesTrend: SellerSpriteKeywordTrend[] | null
+}
+
+export type SellerSpriteKeywordReverseData = {
+  asin: string
+  items: SellerSpriteKeywordItem[]
+}
+
+export type SellerSpriteKeywordReverseRequest = {
+  namespace: typeof MESSAGE_NAMESPACE
+  kind: 'request'
+  protocolVersion: typeof PROTOCOL_VERSION
+  action: typeof SELLERSPRITE_KEYWORD_REVERSE_ACTION
+  requestId: string
+  payload: { targetId: string; input: SellerSpriteKeywordReverseInput }
+}
+
+export type SellerSpriteKeywordReverseSuccess = {
+  namespace: typeof MESSAGE_NAMESPACE
+  kind: 'response'
+  protocolVersion: typeof PROTOCOL_VERSION
+  requestId: string
+  action: typeof SELLERSPRITE_KEYWORD_REVERSE_ACTION
+  ok: true
+  data: SellerSpriteKeywordReverseData
+}
+
+export type SellerSpriteKeywordReverseResponse = SellerSpriteKeywordReverseSuccess | ProtocolError
+
+const KEYWORD_REVERSE_INPUT_KEYS = [
+  'market', 'ac', 'asin', 'badges', 'conversionKeywordTypes', 'desc', 'exactly',
+  'filterDeletedKeywords', 'keywordBidMatchType', 'limit', 'month', 'order', 'skip',
+  'trafficKeywordTypes',
+] as const
+
+const isBoundedString = (value: unknown, max: number): value is string =>
+  typeof value === 'string' && value.length > 0 && value.length <= max
+
+const isJsonPrimitive = (value: unknown): value is JsonPrimitive =>
+  value === null
+  || typeof value === 'string'
+  || typeof value === 'boolean'
+  || (typeof value === 'number' && Number.isFinite(value))
+
+const isJsonPrimitiveArray = (value: unknown): value is JsonPrimitive[] =>
+  Array.isArray(value)
+  && value.length <= 100
+  && value.every(isJsonPrimitive)
+
+export const isSellerSpriteKeywordReverseInput = (
+  value: unknown,
+): value is SellerSpriteKeywordReverseInput => {
+  if (!isRecord(value) || Object.keys(value).length !== KEYWORD_REVERSE_INPUT_KEYS.length) return false
+  if (!KEYWORD_REVERSE_INPUT_KEYS.every((key) => Object.hasOwn(value, key))) return false
+  return isBoundedString(value.market, 32)
+    && typeof value.ac === 'boolean'
+    && isBoundedString(value.asin, 64)
+    && isJsonPrimitiveArray(value.badges)
+    && isJsonPrimitiveArray(value.conversionKeywordTypes)
+    && typeof value.desc === 'boolean'
+    && typeof value.exactly === 'boolean'
+    && typeof value.filterDeletedKeywords === 'boolean'
+    && isBoundedString(value.keywordBidMatchType, 64)
+    && typeof value.limit === 'number'
+    && Number.isInteger(value.limit) && value.limit > 0 && value.limit <= 100
+    && isBoundedString(value.month, 32)
+    && isBoundedString(value.order, 64)
+    && typeof value.skip === 'number'
+    && Number.isInteger(value.skip) && value.skip >= 0
+    && isJsonPrimitiveArray(value.trafficKeywordTypes)
+}
+
+export const createSellerSpriteKeywordReverseRequest = (
+  requestId: string,
+  targetId: string,
+  input: SellerSpriteKeywordReverseInput,
+): SellerSpriteKeywordReverseRequest => ({
+  namespace: MESSAGE_NAMESPACE,
+  kind: 'request',
+  protocolVersion: PROTOCOL_VERSION,
+  action: SELLERSPRITE_KEYWORD_REVERSE_ACTION,
+  requestId,
+  payload: { targetId, input },
+})
+
+export const isSellerSpriteKeywordReverseRequest = (
+  value: unknown,
+): value is SellerSpriteKeywordReverseRequest => {
+  if (!isRecord(value)) return false
+  if (value.namespace !== MESSAGE_NAMESPACE || value.kind !== 'request') return false
+  if (value.protocolVersion !== PROTOCOL_VERSION
+    || value.action !== SELLERSPRITE_KEYWORD_REVERSE_ACTION
+    || !isBoundedString(value.requestId, 256)
+    || !isRecord(value.payload)
+    || Object.keys(value.payload).length !== 2
+    || !isBoundedString(value.payload.targetId, 64)) return false
+  return isSellerSpriteKeywordReverseInput(value.payload.input)
+}
+
+const isNullableFiniteNumber = (value: unknown): value is number | null =>
+  value === null || (typeof value === 'number' && Number.isFinite(value))
+
+const isKeywordTrend = (value: unknown): value is SellerSpriteKeywordTrend =>
+  isRecord(value)
+  && Object.keys(value).length === 3
+  && typeof value.month === 'string'
+  && isNullableFiniteNumber(value.searchRank)
+  && isNullableFiniteNumber(value.searches)
+
+const isKeywordItem = (value: unknown): value is SellerSpriteKeywordItem =>
+  isRecord(value)
+  && Object.keys(value).length === 13
+  && typeof value.keywords === 'string'
+  && isNullableFiniteNumber(value.searches)
+  && isNullableFiniteNumber(value.products)
+  && isNullableFiniteNumber(value.supplyDemandRatio)
+  && isNullableFiniteNumber(value.trafficPercentage)
+  && isNullableFiniteNumber(value.purchaseRate)
+  && isNullableFiniteNumber(value.bid)
+  && isNullableFiniteNumber(value.bidMin)
+  && isNullableFiniteNumber(value.bidMax)
+  && isNullableFiniteNumber(value.avgPrice)
+  && isNullableFiniteNumber(value.avgRating)
+  && isNullableFiniteNumber(value.avgReviews)
+  && (value.searchesTrend === null
+    || (Array.isArray(value.searchesTrend) && value.searchesTrend.every(isKeywordTrend)))
+
+export const isSellerSpriteKeywordReverseResponse = (
+  value: unknown,
+): value is SellerSpriteKeywordReverseResponse => {
+  if (!isRecord(value) || value.namespace !== MESSAGE_NAMESPACE || value.kind !== 'response') return false
+  if (value.protocolVersion !== PROTOCOL_VERSION || typeof value.requestId !== 'string') return false
+  if (value.ok === false) return isRecord(value.error) && typeof value.error.code === 'string'
+  return value.ok === true
+    && value.action === SELLERSPRITE_KEYWORD_REVERSE_ACTION
+    && isRecord(value.data)
+    && Object.keys(value.data).length === 2
+    && typeof value.data.asin === 'string'
+    && Array.isArray(value.data.items)
+    && value.data.items.every(isKeywordItem)
 }

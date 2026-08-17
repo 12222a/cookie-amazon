@@ -7,6 +7,12 @@ export {
   ping,
   removeTargetPermission,
   requestTargetPermission,
+  reverseSellerSpriteKeywords,
 } from './client'
 export { WebSdkError } from './errors'
-export type { TargetDescriptor, WebSdkOptions } from './client'
+export type {
+  SellerSpriteKeywordReverseData,
+  SellerSpriteKeywordReverseInput,
+  TargetDescriptor,
+  WebSdkOptions,
+} from './client'

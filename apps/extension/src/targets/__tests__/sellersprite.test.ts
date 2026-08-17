@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { TargetClient } from '../client'
 import { TARGET_REGISTRY } from '../registry'
-import { SELLERSPRITE_ADAPTER } from '../sellersprite'
+import { SELLERSPRITE_ADAPTER, reverseSellerSpriteKeywords } from '../sellersprite'
 
 const htmlResponse = (
   url: string,
@@ -75,5 +75,49 @@ describe('SellerSprite session adapter', () => {
     })
     await expect(jsonResponse.checkLogin()).rejects.toMatchObject({ code: 'TARGET_RESPONSE_INVALID' })
     await expect(SELLERSPRITE_ADAPTER.getProfile(jsonResponse)).rejects.toMatchObject({ code: 'OPERATION_DISABLED' })
+  })
+
+  it('posts only the keyword reverse allowlist and minimizes the response', async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('https://www.sellersprite.com/v3/api/relation/reversing?market=US')
+      expect(init).toMatchObject({
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+      })
+      expect(JSON.parse(String(init?.body))).toEqual({
+        ac: false, asin: 'B000000000', badges: [], conversionKeywordTypes: [], desc: true,
+        exactly: false, filterDeletedKeywords: false, keywordBidMatchType: 'broad', limit: 20,
+        month: '2026-01', order: 'searches', skip: 0, trafficKeywordTypes: [],
+      })
+      return new Response(JSON.stringify({
+        code: 'OK',
+        data: {
+          asin: 'B000000000',
+          items: [{
+            keywords: 'example', searches: 100, products: null, supplyDemandRatio: 1,
+            trafficPercentage: 0.5, purchaseRate: null, bid: 1.2, bidMin: null,
+            bidMax: 2, avgPrice: 20, avgRating: null, avgReviews: 10,
+            searchesTrend: [{ month: '2026-01', searchRank: null, searches: 100 }],
+            privateValue: 'must-not-leak',
+          }],
+        },
+        privateValue: 'must-not-leak',
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    })
+
+    await expect(reverseSellerSpriteKeywords(new TargetClient(SELLERSPRITE_ADAPTER, fetcher), {
+      market: 'US', ac: false, asin: 'B000000000', badges: [], conversionKeywordTypes: [],
+      desc: true, exactly: false, filterDeletedKeywords: false, keywordBidMatchType: 'broad',
+      limit: 20, month: '2026-01', order: 'searches', skip: 0, trafficKeywordTypes: [],
+    })).resolves.toEqual({
+      asin: 'B000000000',
+      items: [{
+        keywords: 'example', searches: 100, products: null, supplyDemandRatio: 1,
+        trafficPercentage: 0.5, purchaseRate: null, bid: 1.2, bidMin: null,
+        bidMax: 2, avgPrice: 20, avgRating: null, avgReviews: 10,
+        searchesTrend: [{ month: '2026-01', searchRank: null, searches: 100 }],
+      }],
+    })
   })
 })

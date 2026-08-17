@@ -123,9 +123,26 @@ export class TargetClient {
     return this.execute('GET_PROFILE', readProfile)
   }
 
+  public async executeJsonPost<T>(
+    operation: TargetOperation,
+    query: Readonly<Record<string, string>>,
+    body: unknown,
+    parse: (response: Response) => Promise<T>,
+  ): Promise<T> {
+    return this.execute(
+      operation,
+      (response) => parse(response),
+      { query, body },
+    )
+  }
+
   private async execute<T>(
     operation: TargetOperation,
     parse: (response: Response, requestUrl: URL) => Promise<T>,
+    request?: {
+      query: Readonly<Record<string, string>>
+      body: unknown
+    },
   ): Promise<T> {
     const policy = resolveOperationPolicy(this.adapter.operations, operation, this.operationOverrides)
     if (!policy) throw new TargetClientError('TARGET_OPERATION_UNKNOWN')
@@ -135,6 +152,10 @@ export class TargetClient {
     if (url.origin !== this.adapter.origin || url.username || url.password) {
       throw new TargetClientError('TARGET_RESPONSE_INVALID')
     }
+    if (request) {
+      if (policy.method !== 'POST') throw new TargetClientError('TARGET_OPERATION_UNKNOWN')
+      for (const [key, value] of Object.entries(request.query)) url.searchParams.set(key, value)
+    }
 
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), policy.timeoutMs)
@@ -143,6 +164,12 @@ export class TargetClient {
         method: policy.method,
         credentials: 'include',
         signal: controller.signal,
+        ...(request === undefined
+          ? {}
+          : {
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(request.body),
+            }),
       })
       return await parse(response, url)
     } catch (error: unknown) {

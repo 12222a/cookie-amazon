@@ -3,11 +3,15 @@ import {
   CAPABILITIES,
   MESSAGE_NAMESPACE,
   PROTOCOL_VERSION,
+  SELLERSPRITE_KEYWORD_REVERSE_ACTION,
   TARGET_ACTIONS,
   isPingRequest,
+  isSellerSpriteKeywordReverseRequest,
   isTargetRequest,
   type PingResponse,
   type ProtocolError,
+  type SellerSpriteKeywordReverseResponse,
+  type SellerSpriteKeywordReverseSuccess,
   type TargetDescriptor,
   type TargetResponse,
   type TargetSuccess,
@@ -17,6 +21,7 @@ import { ExtensionRemoteConfigManager } from '../src/remote-config'
 import { TargetClient, TargetClientError } from '../src/targets/client'
 import { TargetPermissionManager } from '../src/targets/permissions'
 import { TARGET_REGISTRY } from '../src/targets/registry'
+import { reverseSellerSpriteKeywords } from '../src/targets/sellersprite'
 import { resolveRuntimeTargetPolicy } from '../src/targets/runtime-policy'
 
 const permissionManager = new TargetPermissionManager(TARGET_REGISTRY, browser.permissions)
@@ -161,6 +166,39 @@ const handleTargetMessage = async ({ data }: { data: unknown }): Promise<TargetR
   return targetError(data.requestId, 'UNKNOWN_ACTION')
 }
 
+const handleKeywordReverseMessage = async ({ data }: { data: unknown }): Promise<SellerSpriteKeywordReverseResponse> => {
+  if (!isSellerSpriteKeywordReverseRequest(data)) return invalidMessage()
+  const { requestId } = data
+  const adapter = TARGET_REGISTRY.get(data.payload.targetId)
+  if (!adapter || adapter.targetId !== 'sellersprite') return targetError(requestId, 'UNKNOWN_TARGET')
+  const runtimePolicy = resolveRuntimeTargetPolicy(adapter, await configManager.load())
+  if (!runtimePolicy.enabled) return targetError(requestId, 'TARGET_DISABLED')
+  if (!runtimePolicy.capabilities.includes(SELLERSPRITE_KEYWORD_REVERSE_ACTION)) {
+    return targetError(requestId, 'OPERATION_DISABLED')
+  }
+  if (!(await permissionManager.hasPermission(adapter.targetId))) {
+    return targetError(requestId, 'TARGET_PERMISSION_MISSING')
+  }
+  try {
+    const result = await reverseSellerSpriteKeywords(
+      new TargetClient(adapter, undefined, runtimePolicy.operationOverrides),
+      data.payload.input,
+    )
+    return {
+      namespace: MESSAGE_NAMESPACE,
+      kind: 'response',
+      protocolVersion: PROTOCOL_VERSION,
+      requestId,
+      action: SELLERSPRITE_KEYWORD_REVERSE_ACTION,
+      ok: true,
+      data: result,
+    } satisfies SellerSpriteKeywordReverseSuccess
+  } catch (error: unknown) {
+    if (error instanceof TargetClientError) return targetError(requestId, error.code)
+    return targetError(requestId, 'TARGET_API_ERROR')
+  }
+}
+
 export default defineBackground(() => {
   onMessage('PING', ({ data }: { data: unknown }) => {
     if (!isPingRequest(data)) return invalidMessage()
@@ -177,6 +215,7 @@ export default defineBackground(() => {
   })
 
   for (const action of TARGET_ACTIONS) onMessage(action, handleTargetMessage)
+  onMessage(SELLERSPRITE_KEYWORD_REVERSE_ACTION, handleKeywordReverseMessage)
 })
 
 export { handleTargetMessage }

@@ -80,8 +80,8 @@ describe('TargetClient', () => {
     const timeoutAdapter = createTargetAdapter({
       targetId: 'slow', displayName: 'Slow', origin: 'https://slow.example',
       operations: {
+        ...adapter.operations,
         CHECK_LOGIN: { ...adapter.operations.CHECK_LOGIN, timeoutMs: 100, path: '/api/me' },
-        GET_PROFILE: adapter.operations.GET_PROFILE,
       },
     })
     const slow = new TargetClient(timeoutAdapter, (_input, init) => new Promise((_resolve, reject) => {

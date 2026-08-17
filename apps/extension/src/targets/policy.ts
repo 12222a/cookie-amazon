@@ -1,6 +1,6 @@
 export type ConfigHttpMethod = 'GET' | 'POST'
 
-export const TARGET_OPERATIONS = ['CHECK_LOGIN', 'GET_PROFILE'] as const
+export const TARGET_OPERATIONS = ['CHECK_LOGIN', 'GET_PROFILE', 'SELLERSPRITE_KEYWORD_REVERSE'] as const
 export type TargetOperation = (typeof TARGET_OPERATIONS)[number]
 
 export type TargetOperationPolicy = {
@@ -8,7 +8,7 @@ export type TargetOperationPolicy = {
   path: `/${string}`
   method: ConfigHttpMethod
   timeoutMs: number
-  response: 'login-status' | 'html-login-probe' | 'profile'
+  response: 'login-status' | 'html-login-probe' | 'profile' | 'keyword-reverse'
 }
 
 export type TargetOperationOverrides = Readonly<Record<string, {
@@ -65,6 +65,13 @@ export const createExampleOperationPolicy = (): Readonly<Record<TargetOperation,
     timeoutMs: 10_000,
     response: 'profile',
   }),
+  SELLERSPRITE_KEYWORD_REVERSE: Object.freeze({
+    enabled: false,
+    path: '/v3/api/relation/reversing',
+    method: 'POST',
+    timeoutMs: 15_000,
+    response: 'keyword-reverse',
+  }),
 })
 
 export const createSellerSpriteOperationPolicy = (): Readonly<Record<TargetOperation, TargetOperationPolicy>> => Object.freeze({
@@ -81,5 +88,12 @@ export const createSellerSpriteOperationPolicy = (): Readonly<Record<TargetOpera
     method: 'GET',
     timeoutMs: 8_000,
     response: 'profile',
+  }),
+  SELLERSPRITE_KEYWORD_REVERSE: Object.freeze({
+    enabled: true,
+    path: '/v3/api/relation/reversing',
+    method: 'POST',
+    timeoutMs: 15_000,
+    response: 'keyword-reverse',
   }),
 })

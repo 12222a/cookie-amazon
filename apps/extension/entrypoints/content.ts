@@ -2,12 +2,15 @@ import { allowWindowMessaging, onMessage, sendMessage } from 'webext-bridge/cont
 import {
   MESSAGE_NAMESPACE,
   PROTOCOL_VERSION,
+  SELLERSPRITE_KEYWORD_REVERSE_ACTION,
   TARGET_ACTIONS,
   isAllowedWebOrigin,
   isPingRequest,
+  isSellerSpriteKeywordReverseRequest,
   isTargetRequest,
   type PingResponse,
   type ProtocolError,
+  type SellerSpriteKeywordReverseResponse,
   type TargetResponse,
 } from '@cookie-amazon/protocol'
 
@@ -30,6 +33,15 @@ const relayTargetMessage = async ({ data }: { data: unknown }): Promise<TargetRe
   }
 }
 
+const relayKeywordReverseMessage = async ({ data }: { data: unknown }): Promise<SellerSpriteKeywordReverseResponse> => {
+  if (!isAllowedWebOrigin(location.origin) || !isSellerSpriteKeywordReverseRequest(data)) return invalidMessage()
+  try {
+    return await sendMessage(data.action, data, 'background') as unknown as SellerSpriteKeywordReverseResponse
+  } catch {
+    return extensionUnavailable(data.requestId)
+  }
+}
+
 export default defineContentScript({
   matches: ['http://localhost:5173/*'],
   runAt: 'document_start',
@@ -44,5 +56,6 @@ export default defineContentScript({
       }
     })
     for (const action of TARGET_ACTIONS) onMessage(action, relayTargetMessage)
+    onMessage(SELLERSPRITE_KEYWORD_REVERSE_ACTION, relayKeywordReverseMessage)
   },
 })

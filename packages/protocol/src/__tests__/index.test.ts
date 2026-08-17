@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   createPingRequest,
+  createSellerSpriteKeywordReverseRequest,
   createTargetRequest,
   isAllowedWebOrigin,
   isPingRequest,
   isPingResponse,
+  isSellerSpriteKeywordReverseRequest,
+  isSellerSpriteKeywordReverseResponse,
   isTargetRequest,
   isTargetResponse,
 } from '../index'
@@ -57,5 +60,41 @@ describe('protocol', () => {
       requestId: 'request-6', action: 'GET_PROFILE', ok: true,
       data: { targetId: 'example', profile: { userId: 'user-1', displayName: 'Example User', token: 'secret' } },
     })).toBe(false)
+  })
+
+  it('validates keyword reverse allowlists and minimized responses', () => {
+    const input = {
+      market: 'US', ac: false, asin: 'B000000000', badges: [], conversionKeywordTypes: [],
+      desc: true, exactly: false, filterDeletedKeywords: false, keywordBidMatchType: 'broad',
+      limit: 20, month: '2026-01', order: 'searches', skip: 0, trafficKeywordTypes: [],
+    }
+    const request = createSellerSpriteKeywordReverseRequest('request-7', 'sellersprite', input)
+    expect(isSellerSpriteKeywordReverseRequest(request)).toBe(true)
+    expect(isSellerSpriteKeywordReverseRequest({
+      ...request,
+      payload: { ...request.payload, input: { ...input, unexpected: true } },
+    })).toBe(false)
+    expect(isSellerSpriteKeywordReverseRequest({
+      ...request,
+      payload: { ...request.payload, input: { ...input, badges: [{ secret: true }] } },
+    })).toBe(false)
+    expect(isSellerSpriteKeywordReverseRequest({
+      ...request,
+      payload: { ...request.payload, input: { ...input, trafficKeywordTypes: [null, true, 1, 'organic'] } },
+    })).toBe(true)
+
+    expect(isSellerSpriteKeywordReverseResponse({
+      namespace: 'cookie-amazon-platform', kind: 'response', protocolVersion: 1,
+      requestId: 'request-7', action: 'SELLERSPRITE_KEYWORD_REVERSE', ok: true,
+      data: {
+        asin: 'B000000000',
+        items: [{
+          keywords: 'example', searches: 100, products: null, supplyDemandRatio: 1,
+          trafficPercentage: 0.5, purchaseRate: null, bid: 1.2, bidMin: null,
+          bidMax: 2, avgPrice: 20, avgRating: null, avgReviews: 10,
+          searchesTrend: [{ month: '2026-01', searchRank: null, searches: 100 }],
+        }],
+      },
+    })).toBe(true)
   })
 })

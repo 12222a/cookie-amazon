@@ -1,13 +1,19 @@
 import { sendMessage, setNamespace } from 'webext-bridge/window'
 import {
   createPingRequest,
+  createSellerSpriteKeywordReverseRequest,
   createTargetRequest,
   isAllowedWebOrigin,
   isPingResponse,
+  isSellerSpriteKeywordReverseResponse,
   isTargetResponse,
   MESSAGE_NAMESPACE,
+  SELLERSPRITE_KEYWORD_REVERSE_ACTION,
   type ExtensionStatus,
   type PingRequest,
+  type SellerSpriteKeywordReverseData,
+  type SellerSpriteKeywordReverseInput,
+  type SellerSpriteKeywordReverseRequest,
   type TargetAction,
   type TargetDescriptor,
   type TargetListData,
@@ -32,7 +38,7 @@ const initializeBridge = (): void => {
 
 const requestWithTimeout = async (
   action: string,
-  request: PingRequest | TargetRequest,
+  request: PingRequest | TargetRequest | SellerSpriteKeywordReverseRequest,
   timeoutMs: number,
 ): Promise<unknown> => {
   let timeoutId: number | undefined
@@ -101,5 +107,27 @@ export const checkLogin = async (targetId: string, options: WebSdkOptions = {}):
 export const getProfile = async (targetId: string, options: WebSdkOptions = {}): Promise<TargetProfileData> =>
   sendTargetRequest<TargetProfileData>('GET_PROFILE', targetId, options)
 
+export const reverseSellerSpriteKeywords = async (
+  input: SellerSpriteKeywordReverseInput,
+  options: WebSdkOptions = {},
+): Promise<SellerSpriteKeywordReverseData> => {
+  if (!isAllowedWebOrigin(window.location.origin)) throw new WebSdkError('INVALID_ORIGIN')
+  initializeBridge()
+  const request = createSellerSpriteKeywordReverseRequest(createRequestId(), 'sellersprite', input)
+  try {
+    const response = await requestWithTimeout(
+      SELLERSPRITE_KEYWORD_REVERSE_ACTION,
+      request,
+      options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    )
+    if (!isSellerSpriteKeywordReverseResponse(response)) throw new WebSdkError('INVALID_MESSAGE')
+    if (!response.ok) throw new WebSdkError(response.error.code)
+    return response.data
+  } catch (error: unknown) {
+    if (error instanceof WebSdkError) throw error
+    throw new WebSdkError('EXTENSION_UNAVAILABLE')
+  }
+}
+
 export const getExtensionStatus = ping
-export type { TargetDescriptor }
+export type { SellerSpriteKeywordReverseData, SellerSpriteKeywordReverseInput, TargetDescriptor }
