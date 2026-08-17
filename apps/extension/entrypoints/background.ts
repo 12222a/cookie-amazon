@@ -110,13 +110,7 @@ const handleTargetMessage = async ({ data }: { data: unknown }): Promise<TargetR
   if (!runtimePolicy.enabled) return targetError(data.requestId, 'TARGET_DISABLED')
 
   if (data.action === 'REQUEST_TARGET_PERMISSION') {
-    const granted = await permissionManager.requestPermission(targetId)
-    if (!granted) return targetError(data.requestId, 'PERMISSION_REQUEST_DENIED')
-    return {
-      namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION,
-      requestId: data.requestId, action: data.action, ok: true,
-      data: { targetId, granted: true, status: 'ready' },
-    } satisfies TargetSuccess
+    return targetError(data.requestId, 'PERMISSION_REQUIRES_EXTENSION_UI')
   }
 
   if (data.action === 'CHECK_LOGIN') {

@@ -1,4 +1,5 @@
 import { createTargetAdapter, type TargetAdapter } from './adapter'
+import { SELLERSPRITE_ADAPTER } from './sellersprite'
 
 export type TargetConfigOverride = { enabled?: boolean }
 export type TargetStatus = 'unknown' | 'disabled' | 'permission-required' | 'ready'
@@ -56,4 +57,5 @@ export const TARGET_REGISTRY = new TargetRegistry([
     displayName: 'Example Target',
     origin: 'https://example.com',
   }),
+  SELLERSPRITE_ADAPTER,
 ])

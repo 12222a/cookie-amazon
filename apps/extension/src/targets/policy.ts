@@ -8,7 +8,7 @@ export type TargetOperationPolicy = {
   path: `/${string}`
   method: ConfigHttpMethod
   timeoutMs: number
-  response: 'login-status' | 'profile'
+  response: 'login-status' | 'html-login-probe' | 'profile'
 }
 
 export type TargetOperationOverrides = Readonly<Record<string, {
@@ -63,6 +63,23 @@ export const createExampleOperationPolicy = (): Readonly<Record<TargetOperation,
     path: '/api/v2/profile',
     method: 'GET',
     timeoutMs: 10_000,
+    response: 'profile',
+  }),
+})
+
+export const createSellerSpriteOperationPolicy = (): Readonly<Record<TargetOperation, TargetOperationPolicy>> => Object.freeze({
+  CHECK_LOGIN: Object.freeze({
+    enabled: true,
+    path: '/v2/me',
+    method: 'GET',
+    timeoutMs: 8_000,
+    response: 'html-login-probe',
+  }),
+  GET_PROFILE: Object.freeze({
+    enabled: false,
+    path: '/v2/me',
+    method: 'GET',
+    timeoutMs: 8_000,
     response: 'profile',
   }),
 })

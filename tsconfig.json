@@ -3,6 +3,8 @@
   "files": [],
   "references": [
     { "path": "./packages/protocol" },
+    { "path": "./packages/remote-config" },
+    { "path": "./packages/sellersprite" },
     { "path": "./packages/web-sdk" },
     { "path": "./apps/web" },
     { "path": "./apps/extension" },

@@ -42,6 +42,36 @@ const readLoginStatus = async (response: Response): Promise<{ loggedIn: boolean 
   return { loggedIn: body.loggedIn ?? body.authenticated ?? false }
 }
 
+const readHtmlLoginProbe = async (
+  response: Response,
+  requestUrl: URL,
+): Promise<{ loggedIn: boolean }> => {
+  if (response.status === 401 || response.status === 403) return { loggedIn: false }
+  if (response.status === 429) throw new TargetClientError('TARGET_RATE_LIMITED', response.status)
+  if (!response.ok) throw new TargetClientError('TARGET_API_ERROR', response.status)
+
+  const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
+  if (!contentType.includes('text/html')) {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  }
+
+  let finalUrl: URL
+  try {
+    finalUrl = new URL(response.url)
+  } catch {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  }
+  if (finalUrl.origin !== requestUrl.origin || finalUrl.username || finalUrl.password) {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  }
+
+  return {
+    loggedIn: finalUrl.pathname === requestUrl.pathname
+      && finalUrl.search === ''
+      && finalUrl.hash === '',
+  }
+}
+
 const readProfile = async (response: Response): Promise<TargetProfile> => {
   if (response.status === 401) throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status)
   if (response.status === 429) throw new TargetClientError('TARGET_RATE_LIMITED', response.status)
@@ -81,6 +111,10 @@ export class TargetClient {
     return this.execute('CHECK_LOGIN', readLoginStatus)
   }
 
+  public async executeHtmlLoginProbe(): Promise<{ loggedIn: boolean }> {
+    return this.execute('CHECK_LOGIN', readHtmlLoginProbe)
+  }
+
   public async getProfile(): Promise<TargetProfile> {
     return this.adapter.getProfile(this)
   }
@@ -91,7 +125,7 @@ export class TargetClient {
 
   private async execute<T>(
     operation: TargetOperation,
-    parse: (response: Response) => Promise<T>,
+    parse: (response: Response, requestUrl: URL) => Promise<T>,
   ): Promise<T> {
     const policy = resolveOperationPolicy(this.adapter.operations, operation, this.operationOverrides)
     if (!policy) throw new TargetClientError('TARGET_OPERATION_UNKNOWN')
@@ -110,7 +144,7 @@ export class TargetClient {
         credentials: 'include',
         signal: controller.signal,
       })
-      return await parse(response)
+      return await parse(response, url)
     } catch (error: unknown) {
       if (error instanceof TargetClientError) throw error
       if (error instanceof DOMException && error.name === 'AbortError') {

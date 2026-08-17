@@ -70,6 +70,8 @@ export const createTargetAdapter = (input: {
   origin: `https://${string}`
   enabled?: boolean
   operations?: Readonly<Record<TargetOperation, TargetOperationPolicy>>
+  checkLogin?: TargetAdapter['checkLogin']
+  getProfile?: TargetAdapter['getProfile']
 }): TargetAdapter => {
   const adapter: TargetAdapter = {
     targetId: input.targetId,
@@ -78,8 +80,8 @@ export const createTargetAdapter = (input: {
     permissionOrigins: [`${input.origin}/*`] as [`https://${string}/*`],
     enabled: input.enabled ?? true,
     operations: input.operations ?? createExampleOperationPolicy(),
-    checkLogin: (client) => client.executeLoginCheck(),
-    getProfile: (client) => client.executeGetProfile(),
+    checkLogin: input.checkLogin ?? ((client) => client.executeLoginCheck()),
+    getProfile: input.getProfile ?? ((client) => client.executeGetProfile()),
   }
   if (!isValidTargetAdapter(adapter)) throw new Error('INVALID_TARGET_ADAPTER')
   return Object.freeze(adapter)

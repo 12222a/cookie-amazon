@@ -6,7 +6,6 @@ import {
   getProfile,
   listTargets,
   removeTargetPermission,
-  requestTargetPermission,
   WebSdkError,
 } from '@cookie-amazon/web-sdk'
 import type { ExtensionStatus, TargetDescriptor } from '@cookie-amazon/protocol'
@@ -74,11 +73,8 @@ export function App(): ReactElement {
         <div className="actions">
           <button type="button" disabled={targetBusy === target.targetId || target.status === 'ready'} onClick={() => void runTargetAction(
             target.targetId,
-            async () => {
-              await requestTargetPermission(target.targetId)
-              return `${target.displayName} 授权成功`
-            },
-          )}>授权访问</button>
+            async () => '请点击浏览器工具栏中的 Cookie Amazon Platform 图标，在扩展弹窗中授权后重新检测',
+          )}>授权步骤</button>
           <button type="button" disabled={targetBusy === target.targetId || target.status !== 'ready'} onClick={() => void runTargetAction(
             target.targetId,
             async () => {
