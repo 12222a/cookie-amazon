@@ -32,9 +32,26 @@ describe('config worker', () => {
     const second = await worker.fetch(request, env)
 
     expect(first.status).toBe(200)
+    expect(first.headers.get('etag')).toBe('W/"config-1"')
     expect(await first.json()).toMatchObject({ ok: true, status: 'fresh', config: { configVersion: 1 } })
+    const notModified = await worker.fetch(new Request('https://config.example/api/extension/config', {
+      headers: { 'if-none-match': 'W/"config-1"' },
+    }), env)
+    expect(notModified.status).toBe(304)
+    expect(notModified.headers.get('etag')).toBe('W/"config-1"')
     expect(second.status).toBe(200)
     expect(fixture.reads()).toBe(1)
+  })
+
+  it('returns a new body when the ETag does not match', async () => {
+    const fixture = createEnv(rawConfig)
+    const env = fixture.env as unknown as Parameters<typeof worker.fetch>[1]
+    const response = await worker.fetch(new Request('https://config.example/api/extension/config', {
+      headers: { 'if-none-match': 'W/"config-0"' },
+    }), env)
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('etag')).toBe('W/"config-1"')
   })
 
   it('rejects credential headers and non-GET config requests', async () => {

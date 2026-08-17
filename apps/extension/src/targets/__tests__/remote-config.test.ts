@@ -6,9 +6,12 @@ import {
   type StorageArea,
 } from '../../remote-config'
 
-const response = (config: unknown): Response => new Response(JSON.stringify({ ok: true, config }), {
+const response = (config: unknown, etag?: string): Response => new Response(JSON.stringify({ ok: true, config }), {
   status: 200,
-  headers: { 'content-type': 'application/json' },
+  headers: {
+    'content-type': 'application/json',
+    ...(etag === undefined ? {} : { etag }),
+  },
 })
 
 const storageFixture = (initial?: unknown): { storage: StorageArea; values: Record<string, unknown> } => {
@@ -50,6 +53,30 @@ describe('ExtensionRemoteConfigManager', () => {
       () => 1000,
       500,
     ).load()).resolves.toEqual(config)
+  })
+
+  it('uses a matching ETag and refreshes the cached timestamp on 304', async () => {
+    const config = { ...createDefaultRemoteConfig(), configVersion: 3 }
+    const { storage, values } = storageFixture({ config, fetchedAt: 0, etag: 'W/"config-3"' })
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get('if-none-match')).toBe('W/"config-3"')
+      return new Response(null, { status: 304, headers: { etag: 'W/"config-3"' } })
+    })
+    const manager = new ExtensionRemoteConfigManager(storage, fetcher, () => 1_000, 500)
+
+    await expect(manager.load()).resolves.toEqual(config)
+    expect(values[STORAGE_KEY]).toEqual({ config, fetchedAt: 1_000, etag: 'W/"config-3"' })
+  })
+
+  it('does not activate a 304 response without cached config', async () => {
+    const { storage } = storageFixture()
+    const manager = new ExtensionRemoteConfigManager(
+      storage,
+      async () => new Response(null, { status: 304 }),
+      () => 1_000,
+      500,
+    )
+    await expect(manager.load()).resolves.toBeNull()
   })
 
   it('times out config fetches and falls back without activating config', async () => {

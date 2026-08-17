@@ -4,6 +4,7 @@ import {
   RemoteConfigCache,
   type ConfigLoadResult,
   type ConfigStore,
+  type RemoteConfig,
 } from '@cookie-amazon/remote-config'
 
 interface Env {
@@ -16,11 +17,12 @@ interface Env {
 const CONFIG_PATH = '/api/extension/config'
 const cacheRegistry = new WeakMap<KVNamespace, Map<string, RemoteConfigCache>>()
 
-const json = (body: unknown, status = 200): Response => new Response(JSON.stringify(body), {
+const json = (body: unknown, status = 200, headers: HeadersInit = {}): Response => new Response(JSON.stringify(body), {
   status,
   headers: {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
+    ...headers,
   },
 })
 
@@ -49,8 +51,14 @@ const getConfigCache = (env: Env): RemoteConfigCache => {
   return cache
 }
 
-const configResponse = (result: ConfigLoadResult): Response => {
+const configEtag = (config: RemoteConfig): string => `W/"config-${config.configVersion}"`
+
+const configResponse = (result: ConfigLoadResult, request: Request): Response => {
   if (!result.ok) return json({ ok: false, status: result.status, stale: false, error: result.error }, 503)
+  const etag = configEtag(result.config)
+  if (request.headers.get('if-none-match') === etag) {
+    return new Response(null, { status: 304, headers: { etag, 'cache-control': 'no-store' } })
+  }
   return json({
     ok: true,
     status: result.status,
@@ -59,7 +67,7 @@ const configResponse = (result: ConfigLoadResult): Response => {
     fetchedAt: result.fetchedAt,
     validatedAt: result.validatedAt,
     config: result.config,
-  })
+  }, 200, { etag })
 }
 
 const hasForbiddenCredentialHeaders = (request: Request): boolean =>
@@ -74,11 +82,11 @@ export default {
     if (url.pathname === CONFIG_PATH) {
       if (request.method !== 'GET') return json({ ok: false, error: 'METHOD_NOT_ALLOWED' }, 405)
       if (hasForbiddenCredentialHeaders(request)) return json({ ok: false, error: 'CREDENTIAL_HEADERS_FORBIDDEN' }, 400)
-      return configResponse(await getConfigCache(env).load())
+      return configResponse(await getConfigCache(env).load(), request)
     }
     if (request.method !== 'GET') return json({ ok: false, error: 'METHOD_NOT_ALLOWED' }, 405)
     return env.ASSETS.fetch(request)
   },
 } satisfies ExportedHandler<Env>
 
-export { configResponse, getConfigCache }
+export { configEtag, configResponse, getConfigCache }
