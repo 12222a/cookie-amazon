@@ -9,6 +9,7 @@ import {
   WebSdkError,
 } from '@cookie-amazon/web-sdk'
 import type { ExtensionStatus, TargetDescriptor } from '@cookie-amazon/protocol'
+import { ProductResearchWorkbench } from './product-research/ProductResearchWorkbench'
 
 export function App(): ReactElement {
   const [status, setStatus] = useState<ExtensionStatus | null>(null)
@@ -100,6 +101,8 @@ export function App(): ReactElement {
       </article>)}
       {targetMessage && <p role="status">{targetMessage}</p>}
     </section>}
+    {targets.some((target) => target.targetId === 'sellersprite' && target.status === 'ready') &&
+      <ProductResearchWorkbench targetId="sellersprite" />}
     {error && <p role="alert">检测失败：{error}</p>}
   </main>
 }
