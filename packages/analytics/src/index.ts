@@ -130,3 +130,13 @@ export const computeTrends = (
   seriesList: readonly ProductSeries[],
   metric: TrendMetric,
 ): ProductTrend[] => seriesList.map((series) => computeTrend(series, metric))
+
+export {
+  sortTrends,
+  filterTrends,
+  type TrendSortKey,
+  type SortDirection,
+  type TrendFilterCriteria,
+} from './trends'
+export { toSparkline, type Sparkline, type SparklineOptions } from './sparkline'
+export { trendsToCsv, seriesToCsv } from './csv'
