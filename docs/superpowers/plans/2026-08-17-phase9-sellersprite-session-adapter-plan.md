@@ -3,8 +3,8 @@
 ## 1. 当前状态
 
 - 阶段：Phase 9
-- 状态：进行中
-- 当前优先级：先完成安全登录探测与静态 Target 接入，再逐项接入业务能力。
+- 状态：核心能力已实现，待 Chrome 手动冒烟
+- 当前优先级：JSON 业务能力（关键词反查、查竞品、产品选择、关键词挖掘）与 HTML 安全边界会话均已桥接并测试；剩余仅 Chrome 手动冒烟。
 
 ## 2. 实施顺序
 
@@ -98,8 +98,8 @@ pnpm build
 - [x] SellerSprite Adapter 与 Registry 已接入。
 - [x] 登录探测与 HTML 安全边界已实现。
 - [x] optional host permission 已接入。
-- [ ] JSON 业务能力 bridge。
-- [ ] HTML 业务安全提取。
+- [x] JSON 业务能力 bridge（KEYWORD_REVERSE、COMPETITOR_RESEARCH、PRODUCT_SELECTION、KEYWORD_MINING）。
+- [x] HTML 业务安全提取（MARKET_SELECTION、KEYWORD_PRODUCT_RESEARCH 只返回最小完成状态，不返回 HTML）。
 - [ ] Chrome 手动冒烟。
 
 ## 4. 不在当前切片完成的事项
