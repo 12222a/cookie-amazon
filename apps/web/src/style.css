@@ -11,3 +11,20 @@ dt { color: #667085; } dd { margin: 0; font-weight: 600; }
 .targets small { display: block; margin-top: .25rem; color: #667085; }
 .actions { display: flex; flex-wrap: wrap; gap: .5rem; }
 .actions button:last-child { background: #667085; }
+.product-research { margin-top: 2rem; border-top: 1px solid #dbe3ef; padding-top: 1rem; }
+.pr-controls, .pr-filters { display: flex; flex-wrap: wrap; gap: .75rem; align-items: end; margin-bottom: 1rem; }
+.pr-controls label, .pr-filters label { display: flex; flex-direction: column; gap: .25rem; color: #667085; font-size: .85rem; }
+.pr-controls input, .pr-controls select, .pr-filters input, .pr-filters select { padding: .4rem .5rem; border: 1px solid #dbe3ef; border-radius: 6px; }
+.pr-export { background: #667085; }
+.pr-summary { color: #667085; }
+.pr-trends { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.pr-trends th, .pr-trends td { padding: .4rem .5rem; border-bottom: 1px solid #eef2f8; text-align: left; }
+.pr-trends th button { background: none; color: #172033; padding: 0; font-weight: 600; cursor: pointer; }
+.pr-trends th[aria-sort="ascending"] button, .pr-trends th[aria-sort="descending"] button { color: #1769e0; }
+.pr-sparkline { display: inline-block; vertical-align: middle; }
+.pr-sparkline--empty { color: #98a2b3; }
+.pr-compare { margin-top: 1.5rem; }
+.pr-compare-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: .75rem; }
+.pr-compare-card { border: 1px solid #dbe3ef; border-radius: 10px; padding: .75rem; }
+.pr-compare-card small { display: block; color: #667085; margin: .2rem 0 .5rem; }
+.pr-compare-card dl { grid-template-columns: 4rem 1fr; margin: 0 0 .5rem; }

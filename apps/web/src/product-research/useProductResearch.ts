@@ -3,6 +3,7 @@ import {
   buildSeries,
   computeTrends,
   toSnapshot,
+  type ProductSeries,
   type ProductSnapshot,
   type ProductTrend,
   type TrendMetric,
@@ -16,6 +17,7 @@ const createSnapshotId = (): string =>
 
 export type ProductResearchState = {
   snapshots: readonly ProductSnapshot[]
+  series: readonly ProductSeries[]
   trends: readonly ProductTrend[]
   refreshing: boolean
   loading: boolean
@@ -75,7 +77,8 @@ export const useProductResearch = (
     [targetId],
   )
 
-  const trends = computeTrends(buildSeries(snapshots), metric)
+  const series = buildSeries(snapshots)
+  const trends = computeTrends(series, metric)
 
-  return { snapshots, trends, refreshing, loading, error, refresh }
+  return { snapshots, series, trends, refreshing, loading, error, refresh }
 }
