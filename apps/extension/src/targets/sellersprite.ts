@@ -10,6 +10,11 @@ import type {
   SellerSpriteCompetitorData,
   SellerSpriteCompetitorInput,
   SellerSpriteCompetitorItem,
+  SellerSpriteProductSelectionData,
+  SellerSpriteProductSelectionInput,
+  SellerSpriteHtmlSessionData,
+  SellerSpriteKeywordMiningData,
+  SellerSpriteKeywordMiningInput,
 } from '@cookie-amazon/protocol'
 import { createTargetAdapter } from './adapter'
 import { TargetClient, TargetClientError } from './client'
@@ -138,6 +143,43 @@ export const reverseSellerSpriteKeywords = (
   )
 }
 
+const readKeywordMiningResponse = async (response: Response): Promise<SellerSpriteKeywordMiningData> => {
+  if (response.status === 401 || response.status === 403) {
+    throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status)
+  }
+  if (response.status === 429) throw new TargetClientError('TARGET_RATE_LIMITED', response.status)
+  if (!response.ok) throw new TargetClientError('TARGET_API_ERROR', response.status)
+  let payload: unknown
+  try {
+    payload = await response.json()
+  } catch {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  }
+  if (!isRecord(payload) || !isRecord(payload.data)) {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  }
+  const data = payload.data
+  if (Object.keys(data).length !== 5
+    || !Array.isArray(data.items)
+    || data.items.length !== 0
+    || typeof data.page !== 'number' || !Number.isFinite(data.page)
+    || typeof data.size !== 'number' || !Number.isFinite(data.size)
+    || typeof data.took !== 'number' || !Number.isFinite(data.took)
+    || typeof data.total !== 'number' || !Number.isFinite(data.total)) {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  }
+  return { items: [], page: data.page, size: data.size, took: data.took, total: data.total }
+}
+
+export const mineSellerSpriteKeywords = (
+  client: TargetClient,
+  input: SellerSpriteKeywordMiningInput,
+): Promise<SellerSpriteKeywordMiningData> => client.executeJsonPost(
+  'KEYWORD_MINING',
+  {},
+  input,
+  readKeywordMiningResponse,
+)
 const readNullableString = (value: unknown): string | null | undefined =>
   value === null || value === undefined ? null : typeof value === 'string' ? value : undefined
 
@@ -195,6 +237,30 @@ export const researchSellerSpriteCompetitors = (
   input,
   readCompetitorResponse,
 )
+export const selectSellerSpriteProducts = (
+  client: TargetClient,
+  input: SellerSpriteProductSelectionInput,
+): Promise<SellerSpriteProductSelectionData> => client.executeJsonPost(
+  'PRODUCT_SELECTION',
+  {},
+  input,
+  readCompetitorResponse,
+)
+
+export const executeSellerSpriteMarketSelection = async (
+  client: TargetClient,
+): Promise<SellerSpriteHtmlSessionData> => {
+  const metadata = await client.executeHtmlSession('MARKET_SELECTION')
+  return { targetId: SELLERSPRITE_TARGET_ID, completed: metadata.status >= 200 && metadata.status < 300 }
+}
+
+export const executeSellerSpriteKeywordProductResearch = async (
+  client: TargetClient,
+): Promise<SellerSpriteHtmlSessionData> => {
+  const metadata = await client.executeHtmlSession('KEYWORD_PRODUCT_RESEARCH')
+  return { targetId: SELLERSPRITE_TARGET_ID, completed: metadata.status >= 200 && metadata.status < 300 }
+}
+
 export const SELLERSPRITE_ADAPTER = createTargetAdapter({
   targetId: SELLERSPRITE_TARGET_ID,
   displayName: '卖家精灵',

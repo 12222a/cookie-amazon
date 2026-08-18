@@ -7,12 +7,25 @@ const bridge = vi.hoisted(() => ({
 
 vi.mock('webext-bridge/window', () => bridge)
 
-import { reverseSellerSpriteKeywords } from '../client'
+import { mineSellerSpriteKeywords, reverseSellerSpriteKeywords, selectSellerSpriteProducts } from '../client'
 
 const input = {
   market: 'US', ac: false, asin: 'B000000000', badges: [], conversionKeywordTypes: [],
   desc: true, exactly: false, filterDeletedKeywords: false, keywordBidMatchType: 'broad',
   limit: 20, month: '2026-01', order: 'searches', skip: 0, trafficKeywordTypes: [],
+}
+
+const productSelectionInput = {
+  eligibility: [], filterSub: false, lowPrice: '0', market: 'US', monthName: '2026-01',
+  nodeIdPaths: [], order: { desc: true, field: 'sales' }, page: 1, pkgDimensionTypeList: [],
+  productTags: [], selectType: 'CATEGORY', sellerNationList: [], sellerTypes: [], size: 20,
+  symbolFlag: false, weightUnit: 'lb',
+}
+
+const keywordMiningInput = {
+  amazonChoice: false, desc: true, filterRootWord: false, historyDate: '2026-01',
+  keyword: 'wireless earbuds', keywordBidMatchType: 'broad', market: 'US', matchType: 'BROAD',
+  orderBy: 'searches', pageNum: 1, pageSize: 20,
 }
 
 describe('SellerSprite web SDK', () => {
@@ -46,5 +59,43 @@ describe('SellerSprite web SDK', () => {
       action: 'SELLERSPRITE_KEYWORD_REVERSE',
       payload: { targetId: 'sellersprite', input },
     })
+  })
+
+  it('sends the product selection request and returns minimized paginated data', async () => {
+    const data = { page: 1, pages: 5, size: 20, total: 100, hasNextPage: true, items: [] }
+    bridge.sendMessage.mockResolvedValue({
+      namespace: 'cookie-amazon-platform', kind: 'response', protocolVersion: 1,
+      requestId: 'response-id', action: 'PRODUCT_SELECTION', ok: true, data,
+    })
+
+    await expect(selectSellerSpriteProducts(productSelectionInput)).resolves.toEqual(data)
+    const [action, request, destination] = bridge.sendMessage.mock.calls[0]!
+    expect(action).toBe('PRODUCT_SELECTION')
+    expect(destination).toBe('content-script')
+    expect(request).toMatchObject({
+      action: 'PRODUCT_SELECTION',
+      payload: { targetId: 'sellersprite', input: productSelectionInput },
+    })
+  })
+
+  it('sends the keyword mining request and surfaces protocol error codes', async () => {
+    bridge.sendMessage.mockResolvedValue({
+      namespace: 'cookie-amazon-platform', kind: 'response', protocolVersion: 1,
+      requestId: 'response-id', action: 'KEYWORD_MINING', ok: false,
+      error: { code: 'OPERATION_DISABLED', message: 'disabled' },
+    })
+
+    await expect(mineSellerSpriteKeywords(keywordMiningInput)).rejects.toMatchObject({ code: 'OPERATION_DISABLED' })
+    const [action, request] = bridge.sendMessage.mock.calls[0]!
+    expect(action).toBe('KEYWORD_MINING')
+    expect(request).toMatchObject({
+      action: 'KEYWORD_MINING',
+      payload: { targetId: 'sellersprite', input: keywordMiningInput },
+    })
+  })
+
+  it('rejects when the extension bridge is unavailable', async () => {
+    bridge.sendMessage.mockRejectedValue(new Error('no receiver'))
+    await expect(selectSellerSpriteProducts(productSelectionInput)).rejects.toMatchObject({ code: 'EXTENSION_UNAVAILABLE' })
   })
 })

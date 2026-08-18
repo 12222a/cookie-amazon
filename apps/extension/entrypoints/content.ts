@@ -3,11 +3,18 @@ import {
   MESSAGE_NAMESPACE,
   PROTOCOL_VERSION,
   COMPETITOR_RESEARCH_ACTION,
+  PRODUCT_SELECTION_ACTION,
+  MARKET_SELECTION_ACTION,
+  KEYWORD_PRODUCT_RESEARCH_ACTION,
+  KEYWORD_MINING_ACTION,
   SELLERSPRITE_KEYWORD_REVERSE_ACTION,
   TARGET_ACTIONS,
   isAllowedWebOrigin,
   isPingRequest,
   isSellerSpriteCompetitorRequest,
+  isSellerSpriteProductSelectionRequest,
+  isSellerSpriteHtmlSessionRequest,
+  isSellerSpriteKeywordMiningRequest,
   isSellerSpriteKeywordReverseRequest,
   isTargetRequest,
   type PingResponse,
@@ -53,6 +60,25 @@ const relayCompetitorMessage = async ({ data }: { data: unknown }): Promise<Sell
     return extensionUnavailable(data.requestId)
   }
 }
+const relayProductSelectionMessage = async ({ data }: { data: unknown }): Promise<import('@cookie-amazon/protocol').SellerSpriteProductSelectionResponse> => {
+  if (!isAllowedWebOrigin(location.origin) || !isSellerSpriteProductSelectionRequest(data)) return invalidMessage()
+  try {
+    return await sendMessage(data.action, data, 'background') as unknown as import('@cookie-amazon/protocol').SellerSpriteProductSelectionResponse
+  } catch {
+    return extensionUnavailable(data.requestId)
+  }
+}
+
+const relayHtmlSessionMessage = async ({ data }: { data: unknown }): Promise<import('@cookie-amazon/protocol').SellerSpriteHtmlSessionResponse> => {
+  if (!isAllowedWebOrigin(location.origin) || !isSellerSpriteHtmlSessionRequest(data)) return invalidMessage()
+  try { return await sendMessage(data.action, data, 'background') as unknown as import('@cookie-amazon/protocol').SellerSpriteHtmlSessionResponse } catch { return extensionUnavailable(data.requestId) }
+}
+
+const relayKeywordMiningMessage = async ({ data }: { data: unknown }): Promise<import('@cookie-amazon/protocol').SellerSpriteKeywordMiningResponse> => {
+  if (!isAllowedWebOrigin(location.origin) || !isSellerSpriteKeywordMiningRequest(data)) return invalidMessage()
+  try { return await sendMessage(data.action, data, 'background') as unknown as import('@cookie-amazon/protocol').SellerSpriteKeywordMiningResponse } catch { return extensionUnavailable(data.requestId) }
+}
+
 export default defineContentScript({
   matches: ['http://localhost:5173/*'],
   runAt: 'document_start',
@@ -69,5 +95,9 @@ export default defineContentScript({
     for (const action of TARGET_ACTIONS) onMessage(action, relayTargetMessage)
     onMessage(SELLERSPRITE_KEYWORD_REVERSE_ACTION, relayKeywordReverseMessage)
     onMessage(COMPETITOR_RESEARCH_ACTION, relayCompetitorMessage)
+    onMessage(PRODUCT_SELECTION_ACTION, relayProductSelectionMessage)
+    onMessage(KEYWORD_MINING_ACTION, relayKeywordMiningMessage)
+    onMessage(MARKET_SELECTION_ACTION, relayHtmlSessionMessage)
+    onMessage(KEYWORD_PRODUCT_RESEARCH_ACTION, relayHtmlSessionMessage)
   },
 })

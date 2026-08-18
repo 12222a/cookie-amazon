@@ -1,6 +1,9 @@
 export type ConfigHttpMethod = 'GET' | 'POST'
 
-export const TARGET_OPERATIONS = ['CHECK_LOGIN', 'GET_PROFILE', 'SELLERSPRITE_KEYWORD_REVERSE', 'COMPETITOR_RESEARCH'] as const
+export const TARGET_OPERATIONS = [
+  'CHECK_LOGIN', 'GET_PROFILE', 'SELLERSPRITE_KEYWORD_REVERSE', 'COMPETITOR_RESEARCH',
+  'PRODUCT_SELECTION', 'MARKET_SELECTION', 'KEYWORD_PRODUCT_RESEARCH', 'KEYWORD_MINING',
+] as const
 export type TargetOperation = (typeof TARGET_OPERATIONS)[number]
 
 export type TargetOperationPolicy = {
@@ -8,7 +11,7 @@ export type TargetOperationPolicy = {
   path: `/${string}`
   method: ConfigHttpMethod
   timeoutMs: number
-  response: 'login-status' | 'html-login-probe' | 'profile' | 'keyword-reverse' | 'competitor-research'
+  response: 'login-status' | 'html-login-probe' | 'profile' | 'keyword-reverse' | 'competitor-research' | 'product-selection' | 'html-session' | 'keyword-mining'
 }
 
 export type TargetOperationOverrides = Readonly<Record<string, {
@@ -79,6 +82,34 @@ export const createExampleOperationPolicy = (): Readonly<Record<TargetOperation,
     timeoutMs: 15_000,
     response: 'competitor-research',
   }),
+  PRODUCT_SELECTION: Object.freeze({
+    enabled: false,
+    path: '/v3/api/product-research',
+    method: 'POST',
+    timeoutMs: 15_000,
+    response: 'product-selection',
+  }),
+  MARKET_SELECTION: Object.freeze({
+    enabled: false,
+    path: '/v2/market-research',
+    method: 'POST',
+    timeoutMs: 15_000,
+    response: 'html-session',
+  }),
+  KEYWORD_PRODUCT_RESEARCH: Object.freeze({
+    enabled: false,
+    path: '/v2/keyword-research',
+    method: 'GET',
+    timeoutMs: 15_000,
+    response: 'html-session',
+  }),
+  KEYWORD_MINING: Object.freeze({
+    enabled: false,
+    path: '/v3/api/keyword-miner',
+    method: 'POST',
+    timeoutMs: 15_000,
+    response: 'keyword-mining',
+  }),
 })
 
 export const createSellerSpriteOperationPolicy = (): Readonly<Record<TargetOperation, TargetOperationPolicy>> => Object.freeze({
@@ -109,5 +140,33 @@ export const createSellerSpriteOperationPolicy = (): Readonly<Record<TargetOpera
     method: 'POST',
     timeoutMs: 15_000,
     response: 'competitor-research',
+  }),
+  PRODUCT_SELECTION: Object.freeze({
+    enabled: true,
+    path: '/v3/api/product-research',
+    method: 'POST',
+    timeoutMs: 15_000,
+    response: 'product-selection',
+  }),
+  MARKET_SELECTION: Object.freeze({
+    enabled: true,
+    path: '/v2/market-research',
+    method: 'POST',
+    timeoutMs: 15_000,
+    response: 'html-session',
+  }),
+  KEYWORD_PRODUCT_RESEARCH: Object.freeze({
+    enabled: true,
+    path: '/v2/keyword-research',
+    method: 'GET',
+    timeoutMs: 15_000,
+    response: 'html-session',
+  }),
+  KEYWORD_MINING: Object.freeze({
+    enabled: false,
+    path: '/v3/api/keyword-miner',
+    method: 'POST',
+    timeoutMs: 15_000,
+    response: 'keyword-mining',
   }),
 })

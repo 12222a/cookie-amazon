@@ -2,21 +2,33 @@ import { sendMessage, setNamespace } from 'webext-bridge/window'
 import {
   createPingRequest,
   createSellerSpriteCompetitorRequest,
+  createSellerSpriteProductSelectionRequest,
+  createSellerSpriteKeywordMiningRequest,
   createSellerSpriteKeywordReverseRequest,
   createTargetRequest,
   isAllowedWebOrigin,
   isPingResponse,
   isSellerSpriteCompetitorResponse,
+  isSellerSpriteProductSelectionResponse,
+  isSellerSpriteKeywordMiningResponse,
   isSellerSpriteKeywordReverseResponse,
   isTargetResponse,
   MESSAGE_NAMESPACE,
   COMPETITOR_RESEARCH_ACTION,
+  PRODUCT_SELECTION_ACTION,
+  KEYWORD_MINING_ACTION,
   SELLERSPRITE_KEYWORD_REVERSE_ACTION,
   type ExtensionStatus,
   type PingRequest,
   type SellerSpriteCompetitorData,
   type SellerSpriteCompetitorInput,
   type SellerSpriteCompetitorRequest,
+  type SellerSpriteProductSelectionData,
+  type SellerSpriteProductSelectionInput,
+  type SellerSpriteProductSelectionRequest,
+  type SellerSpriteKeywordMiningData,
+  type SellerSpriteKeywordMiningInput,
+  type SellerSpriteKeywordMiningRequest,
   type SellerSpriteKeywordReverseData,
   type SellerSpriteKeywordReverseInput,
   type SellerSpriteKeywordReverseRequest,
@@ -44,7 +56,7 @@ const initializeBridge = (): void => {
 
 const requestWithTimeout = async (
   action: string,
-  request: PingRequest | TargetRequest | SellerSpriteKeywordReverseRequest | SellerSpriteCompetitorRequest,
+  request: PingRequest | TargetRequest | SellerSpriteKeywordReverseRequest | SellerSpriteCompetitorRequest | SellerSpriteProductSelectionRequest | SellerSpriteKeywordMiningRequest,
   timeoutMs: number,
 ): Promise<unknown> => {
   let timeoutId: number | undefined
@@ -153,10 +165,50 @@ export const researchSellerSpriteCompetitors = async (
   }
 }
 
+export const selectSellerSpriteProducts = async (
+  input: SellerSpriteProductSelectionInput,
+  options: WebSdkOptions = {},
+): Promise<SellerSpriteProductSelectionData> => {
+  if (!isAllowedWebOrigin(window.location.origin)) throw new WebSdkError('INVALID_ORIGIN')
+  initializeBridge()
+  const request = createSellerSpriteProductSelectionRequest(createRequestId(), 'sellersprite', input)
+  try {
+    const response = await requestWithTimeout(PRODUCT_SELECTION_ACTION, request, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    if (!isSellerSpriteProductSelectionResponse(response)) throw new WebSdkError('INVALID_MESSAGE')
+    if (!response.ok) throw new WebSdkError(response.error.code)
+    return response.data
+  } catch (error: unknown) {
+    if (error instanceof WebSdkError) throw error
+    throw new WebSdkError('EXTENSION_UNAVAILABLE')
+  }
+}
+
+export const mineSellerSpriteKeywords = async (
+  input: SellerSpriteKeywordMiningInput,
+  options: WebSdkOptions = {},
+): Promise<SellerSpriteKeywordMiningData> => {
+  if (!isAllowedWebOrigin(window.location.origin)) throw new WebSdkError('INVALID_ORIGIN')
+  initializeBridge()
+  const request = createSellerSpriteKeywordMiningRequest(createRequestId(), 'sellersprite', input)
+  try {
+    const response = await requestWithTimeout(KEYWORD_MINING_ACTION, request, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    if (!isSellerSpriteKeywordMiningResponse(response)) throw new WebSdkError('INVALID_MESSAGE')
+    if (!response.ok) throw new WebSdkError(response.error.code)
+    return response.data
+  } catch (error: unknown) {
+    if (error instanceof WebSdkError) throw error
+    throw new WebSdkError('EXTENSION_UNAVAILABLE')
+  }
+}
+
 export const getExtensionStatus = ping
 export type {
   SellerSpriteCompetitorData,
   SellerSpriteCompetitorInput,
+  SellerSpriteProductSelectionData,
+  SellerSpriteProductSelectionInput,
+  SellerSpriteKeywordMiningData,
+  SellerSpriteKeywordMiningInput,
   SellerSpriteKeywordReverseData,
   SellerSpriteKeywordReverseInput,
   TargetDescriptor,

@@ -4,16 +4,27 @@ import {
   MESSAGE_NAMESPACE,
   PROTOCOL_VERSION,
   COMPETITOR_RESEARCH_ACTION,
+  PRODUCT_SELECTION_ACTION,
+  MARKET_SELECTION_ACTION,
+  KEYWORD_PRODUCT_RESEARCH_ACTION,
+  KEYWORD_MINING_ACTION,
   SELLERSPRITE_KEYWORD_REVERSE_ACTION,
   TARGET_ACTIONS,
   isPingRequest,
   isSellerSpriteCompetitorRequest,
+  isSellerSpriteProductSelectionRequest,
+  isSellerSpriteHtmlSessionRequest,
+  isSellerSpriteKeywordMiningRequest,
   isSellerSpriteKeywordReverseRequest,
   isTargetRequest,
   type PingResponse,
   type ProtocolError,
   type SellerSpriteKeywordReverseResponse,
   type SellerSpriteKeywordReverseSuccess,
+  type SellerSpriteHtmlSessionResponse,
+  type SellerSpriteHtmlSessionSuccess,
+  type SellerSpriteKeywordMiningResponse,
+  type SellerSpriteKeywordMiningSuccess,
   type TargetDescriptor,
   type TargetResponse,
   type TargetSuccess,
@@ -23,7 +34,14 @@ import { ExtensionRemoteConfigManager } from '../src/remote-config'
 import { TargetClient, TargetClientError } from '../src/targets/client'
 import { TargetPermissionManager } from '../src/targets/permissions'
 import { TARGET_REGISTRY } from '../src/targets/registry'
-import { reverseSellerSpriteKeywords, researchSellerSpriteCompetitors } from '../src/targets/sellersprite'
+import {
+  executeSellerSpriteKeywordProductResearch,
+  executeSellerSpriteMarketSelection,
+  mineSellerSpriteKeywords,
+  reverseSellerSpriteKeywords,
+  researchSellerSpriteCompetitors,
+  selectSellerSpriteProducts,
+} from '../src/targets/sellersprite'
 import { resolveRuntimeTargetPolicy } from '../src/targets/runtime-policy'
 
 const permissionManager = new TargetPermissionManager(TARGET_REGISTRY, browser.permissions)
@@ -222,6 +240,67 @@ const handleCompetitorMessage = async ({ data }: { data: unknown }): Promise<imp
   }
 }
 
+const handleProductSelectionMessage = async ({ data }: { data: unknown }): Promise<import('@cookie-amazon/protocol').SellerSpriteProductSelectionResponse> => {
+  if (!isSellerSpriteProductSelectionRequest(data)) return invalidMessage()
+  const { requestId } = data
+  const adapter = TARGET_REGISTRY.get(data.payload.targetId)
+  if (!adapter || adapter.targetId !== 'sellersprite') return targetError(requestId, 'UNKNOWN_TARGET')
+  const runtimePolicy = resolveRuntimeTargetPolicy(adapter, await configManager.load())
+  if (!runtimePolicy.enabled) return targetError(requestId, 'TARGET_DISABLED')
+  if (!runtimePolicy.capabilities.includes(PRODUCT_SELECTION_ACTION)) return targetError(requestId, 'OPERATION_DISABLED')
+  if (!(await permissionManager.hasPermission(adapter.targetId))) return targetError(requestId, 'TARGET_PERMISSION_MISSING')
+  try {
+    const result = await selectSellerSpriteProducts(
+      new TargetClient(adapter, undefined, runtimePolicy.operationOverrides),
+      data.payload.input,
+    )
+    return {
+      namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION,
+      requestId, action: PRODUCT_SELECTION_ACTION, ok: true, data: result,
+    }
+  } catch (error: unknown) {
+    if (error instanceof TargetClientError) return targetError(requestId, error.code)
+    return targetError(requestId, 'TARGET_API_ERROR')
+  }
+}
+
+const handleKeywordMiningMessage = async ({ data }: { data: unknown }): Promise<SellerSpriteKeywordMiningResponse> => {
+  if (!isSellerSpriteKeywordMiningRequest(data)) return invalidMessage()
+  const { requestId } = data
+  const adapter = TARGET_REGISTRY.get(data.payload.targetId)
+  if (!adapter || adapter.targetId !== 'sellersprite') return targetError(requestId, 'UNKNOWN_TARGET')
+  const runtimePolicy = resolveRuntimeTargetPolicy(adapter, await configManager.load())
+  if (!runtimePolicy.enabled) return targetError(requestId, 'TARGET_DISABLED')
+  if (!runtimePolicy.capabilities.includes(KEYWORD_MINING_ACTION)) return targetError(requestId, 'OPERATION_DISABLED')
+  if (!(await permissionManager.hasPermission(adapter.targetId))) return targetError(requestId, 'TARGET_PERMISSION_MISSING')
+  try {
+    const result = await mineSellerSpriteKeywords(new TargetClient(adapter, undefined, runtimePolicy.operationOverrides), data.payload.input)
+    return { namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION, requestId, action: KEYWORD_MINING_ACTION, ok: true, data: result } satisfies SellerSpriteKeywordMiningSuccess
+  } catch (error: unknown) {
+    return targetError(requestId, error instanceof TargetClientError ? error.code : 'TARGET_API_ERROR')
+  }
+}
+
+const handleHtmlSessionMessage = async ({ data }: { data: unknown }): Promise<SellerSpriteHtmlSessionResponse> => {
+  if (!isSellerSpriteHtmlSessionRequest(data)) return invalidMessage()
+  const { requestId } = data
+  const adapter = TARGET_REGISTRY.get(data.payload.targetId)
+  if (!adapter || adapter.targetId !== 'sellersprite') return targetError(requestId, 'UNKNOWN_TARGET')
+  const runtimePolicy = resolveRuntimeTargetPolicy(adapter, await configManager.load())
+  if (!runtimePolicy.enabled) return targetError(requestId, 'TARGET_DISABLED')
+  if (!runtimePolicy.capabilities.includes(data.action)) return targetError(requestId, 'OPERATION_DISABLED')
+  if (!(await permissionManager.hasPermission(adapter.targetId))) return targetError(requestId, 'TARGET_PERMISSION_MISSING')
+  try {
+    const client = new TargetClient(adapter, undefined, runtimePolicy.operationOverrides)
+    const result = data.action === MARKET_SELECTION_ACTION
+      ? await executeSellerSpriteMarketSelection(client)
+      : await executeSellerSpriteKeywordProductResearch(client)
+    return { namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION, requestId, action: data.action, ok: true, data: result } satisfies SellerSpriteHtmlSessionSuccess
+  } catch (error: unknown) {
+    return targetError(requestId, error instanceof TargetClientError ? error.code : 'TARGET_API_ERROR')
+  }
+}
+
 export default defineBackground(() => {
   onMessage('PING', ({ data }: { data: unknown }) => {
     if (!isPingRequest(data)) return invalidMessage()
@@ -240,6 +319,10 @@ export default defineBackground(() => {
   for (const action of TARGET_ACTIONS) onMessage(action, handleTargetMessage)
   onMessage(SELLERSPRITE_KEYWORD_REVERSE_ACTION, handleKeywordReverseMessage)
   onMessage(COMPETITOR_RESEARCH_ACTION, handleCompetitorMessage)
+  onMessage(PRODUCT_SELECTION_ACTION, handleProductSelectionMessage)
+  onMessage(KEYWORD_MINING_ACTION, handleKeywordMiningMessage)
+  onMessage(MARKET_SELECTION_ACTION, handleHtmlSessionMessage)
+  onMessage(KEYWORD_PRODUCT_RESEARCH_ACTION, handleHtmlSessionMessage)
 })
 
 export { handleTargetMessage }

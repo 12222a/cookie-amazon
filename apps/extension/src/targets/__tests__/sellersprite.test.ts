@@ -1,7 +1,27 @@
 import { describe, expect, it, vi } from 'vitest'
 import { TargetClient } from '../client'
 import { TARGET_REGISTRY } from '../registry'
-import { SELLERSPRITE_ADAPTER, reverseSellerSpriteKeywords } from '../sellersprite'
+import {
+  SELLERSPRITE_ADAPTER,
+  executeSellerSpriteKeywordProductResearch,
+  executeSellerSpriteMarketSelection,
+  mineSellerSpriteKeywords,
+  reverseSellerSpriteKeywords,
+  selectSellerSpriteProducts,
+} from '../sellersprite'
+
+const productSelectionInput = {
+  eligibility: [], filterSub: false, lowPrice: '0', market: 'US', monthName: '2026-01',
+  nodeIdPaths: [], order: { desc: true, field: 'sales' }, page: 1, pkgDimensionTypeList: [],
+  productTags: [], selectType: 'CATEGORY', sellerNationList: [], sellerTypes: [], size: 20,
+  symbolFlag: false, weightUnit: 'lb',
+}
+
+const keywordMiningInput = {
+  amazonChoice: false, desc: true, filterRootWord: false, historyDate: '2026-01',
+  keyword: 'wireless earbuds', keywordBidMatchType: 'broad', market: 'US', matchType: 'BROAD',
+  orderBy: 'searches', pageNum: 1, pageSize: 20,
+}
 
 const htmlResponse = (
   url: string,
@@ -119,5 +139,86 @@ describe('SellerSprite session adapter', () => {
         searchesTrend: [{ month: '2026-01', searchRank: null, searches: 100 }],
       }],
     })
+  })
+
+  it('exposes product selection with the fixed endpoint and minimizes item fields', async () => {
+    expect(SELLERSPRITE_ADAPTER.operations.PRODUCT_SELECTION).toEqual({
+      enabled: true, path: '/v3/api/product-research', method: 'POST', timeoutMs: 15_000,
+      response: 'product-selection',
+    })
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('https://www.sellersprite.com/v3/api/product-research')
+      expect(init).toMatchObject({ method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' } })
+      expect(JSON.parse(String(init?.body))).toEqual(productSelectionInput)
+      return new Response(JSON.stringify({
+        code: 'OK',
+        data: {
+          page: 1, pages: 5, size: 20, total: 100, hasNextPage: true,
+          items: [{
+            asin: 'B000000000', title: 'Example', brand: null, imageUrl: null,
+            price: 20, rating: null, reviews: 10, estimatedSales: null, leak: 'must-not-surface',
+          }],
+          leak: 'must-not-surface',
+        },
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    })
+
+    await expect(selectSellerSpriteProducts(new TargetClient(SELLERSPRITE_ADAPTER, fetcher), productSelectionInput))
+      .resolves.toEqual({
+        page: 1, pages: 5, size: 20, total: 100, hasNextPage: true,
+        items: [{
+          asin: 'B000000000', title: 'Example', brand: null, imageUrl: null,
+          price: 20, rating: null, reviews: 10, estimatedSales: null,
+        }],
+      })
+  })
+
+  it('accepts only empty keyword mining results and rejects unknown non-empty items', async () => {
+    const emptyFetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('https://www.sellersprite.com/v3/api/keyword-miner')
+      expect(init).toMatchObject({ method: 'POST', credentials: 'include' })
+      expect(JSON.parse(String(init?.body))).toEqual(keywordMiningInput)
+      return new Response(JSON.stringify({
+        code: 'OK',
+        data: { items: [], page: 1, size: 20, took: 12, total: 0 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    })
+    const miningOverride = { KEYWORD_MINING: { enabled: true } } as const
+    await expect(mineSellerSpriteKeywords(new TargetClient(SELLERSPRITE_ADAPTER, emptyFetcher, miningOverride), keywordMiningInput))
+      .resolves.toEqual({ items: [], page: 1, size: 20, took: 12, total: 0 })
+
+    const nonEmptyFetcher = new TargetClient(SELLERSPRITE_ADAPTER, async () => new Response(JSON.stringify({
+      code: 'OK', data: { items: [{ keyword: 'unknown' }], page: 1, size: 20, took: 12, total: 1 },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }), miningOverride)
+    await expect(mineSellerSpriteKeywords(nonEmptyFetcher, keywordMiningInput))
+      .rejects.toMatchObject({ code: 'TARGET_RESPONSE_INVALID' })
+
+    await expect(mineSellerSpriteKeywords(new TargetClient(SELLERSPRITE_ADAPTER, emptyFetcher), keywordMiningInput))
+      .rejects.toMatchObject({ code: 'OPERATION_DISABLED' })
+  })
+
+  it('returns only minimal completion status for HTML session capabilities', async () => {
+    const marketClient = new TargetClient(SELLERSPRITE_ADAPTER, vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('https://www.sellersprite.com/v2/market-research')
+      expect(init).toMatchObject({ method: 'POST', credentials: 'include' })
+      return htmlResponse('https://www.sellersprite.com/v2/market-research')
+    }))
+    await expect(executeSellerSpriteMarketSelection(marketClient))
+      .resolves.toEqual({ targetId: 'sellersprite', completed: true })
+
+    const keywordClient = new TargetClient(SELLERSPRITE_ADAPTER, async () =>
+      htmlResponse('https://www.sellersprite.com/v2/keyword-research'))
+    await expect(executeSellerSpriteKeywordProductResearch(keywordClient))
+      .resolves.toEqual({ targetId: 'sellersprite', completed: true })
+
+    const loggedOut = new TargetClient(SELLERSPRITE_ADAPTER, async () =>
+      htmlResponse('https://www.sellersprite.com/v2/market-research', { status: 401 }))
+    await expect(executeSellerSpriteMarketSelection(loggedOut))
+      .rejects.toMatchObject({ code: 'TARGET_NOT_LOGGED_IN' })
+
+    const foreign = new TargetClient(SELLERSPRITE_ADAPTER, async () =>
+      htmlResponse('https://attacker.example/v2/keyword-research'))
+    await expect(executeSellerSpriteKeywordProductResearch(foreign))
+      .rejects.toMatchObject({ code: 'TARGET_RESPONSE_INVALID' })
   })
 })
