@@ -92,6 +92,35 @@ const readProfile = async (response: Response): Promise<TargetProfile> => {
   return { userId, displayName }
 }
 
+export type HtmlSessionMetadata = {
+  status: number
+  contentType: string
+  finalPathname: string
+}
+
+const readHtmlSessionMetadata = async (
+  response: Response,
+  requestUrl: URL,
+): Promise<HtmlSessionMetadata> => {
+  if (response.status === 401 || response.status === 403) {
+    throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status)
+  }
+  if (response.status === 429) throw new TargetClientError('TARGET_RATE_LIMITED', response.status)
+  if (!response.ok) throw new TargetClientError('TARGET_API_ERROR', response.status)
+  const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
+  if (!contentType.includes('text/html')) throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  let finalUrl: URL
+  try {
+    finalUrl = new URL(response.url)
+  } catch {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  }
+  if (finalUrl.origin !== requestUrl.origin || finalUrl.username || finalUrl.password) {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  }
+  return { status: response.status, contentType, finalPathname: finalUrl.pathname }
+}
+
 export class TargetClient {
   private readonly fetcher: FetchImplementation
 
@@ -132,8 +161,19 @@ export class TargetClient {
     return this.execute(
       operation,
       (response) => parse(response),
-      { query, body },
+      { query, body: { kind: 'json', value: body } },
     )
+  }
+
+  public async executeHtmlSession(
+    operation: TargetOperation,
+    query: Readonly<Record<string, string>> = {},
+    form?: Readonly<Record<string, string>>,
+  ): Promise<HtmlSessionMetadata> {
+    return this.execute(operation, readHtmlSessionMetadata, {
+      query,
+      ...(form === undefined ? {} : { body: { kind: 'form', value: form } as const }),
+    })
   }
 
   private async execute<T>(
@@ -141,7 +181,9 @@ export class TargetClient {
     parse: (response: Response, requestUrl: URL) => Promise<T>,
     request?: {
       query: Readonly<Record<string, string>>
-      body: unknown
+      body?:
+        | { kind: 'json'; value: unknown }
+        | { kind: 'form'; value: Readonly<Record<string, string>> }
     },
   ): Promise<T> {
     const policy = resolveOperationPolicy(this.adapter.operations, operation, this.operationOverrides)
@@ -153,7 +195,9 @@ export class TargetClient {
       throw new TargetClientError('TARGET_RESPONSE_INVALID')
     }
     if (request) {
-      if (policy.method !== 'POST') throw new TargetClientError('TARGET_OPERATION_UNKNOWN')
+      if (policy.method !== 'GET' && policy.method !== 'POST') {
+        throw new TargetClientError('TARGET_OPERATION_UNKNOWN')
+      }
       for (const [key, value] of Object.entries(request.query)) url.searchParams.set(key, value)
     }
 
@@ -164,12 +208,17 @@ export class TargetClient {
         method: policy.method,
         credentials: 'include',
         signal: controller.signal,
-        ...(request === undefined
+        ...(request?.body === undefined
           ? {}
-          : {
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify(request.body),
-            }),
+          : request.body.kind === 'json'
+            ? {
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(request.body.value),
+              }
+            : {
+                headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                body: new URLSearchParams(request.body.value),
+              }),
       })
       return await parse(response, url)
     } catch (error: unknown) {

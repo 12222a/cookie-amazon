@@ -45,6 +45,61 @@ describe('TargetClient', () => {
     await expect(new TargetClient(adapter, fetcher).checkLogin()).resolves.toEqual({ loggedIn: true })
   })
 
+  it('constructs GET HTML requests without a body and parses only safe metadata', async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('https://example.com/api/me?market=US')
+      expect(init?.method).toBe('GET')
+      expect(init?.credentials).toBe('include')
+      expect(init?.headers).toBeUndefined()
+      expect(init?.body).toBeUndefined()
+      const html = new Response('<html>private</html>', {
+        status: 200,
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      })
+      Object.defineProperty(html, 'url', { value: 'https://example.com/api/me?market=US' })
+      return html
+    })
+
+    await expect(new TargetClient(adapter, fetcher).executeHtmlSession('CHECK_LOGIN', { market: 'US' }))
+      .resolves.toEqual({ status: 200, contentType: 'text/html; charset=utf-8', finalPathname: '/api/me' })
+    expect(fetcher.mock.results[0]?.value).toBeDefined()
+  })
+
+  it('constructs JSON POST requests without allowing arbitrary URLs', async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('https://example.com/api/me?market=US')
+      expect(init?.method).toBe('POST')
+      expect(init?.credentials).toBe('include')
+      expect(init?.headers).toEqual({ 'content-type': 'application/json' })
+      expect(init?.body).toBe('{"safe":true}')
+      return response({ authenticated: true })
+    })
+    const postAdapter = createTargetAdapter({
+      targetId: 'post-example', displayName: 'Post Example', origin: 'https://example.com',
+      operations: {
+        ...adapter.operations,
+        CHECK_LOGIN: { ...adapter.operations.CHECK_LOGIN, method: 'POST' },
+      },
+    })
+
+    await expect(new TargetClient(postAdapter, fetcher).executeJsonPost(
+      'CHECK_LOGIN', { market: 'US' }, { safe: true },
+      async (result) => ({ loggedIn: (await result.json()).authenticated === true }),
+    )).resolves.toEqual({ loggedIn: true })
+  })
+
+  it('rejects HTML responses that leave the adapter origin', async () => {
+    const fetcher = vi.fn(async () => {
+      const html = new Response('<html>private</html>', {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      })
+      Object.defineProperty(html, 'url', { value: 'https://attacker.example/landing' })
+      return html
+    })
+    await expect(new TargetClient(adapter, fetcher).executeHtmlSession('CHECK_LOGIN'))
+      .rejects.toMatchObject({ code: 'TARGET_RESPONSE_INVALID' })
+  })
   it('maps unauthenticated, rate-limited, and malformed responses', async () => {
     const unauthenticated = new TargetClient(adapter, async () => response({}, { status: 401 }))
     await expect(unauthenticated.checkLogin()).resolves.toEqual({ loggedIn: false })
