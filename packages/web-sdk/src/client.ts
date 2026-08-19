@@ -6,7 +6,9 @@ import {
   createSellerSpriteKeywordMiningRequest,
   createSellerSpriteKeywordReverseRequest,
   createTargetRequest,
+  CONTENT_SCRIPT_PROBE_ACTION,
   isAllowedWebOrigin,
+  isContentScriptProbeResponse,
   isPingResponse,
   isSellerSpriteCompetitorResponse,
   isSellerSpriteProductSelectionResponse,
@@ -44,6 +46,10 @@ import {
 import { WebSdkError } from './errors'
 
 export type WebSdkOptions = { timeoutMs?: number }
+export type ContentScriptProbeResult = {
+  available: boolean
+  extensionVersion?: string
+}
 const DEFAULT_TIMEOUT_MS = 1500
 let initialized = false
 
@@ -52,6 +58,34 @@ const initializeBridge = (): void => {
   if (initialized) return
   setNamespace(MESSAGE_NAMESPACE)
   initialized = true
+}
+
+export const probeContentScript = async (options: WebSdkOptions = {}): Promise<ContentScriptProbeResult> => {
+  if (!isAllowedWebOrigin(window.location.origin)) throw new WebSdkError('INVALID_ORIGIN')
+  const requestId = createRequestId()
+  const timeoutMs = options.timeoutMs ?? 500
+  return new Promise<ContentScriptProbeResult>((resolve) => {
+    let settled = false
+    const complete = (result: ContentScriptProbeResult): void => {
+      if (settled) return
+      settled = true
+      window.clearTimeout(timeoutId)
+      window.removeEventListener('message', onMessage)
+      resolve(result)
+    }
+    const onMessage = (event: MessageEvent<unknown>): void => {
+      if (event.source !== window || event.origin !== window.location.origin) return
+      if (!isContentScriptProbeResponse(event.data) || event.data.requestId !== requestId) return
+      complete({ available: true, extensionVersion: event.data.extensionVersion })
+    }
+    const timeoutId = window.setTimeout(() => complete({ available: false }), timeoutMs)
+    window.addEventListener('message', onMessage)
+    window.postMessage({
+      namespace: MESSAGE_NAMESPACE,
+      action: CONTENT_SCRIPT_PROBE_ACTION,
+      requestId,
+    }, window.location.origin)
+  })
 }
 
 const requestWithTimeout = async (

@@ -6,15 +6,22 @@ import {
   executeSellerSpriteKeywordProductResearch,
   executeSellerSpriteMarketSelection,
   mineSellerSpriteKeywords,
+  researchSellerSpriteCompetitors,
   reverseSellerSpriteKeywords,
   selectSellerSpriteProducts,
 } from '../sellersprite'
 
 const productSelectionInput = {
-  eligibility: [], filterSub: false, lowPrice: '0', market: 'US', monthName: '2026-01',
-  nodeIdPaths: [], order: { desc: true, field: 'sales' }, page: 1, pkgDimensionTypeList: [],
-  productTags: [], selectType: 'CATEGORY', sellerNationList: [], sellerTypes: [], size: 20,
-  symbolFlag: false, weightUnit: 'lb',
+  eligibility: [], filterSub: false, lowPrice: 'N' as const, market: 'US', monthName: 'bsr_sales_nearly',
+  nodeIdPaths: [], order: { desc: true, field: 'amz_unit' }, page: 1, pkgDimensionTypeList: [],
+  productTags: [], salesGrowthType: '30d' as const, selectType: 2 as const, sellerNationList: [],
+  sellerTypes: [], size: 20, symbolFlag: false, video: '' as const, weightUnit: 'g' as const,
+}
+
+const competitorInput = {
+  asins: [], keywords: 'wireless charger', brand: '', seller: '', lowPrice: 'N' as const,
+  market: 'US', monthName: 'bsr_sales_nearly', nodeIdPaths: [],
+  order: { desc: true, field: 'amz_unit' }, page: 1, size: 20, symbolFlag: false,
 }
 
 const keywordMiningInput = {
@@ -141,6 +148,54 @@ describe('SellerSprite session adapter', () => {
     })
   })
 
+  it('posts keyword scans, derives null pagination flags, and minimizes product fields', async () => {
+    expect(SELLERSPRITE_ADAPTER.operations.COMPETITOR_RESEARCH).toEqual({
+      enabled: true, path: '/v3/api/competing-lookup', method: 'POST', timeoutMs: 15_000,
+      response: 'competitor-research',
+    })
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('https://www.sellersprite.com/v3/api/competing-lookup')
+      expect(init).toMatchObject({ method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' } })
+      expect(JSON.parse(String(init?.body))).toEqual(competitorInput)
+      return new Response(JSON.stringify({
+        code: 'OK',
+        data: {
+          page: 1, pages: 2, size: 20, total: 21, hasNextPage: null,
+          items: [{
+            asin: 'B000000000', title0: 'Example', brand0: 'Brand', imageSrc: 'https://example.com/image.jpg',
+            price: '20', reviews: '10', amzUnit: '1,000',
+            totalAmount: 2_000, sellerName: 'private-field-must-not-surface',
+          }],
+        },
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    })
+
+    await expect(researchSellerSpriteCompetitors(new TargetClient(SELLERSPRITE_ADAPTER, fetcher), competitorInput))
+      .resolves.toEqual({
+        page: 1, pages: 2, size: 20, total: 21, hasNextPage: true,
+        items: [{
+          asin: 'B000000000', title: 'Example', brand: 'Brand', imageUrl: 'https://example.com/image.jpg',
+          price: 20, rating: null, reviews: 10, estimatedSales: 1_000,
+        }],
+      })
+  })
+
+  it('normalizes free-tier item caps and separates API errors from malformed responses', async () => {
+    const cappedClient = new TargetClient(SELLERSPRITE_ADAPTER, async () => new Response(JSON.stringify({
+      code: 'OK',
+      data: { page: 4, pages: 100, size: 60, total: 6_000, items: null },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await expect(researchSellerSpriteCompetitors(cappedClient, competitorInput)).resolves.toEqual({
+      page: 4, pages: 100, size: 60, total: 6_000, hasNextPage: false, items: [],
+    })
+
+    const apiErrorClient = new TargetClient(SELLERSPRITE_ADAPTER, async () => new Response(JSON.stringify({
+      code: 'QUOTA_EXCEEDED', data: null,
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await expect(researchSellerSpriteCompetitors(apiErrorClient, competitorInput))
+      .rejects.toMatchObject({ code: 'TARGET_API_ERROR' })
+  })
+
   it('exposes product selection with the fixed endpoint and minimizes item fields', async () => {
     expect(SELLERSPRITE_ADAPTER.operations.PRODUCT_SELECTION).toEqual({
       enabled: true, path: '/v3/api/product-research', method: 'POST', timeoutMs: 15_000,
@@ -156,7 +211,7 @@ describe('SellerSprite session adapter', () => {
           page: 1, pages: 5, size: 20, total: 100, hasNextPage: true,
           items: [{
             asin: 'B000000000', title: 'Example', brand: null, imageUrl: null,
-            price: 20, rating: null, reviews: 10, estimatedSales: null, leak: 'must-not-surface',
+            price: 20, rating: null, reviews: 10, amzUnit: 240, leak: 'must-not-surface',
           }],
           leak: 'must-not-surface',
         },
@@ -168,7 +223,7 @@ describe('SellerSprite session adapter', () => {
         page: 1, pages: 5, size: 20, total: 100, hasNextPage: true,
         items: [{
           asin: 'B000000000', title: 'Example', brand: null, imageUrl: null,
-          price: 20, rating: null, reviews: 10, estimatedSales: null,
+          price: 20, rating: null, reviews: 10, estimatedSales: 240,
         }],
       })
   })

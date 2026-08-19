@@ -1,8 +1,13 @@
 export const PROTOCOL_VERSION = 1 as const
 export const MESSAGE_NAMESPACE = 'cookie-amazon-platform' as const
 export const WEB_ORIGIN = 'http://localhost:5173' as const
+export const WEB_ORIGINS = [WEB_ORIGIN, 'http://127.0.0.1:5173'] as const
 export const REMOTE_CONFIG_ORIGIN = 'http://localhost:8787' as const
 export const PING_ACTION = 'PING' as const
+export const CONTENT_SCRIPT_PROBE_ACTION = 'COOKIE_AMAZON_CONTENT_SCRIPT_PROBE' as const
+export const CONTENT_SCRIPT_PROBE_RESPONSE = 'COOKIE_AMAZON_CONTENT_SCRIPT_READY' as const
+export const CONTENT_SCRIPT_RUNTIME_PROBE_ACTION = 'COOKIE_AMAZON_RUNTIME_PROBE' as const
+export const CONTENT_SCRIPT_RUNTIME_PROBE_RESPONSE = 'COOKIE_AMAZON_RUNTIME_READY' as const
 export const CAPABILITIES = [
   'PING',
   'LIST_TARGETS',
@@ -75,7 +80,37 @@ export type ProtocolError = {
 
 export type PingResponse = PingSuccess | ProtocolError
 
-export const isAllowedWebOrigin = (origin: string): boolean => origin === WEB_ORIGIN
+export type ContentScriptProbeRequest = {
+  namespace: typeof MESSAGE_NAMESPACE
+  action: typeof CONTENT_SCRIPT_PROBE_ACTION
+  requestId: string
+}
+
+export type ContentScriptProbeResponse = {
+  namespace: typeof MESSAGE_NAMESPACE
+  action: typeof CONTENT_SCRIPT_PROBE_RESPONSE
+  requestId: string
+  extensionVersion: string
+}
+
+export const isContentScriptProbeRequest = (value: unknown): value is ContentScriptProbeRequest =>
+  isRecord(value)
+  && value.namespace === MESSAGE_NAMESPACE
+  && value.action === CONTENT_SCRIPT_PROBE_ACTION
+  && typeof value.requestId === 'string'
+  && value.requestId.length > 0
+
+export const isContentScriptProbeResponse = (value: unknown): value is ContentScriptProbeResponse =>
+  isRecord(value)
+  && value.namespace === MESSAGE_NAMESPACE
+  && value.action === CONTENT_SCRIPT_PROBE_RESPONSE
+  && typeof value.requestId === 'string'
+  && value.requestId.length > 0
+  && typeof value.extensionVersion === 'string'
+  && value.extensionVersion.length > 0
+
+export const isAllowedWebOrigin = (origin: string): boolean =>
+  WEB_ORIGINS.some((allowedOrigin) => origin === allowedOrigin)
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
@@ -156,9 +191,22 @@ export type TargetPermissionData = {
   granted: boolean
   status: Exclude<TargetState, 'unknown'>
 }
+export type TargetConnectionState =
+  | 'NOT_INSTALLED'
+  | 'NO_COOKIE'
+  | 'COOKIE_FOUND'
+  | 'BACKGROUND_OK'
+  | 'BACKGROUND_FAILED'
+  | 'PAGE_CONTEXT_OK'
+  | 'PAGE_CONTEXT_FAILED'
+  | 'NEED_LOGIN'
+export type TargetConnectionMode = 'background' | 'page'
 export type TargetLoginData = {
   targetId: string
   loggedIn: boolean
+  connectionState?: TargetConnectionState
+  connectionMode?: TargetConnectionMode
+  cookieFound?: boolean
 }
 export type TargetProfile = {
   userId: string
@@ -240,7 +288,15 @@ export const isTargetResponse = (value: unknown): value is TargetResponse => {
       && (value.data as TargetStatusData).capabilities.every((item) => CAPABILITIES.includes(item as Capability))
   }
   if (value.action === 'CHECK_LOGIN') {
-    return typeof value.data.targetId === 'string' && typeof value.data.loggedIn === 'boolean'
+    const data = value.data as TargetLoginData
+    const validState = data.connectionState === undefined
+      || ['NOT_INSTALLED', 'NO_COOKIE', 'COOKIE_FOUND', 'BACKGROUND_OK', 'BACKGROUND_FAILED', 'PAGE_CONTEXT_OK', 'PAGE_CONTEXT_FAILED', 'NEED_LOGIN'].includes(data.connectionState)
+    const validMode = data.connectionMode === undefined || data.connectionMode === 'background' || data.connectionMode === 'page'
+    return typeof data.targetId === 'string'
+      && typeof data.loggedIn === 'boolean'
+      && validState
+      && validMode
+      && (data.cookieFound === undefined || typeof data.cookieFound === 'boolean')
   }
   if (value.action === 'GET_PROFILE') {
     return Object.keys(value.data).length === 2
@@ -403,6 +459,9 @@ const KEYWORD_REVERSE_INPUT_KEYS = [
 const isBoundedString = (value: unknown, max: number): value is string =>
   typeof value === 'string' && value.length > 0 && value.length <= max
 
+const isBoundedOptionalString = (value: unknown, max: number): value is string =>
+  typeof value === 'string' && value.length <= max
+
 const isJsonPrimitive = (value: unknown): value is JsonPrimitive =>
   value === null
   || typeof value === 'string'
@@ -510,8 +569,11 @@ export const isSellerSpriteKeywordReverseResponse = (
 export const COMPETITOR_RESEARCH_ACTION = 'COMPETITOR_RESEARCH' as const
 
 export type SellerSpriteCompetitorInput = {
-  asins: JsonPrimitive[]
-  lowPrice: string
+  asins: string[]
+  keywords: string
+  brand: string
+  seller: string
+  lowPrice: 'Y' | 'N'
   market: string
   monthName: string
   nodeIdPaths: JsonPrimitive[]
@@ -563,7 +625,8 @@ export type SellerSpriteCompetitorSuccess = {
 export type SellerSpriteCompetitorResponse = SellerSpriteCompetitorSuccess | ProtocolError
 
 const COMPETITOR_INPUT_KEYS = [
-  'asins', 'lowPrice', 'market', 'monthName', 'nodeIdPaths', 'order', 'page', 'size', 'symbolFlag',
+  'asins', 'keywords', 'brand', 'seller', 'lowPrice', 'market', 'monthName', 'nodeIdPaths',
+  'order', 'page', 'size', 'symbolFlag',
 ] as const
 
 const isPrimitiveArray = (value: unknown): value is JsonPrimitive[] =>
@@ -574,8 +637,20 @@ export const isSellerSpriteCompetitorInput = (
 ): value is SellerSpriteCompetitorInput => {
   if (!isRecord(value) || Object.keys(value).length !== COMPETITOR_INPUT_KEYS.length) return false
   if (!COMPETITOR_INPUT_KEYS.every((key) => Object.hasOwn(value, key))) return false
-  return isPrimitiveArray(value.asins)
-    && isBoundedString(value.lowPrice, 64)
+  const selectors = [
+    Array.isArray(value.asins) && value.asins.length > 0,
+    typeof value.keywords === 'string' && value.keywords.length > 0,
+    typeof value.brand === 'string' && value.brand.length > 0,
+    typeof value.seller === 'string' && value.seller.length > 0,
+  ]
+  return Array.isArray(value.asins)
+    && value.asins.length <= 100
+    && value.asins.every((asin) => isBoundedString(asin, 16))
+    && isBoundedOptionalString(value.keywords, 80)
+    && isBoundedOptionalString(value.brand, 128)
+    && isBoundedOptionalString(value.seller, 128)
+    && selectors.filter(Boolean).length === 1
+    && (value.lowPrice === 'Y' || value.lowPrice === 'N')
     && isBoundedString(value.market, 32)
     && isBoundedString(value.monthName, 32)
     && isPrimitiveArray(value.nodeIdPaths)
@@ -586,7 +661,7 @@ export const isSellerSpriteCompetitorInput = (
     && typeof value.page === 'number'
     && Number.isInteger(value.page) && value.page > 0 && value.page <= 10_000
     && typeof value.size === 'number'
-    && Number.isInteger(value.size) && value.size > 0 && value.size <= 100
+    && Number.isInteger(value.size) && value.size > 0 && value.size <= 60
     && typeof value.symbolFlag === 'boolean'
 }
 
@@ -654,7 +729,7 @@ export const PRODUCT_SELECTION_ACTION = 'PRODUCT_SELECTION' as const
 export type SellerSpriteProductSelectionInput = {
   eligibility: JsonPrimitive[]
   filterSub: boolean
-  lowPrice: string
+  lowPrice: 'Y' | 'N'
   market: string
   monthName: string
   nodeIdPaths: JsonPrimitive[]
@@ -662,15 +737,35 @@ export type SellerSpriteProductSelectionInput = {
   page: number
   pkgDimensionTypeList: JsonPrimitive[]
   productTags: JsonPrimitive[]
-  selectType: string
+  salesGrowthType: '30d'
+  selectType: 2
   sellerNationList: JsonPrimitive[]
   sellerTypes: JsonPrimitive[]
   size: number
   symbolFlag: boolean
-  weightUnit: string
+  video: '' | 'Y'
+  weightUnit: 'g'
 }
 
-export type SellerSpriteProductSelectionData = SellerSpriteCompetitorData
+export type SellerSpriteProductSelectionItem = {
+  asin: string
+  title: string | null
+  brand: string | null
+  imageUrl: string | null
+  price: number | null
+  rating: number | null
+  reviews: number | null
+  estimatedSales: number | null
+}
+
+export type SellerSpriteProductSelectionData = {
+  page: number
+  pages: number
+  size: number
+  total: number
+  hasNextPage: boolean
+  items: SellerSpriteProductSelectionItem[]
+}
 export type SellerSpriteProductSelectionRequest = {
   namespace: typeof MESSAGE_NAMESPACE
   kind: 'request'
@@ -692,8 +787,8 @@ export type SellerSpriteProductSelectionResponse = SellerSpriteProductSelectionS
 
 const PRODUCT_SELECTION_INPUT_KEYS = [
   'eligibility', 'filterSub', 'lowPrice', 'market', 'monthName', 'nodeIdPaths', 'order', 'page',
-  'pkgDimensionTypeList', 'productTags', 'selectType', 'sellerNationList', 'sellerTypes', 'size',
-  'symbolFlag', 'weightUnit',
+  'pkgDimensionTypeList', 'productTags', 'salesGrowthType', 'selectType', 'sellerNationList',
+  'sellerTypes', 'size', 'symbolFlag', 'video', 'weightUnit',
 ] as const
 
 const isStrictPrimitiveArray = (value: unknown): value is JsonPrimitive[] =>
@@ -706,7 +801,7 @@ export const isSellerSpriteProductSelectionInput = (
   if (!PRODUCT_SELECTION_INPUT_KEYS.every((key) => Object.hasOwn(value, key))) return false
   return isStrictPrimitiveArray(value.eligibility)
     && typeof value.filterSub === 'boolean'
-    && isBoundedString(value.lowPrice, 64)
+    && (value.lowPrice === 'Y' || value.lowPrice === 'N')
     && isBoundedString(value.market, 32)
     && isBoundedString(value.monthName, 32)
     && isStrictPrimitiveArray(value.nodeIdPaths)
@@ -718,13 +813,15 @@ export const isSellerSpriteProductSelectionInput = (
     && Number.isInteger(value.page) && value.page > 0 && value.page <= 10_000
     && isStrictPrimitiveArray(value.pkgDimensionTypeList)
     && isStrictPrimitiveArray(value.productTags)
-    && isBoundedString(value.selectType, 64)
+    && value.salesGrowthType === '30d'
+    && value.selectType === 2
     && isStrictPrimitiveArray(value.sellerNationList)
     && isStrictPrimitiveArray(value.sellerTypes)
     && typeof value.size === 'number'
     && Number.isInteger(value.size) && value.size > 0 && value.size <= 100
     && typeof value.symbolFlag === 'boolean'
-    && isBoundedString(value.weightUnit, 32)
+    && (value.video === '' || value.video === 'Y')
+    && value.weightUnit === 'g'
 }
 
 export const createSellerSpriteProductSelectionRequest = (
@@ -753,6 +850,18 @@ export const isSellerSpriteProductSelectionRequest = (
   return isSellerSpriteProductSelectionInput(value.payload.input)
 }
 
+const isProductSelectionItem = (value: unknown): value is SellerSpriteProductSelectionItem =>
+  isRecord(value)
+  && Object.keys(value).length === 8
+  && typeof value.asin === 'string'
+  && isNullableString(value.title)
+  && isNullableString(value.brand)
+  && isNullableString(value.imageUrl)
+  && isNullableFiniteNumber(value.price)
+  && isNullableFiniteNumber(value.rating)
+  && isNullableFiniteNumber(value.reviews)
+  && isNullableFiniteNumber(value.estimatedSales)
+
 export const isSellerSpriteProductSelectionResponse = (
   value: unknown,
 ): value is SellerSpriteProductSelectionResponse => {
@@ -760,7 +869,15 @@ export const isSellerSpriteProductSelectionResponse = (
   if (value.protocolVersion !== PROTOCOL_VERSION || typeof value.requestId !== 'string') return false
   if (value.ok === false) return isRecord(value.error) && typeof value.error.code === 'string'
   if (value.ok !== true || value.action !== PRODUCT_SELECTION_ACTION || !isRecord(value.data)) return false
-  return isSellerSpriteCompetitorResponse({ ...value, action: COMPETITOR_RESEARCH_ACTION })
+  const data = value.data
+  return Object.keys(data).length === 6
+    && typeof data.page === 'number'
+    && typeof data.pages === 'number'
+    && typeof data.size === 'number'
+    && typeof data.total === 'number'
+    && typeof data.hasNextPage === 'boolean'
+    && Array.isArray(data.items)
+    && data.items.every(isProductSelectionItem)
 }
 
 export const KEYWORD_MINING_ACTION = 'KEYWORD_MINING' as const

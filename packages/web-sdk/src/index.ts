@@ -5,6 +5,7 @@ export {
   getTargetStatus,
   listTargets,
   ping,
+  probeContentScript,
   removeTargetPermission,
   requestTargetPermission,
   researchSellerSpriteCompetitors,
@@ -23,5 +24,6 @@ export type {
   SellerSpriteKeywordMiningData,
   SellerSpriteKeywordMiningInput,
   TargetDescriptor,
+  ContentScriptProbeResult,
   WebSdkOptions,
 } from './client'

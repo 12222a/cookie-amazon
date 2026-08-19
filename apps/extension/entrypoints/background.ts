@@ -28,10 +28,13 @@ import {
   type TargetDescriptor,
   type TargetResponse,
   type TargetSuccess,
+  type TargetConnectionMode,
+  type TargetConnectionState,
+  type TargetLoginData,
 } from '@cookie-amazon/protocol'
 import type { RemoteConfig } from '@cookie-amazon/remote-config'
 import { ExtensionRemoteConfigManager } from '../src/remote-config'
-import { TargetClient, TargetClientError } from '../src/targets/client'
+import { TargetClient, TargetClientError, type FetchImplementation } from '../src/targets/client'
 import { TargetPermissionManager } from '../src/targets/permissions'
 import { TARGET_REGISTRY } from '../src/targets/registry'
 import {
@@ -42,6 +45,7 @@ import {
   researchSellerSpriteCompetitors,
   selectSellerSpriteProducts,
 } from '../src/targets/sellersprite'
+import { resolveOperationPolicy } from '../src/targets/policy'
 import { resolveRuntimeTargetPolicy } from '../src/targets/runtime-policy'
 
 const permissionManager = new TargetPermissionManager(TARGET_REGISTRY, browser.permissions)
@@ -56,6 +60,235 @@ const targetError = (requestId: string, code: ProtocolError['error']['code']): P
   namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION,
   requestId, ok: false, error: { code },
 })
+
+const requestIdOf = (data: unknown): string =>
+  typeof data === 'object' && data !== null
+    && typeof (data as { requestId?: unknown }).requestId === 'string'
+    && (data as { requestId: string }).requestId.length > 0
+    ? (data as { requestId: string }).requestId
+    : 'unknown'
+
+type PageLoginProbe = { loggedIn: boolean }
+type PageFetchResult = {
+  status: number
+  statusText: string
+  url: string
+  headers: [string, string][]
+  body: string
+}
+
+const hasSellerSpriteCookie = async (adapter: TargetDescriptor): Promise<boolean> => {
+  const cookies = await browser.cookies.getAll({ url: new URL(adapter.origin).toString() })
+  return cookies.length > 0
+}
+
+const waitForTab = async (tabId: number): Promise<void> => {
+  await new Promise<void>((resolve, reject) => {
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+    let settled = false
+    const cleanup = (): void => {
+      if (timeoutId !== undefined) clearTimeout(timeoutId)
+      browser.tabs.onUpdated.removeListener(onUpdated)
+    }
+    const complete = (): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve()
+    }
+    const fail = (error: TargetClientError): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(error)
+    }
+    const onUpdated = (updatedTabId: number, changeInfo: { status?: string }): void => {
+      if (updatedTabId === tabId && changeInfo.status === 'complete') complete()
+    }
+
+    browser.tabs.onUpdated.addListener(onUpdated)
+    timeoutId = setTimeout(() => fail(new TargetClientError('TIMEOUT')), 15_000)
+    void browser.tabs.get(tabId)
+      .then((tab) => { if (tab.status === 'complete') complete() })
+      .catch(() => fail(new TargetClientError('EXTENSION_UNAVAILABLE')))
+  })
+}
+
+const getSellerSpriteTab = async (adapter: TargetDescriptor): Promise<number> => {
+  const tabs = await browser.tabs.query({ url: `${adapter.origin}/*` })
+  const existing = tabs.find((tab) => typeof tab.id === 'number')
+  if (typeof existing?.id === 'number') {
+    await waitForTab(existing.id)
+    return existing.id
+  }
+  const created = await browser.tabs.create({ url: adapter.origin })
+  if (typeof created.id !== 'number') throw new TargetClientError('EXTENSION_UNAVAILABLE')
+  await waitForTab(created.id)
+  return created.id
+}
+
+const executePageLoginProbe = async (tabId: number, probeUrl: string): Promise<PageLoginProbe> => {
+  const results = await browser.scripting.executeScript({
+    target: { tabId },
+    func: async (url: string): Promise<PageLoginProbe> => {
+      try {
+        const response = await fetch(url, { credentials: 'include', redirect: 'follow' })
+        const requestUrl = new URL(url)
+        const finalUrl = new URL(response.url)
+        return {
+          loggedIn: response.ok && finalUrl.origin === requestUrl.origin
+            && finalUrl.pathname === requestUrl.pathname
+            && finalUrl.search === ''
+            && finalUrl.hash === '',
+        }
+      } catch {
+        return { loggedIn: false }
+      }
+    },
+    args: [probeUrl],
+  })
+  const result = results[0]?.result
+  if (typeof result !== 'object' || result === null
+    || typeof (result as PageLoginProbe).loggedIn !== 'boolean') {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID')
+  }
+  return result as PageLoginProbe
+}
+
+const createPageContextClient = async (
+  adapter: NonNullable<ReturnType<typeof TARGET_REGISTRY.get>>,
+  runtimePolicy: ReturnType<typeof resolveRuntimeTargetPolicy>,
+): Promise<TargetClient> => {
+  const descriptor: TargetDescriptor = {
+    targetId: adapter.targetId,
+    displayName: adapter.displayName,
+    origin: adapter.origin,
+    enabled: runtimePolicy.enabled,
+    status: 'ready',
+  }
+  const tabId = await getSellerSpriteTab(descriptor)
+  const fetcher: FetchImplementation = async (input, init) => {
+    const requestUrl = String(input)
+    const requestInit = {
+      method: init?.method ?? 'GET',
+      headers: Array.from(new Headers(init?.headers).entries()),
+      body: typeof init?.body === 'string' ? init.body : init?.body === undefined ? undefined : String(init.body),
+    }
+    const results = await browser.scripting.executeScript({
+      target: { tabId },
+      func: async (url: string, request: { method: string; headers: [string, string][]; body?: string }): Promise<PageFetchResult> => {
+        const response = await fetch(url, {
+          method: request.method,
+          headers: request.headers,
+          body: request.body,
+          credentials: 'include',
+          redirect: 'follow',
+        })
+        return {
+          status: response.status,
+          statusText: response.statusText,
+          url: response.url,
+          headers: Array.from(response.headers.entries()),
+          body: await response.text(),
+        }
+      },
+      args: [requestUrl, requestInit],
+    })
+    const result = results[0]?.result
+    if (typeof result !== 'object' || result === null || typeof (result as PageFetchResult).body !== 'string') {
+      throw new TargetClientError('TARGET_RESPONSE_INVALID')
+    }
+    const pageResponse = result as PageFetchResult
+    const response = new Response(pageResponse.body, {
+      status: pageResponse.status,
+      statusText: pageResponse.statusText,
+      headers: pageResponse.headers,
+    })
+    Object.defineProperty(response, 'url', { value: pageResponse.url })
+    return response
+  }
+  return new TargetClient(adapter, fetcher, runtimePolicy.operationOverrides)
+}
+
+const withPageFallback = async <T>(
+  adapter: NonNullable<ReturnType<typeof TARGET_REGISTRY.get>>,
+  runtimePolicy: ReturnType<typeof resolveRuntimeTargetPolicy>,
+  backgroundRequest: () => Promise<T>,
+  pageRequest: (client: TargetClient) => Promise<T>,
+): Promise<T> => {
+  try {
+    return await backgroundRequest()
+  } catch (error: unknown) {
+    if (!(error instanceof TargetClientError)) throw error
+    return pageRequest(await createPageContextClient(adapter, runtimePolicy))
+  }
+}
+
+const getConnectionResult = (
+  targetId: string,
+  loggedIn: boolean,
+  connectionState: TargetConnectionState,
+  connectionMode?: TargetConnectionMode,
+  cookieFound?: boolean,
+): TargetLoginData => ({
+  targetId,
+  loggedIn,
+  connectionState,
+  ...(connectionMode === undefined ? {} : { connectionMode }),
+  ...(cookieFound === undefined ? {} : { cookieFound }),
+})
+
+const checkSellerSpriteConnection = async (
+  adapter: NonNullable<ReturnType<typeof TARGET_REGISTRY.get>>,
+  runtimePolicy: ReturnType<typeof resolveRuntimeTargetPolicy>,
+): Promise<TargetLoginData> => {
+  const descriptor: TargetDescriptor = {
+    targetId: adapter.targetId,
+    displayName: adapter.displayName,
+    origin: adapter.origin,
+    enabled: runtimePolicy.enabled,
+    status: 'ready',
+  }
+  let cookieFound = false
+  try {
+    cookieFound = await hasSellerSpriteCookie(descriptor)
+  } catch {
+    cookieFound = false
+  }
+
+  if (cookieFound) {
+    const backgroundClient = new TargetClient(adapter, undefined, runtimePolicy.operationOverrides)
+    try {
+      const login = await adapter.checkLogin(backgroundClient)
+      if (login.loggedIn) return getConnectionResult(adapter.targetId, true, 'BACKGROUND_OK', 'background', true)
+    } catch {
+      // Fall back to a page-context check when direct authenticated requests fail.
+    }
+  }
+
+  const policy = resolveOperationPolicy(adapter.operations, 'CHECK_LOGIN', runtimePolicy.operationOverrides)
+  if (!policy) return getConnectionResult(adapter.targetId, false, 'BACKGROUND_FAILED', undefined, cookieFound)
+
+  try {
+    const tabId = await getSellerSpriteTab(descriptor)
+    const probeUrl = new URL(policy.path, adapter.origin).toString()
+    const pageResult = await executePageLoginProbe(tabId, probeUrl)
+    if (pageResult.loggedIn) return getConnectionResult(adapter.targetId, true, 'PAGE_CONTEXT_OK', 'page', cookieFound)
+    if (!cookieFound) return getConnectionResult(adapter.targetId, false, 'NO_COOKIE', 'page', false)
+    return getConnectionResult(adapter.targetId, false, 'NEED_LOGIN', 'page', true)
+  } catch {
+    return getConnectionResult(adapter.targetId, false, 'PAGE_CONTEXT_FAILED', 'page', cookieFound)
+  }
+}
+
+const guarded = <T>(handler: (message: { data: unknown }) => T | Promise<T>) =>
+  async (message: { data: unknown }): Promise<T | ProtocolError> => {
+    try {
+      return await handler(message)
+    } catch {
+      return targetError(requestIdOf(message.data), 'TARGET_API_ERROR')
+    }
+  }
 
 const descriptor = async (targetId: string, config: RemoteConfig | null): Promise<TargetDescriptor | ProtocolError> => {
   const adapter = TARGET_REGISTRY.get(targetId)
@@ -145,13 +378,14 @@ const handleTargetMessage = async ({ data }: { data: unknown }): Promise<TargetR
     if (!(await permissionManager.hasPermission(targetId))) {
       return targetError(data.requestId, 'TARGET_PERMISSION_MISSING')
     }
-    const client = new TargetClient(adapter, undefined, runtimePolicy.operationOverrides)
     try {
-      const result = await adapter.checkLogin(client)
+      const result = adapter.targetId === 'sellersprite'
+        ? await checkSellerSpriteConnection(adapter, runtimePolicy)
+        : { targetId, loggedIn: (await adapter.checkLogin(new TargetClient(adapter, undefined, runtimePolicy.operationOverrides))).loggedIn }
       return {
         namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION,
         requestId: data.requestId, action: data.action, ok: true,
-        data: { targetId, loggedIn: result.loggedIn },
+        data: result,
       } satisfies TargetSuccess
     } catch (error: unknown) {
       if (error instanceof TargetClientError) return targetError(data.requestId, error.code)
@@ -200,9 +434,11 @@ const handleKeywordReverseMessage = async ({ data }: { data: unknown }): Promise
     return targetError(requestId, 'TARGET_PERMISSION_MISSING')
   }
   try {
-    const result = await reverseSellerSpriteKeywords(
-      new TargetClient(adapter, undefined, runtimePolicy.operationOverrides),
-      data.payload.input,
+    const result = await withPageFallback(
+      adapter,
+      runtimePolicy,
+      () => reverseSellerSpriteKeywords(new TargetClient(adapter, undefined, runtimePolicy.operationOverrides), data.payload.input),
+      (client) => reverseSellerSpriteKeywords(client, data.payload.input),
     )
     return {
       namespace: MESSAGE_NAMESPACE,
@@ -229,7 +465,12 @@ const handleCompetitorMessage = async ({ data }: { data: unknown }): Promise<imp
   if (!runtimePolicy.capabilities.includes(COMPETITOR_RESEARCH_ACTION)) return targetError(requestId, 'OPERATION_DISABLED')
   if (!(await permissionManager.hasPermission(adapter.targetId))) return targetError(requestId, 'TARGET_PERMISSION_MISSING')
   try {
-    const result = await researchSellerSpriteCompetitors(new TargetClient(adapter, undefined, runtimePolicy.operationOverrides), data.payload.input)
+    const result = await withPageFallback(
+      adapter,
+      runtimePolicy,
+      () => researchSellerSpriteCompetitors(new TargetClient(adapter, undefined, runtimePolicy.operationOverrides), data.payload.input),
+      (client) => researchSellerSpriteCompetitors(client, data.payload.input),
+    )
     return {
       namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION,
       requestId, action: COMPETITOR_RESEARCH_ACTION, ok: true, data: result,
@@ -250,9 +491,11 @@ const handleProductSelectionMessage = async ({ data }: { data: unknown }): Promi
   if (!runtimePolicy.capabilities.includes(PRODUCT_SELECTION_ACTION)) return targetError(requestId, 'OPERATION_DISABLED')
   if (!(await permissionManager.hasPermission(adapter.targetId))) return targetError(requestId, 'TARGET_PERMISSION_MISSING')
   try {
-    const result = await selectSellerSpriteProducts(
-      new TargetClient(adapter, undefined, runtimePolicy.operationOverrides),
-      data.payload.input,
+    const result = await withPageFallback(
+      adapter,
+      runtimePolicy,
+      () => selectSellerSpriteProducts(new TargetClient(adapter, undefined, runtimePolicy.operationOverrides), data.payload.input),
+      (client) => selectSellerSpriteProducts(client, data.payload.input),
     )
     return {
       namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION,
@@ -274,7 +517,12 @@ const handleKeywordMiningMessage = async ({ data }: { data: unknown }): Promise<
   if (!runtimePolicy.capabilities.includes(KEYWORD_MINING_ACTION)) return targetError(requestId, 'OPERATION_DISABLED')
   if (!(await permissionManager.hasPermission(adapter.targetId))) return targetError(requestId, 'TARGET_PERMISSION_MISSING')
   try {
-    const result = await mineSellerSpriteKeywords(new TargetClient(adapter, undefined, runtimePolicy.operationOverrides), data.payload.input)
+    const result = await withPageFallback(
+      adapter,
+      runtimePolicy,
+      () => mineSellerSpriteKeywords(new TargetClient(adapter, undefined, runtimePolicy.operationOverrides), data.payload.input),
+      (client) => mineSellerSpriteKeywords(client, data.payload.input),
+    )
     return { namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION, requestId, action: KEYWORD_MINING_ACTION, ok: true, data: result } satisfies SellerSpriteKeywordMiningSuccess
   } catch (error: unknown) {
     return targetError(requestId, error instanceof TargetClientError ? error.code : 'TARGET_API_ERROR')
@@ -291,38 +539,47 @@ const handleHtmlSessionMessage = async ({ data }: { data: unknown }): Promise<Se
   if (!runtimePolicy.capabilities.includes(data.action)) return targetError(requestId, 'OPERATION_DISABLED')
   if (!(await permissionManager.hasPermission(adapter.targetId))) return targetError(requestId, 'TARGET_PERMISSION_MISSING')
   try {
-    const client = new TargetClient(adapter, undefined, runtimePolicy.operationOverrides)
-    const result = data.action === MARKET_SELECTION_ACTION
-      ? await executeSellerSpriteMarketSelection(client)
-      : await executeSellerSpriteKeywordProductResearch(client)
+    const result = await withPageFallback(
+      adapter,
+      runtimePolicy,
+      () => data.action === MARKET_SELECTION_ACTION
+        ? executeSellerSpriteMarketSelection(new TargetClient(adapter, undefined, runtimePolicy.operationOverrides))
+        : executeSellerSpriteKeywordProductResearch(new TargetClient(adapter, undefined, runtimePolicy.operationOverrides)),
+      (client) => data.action === MARKET_SELECTION_ACTION
+        ? executeSellerSpriteMarketSelection(client)
+        : executeSellerSpriteKeywordProductResearch(client),
+    )
     return { namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION, requestId, action: data.action, ok: true, data: result } satisfies SellerSpriteHtmlSessionSuccess
   } catch (error: unknown) {
     return targetError(requestId, error instanceof TargetClientError ? error.code : 'TARGET_API_ERROR')
   }
 }
 
-export default defineBackground(() => {
-  onMessage('PING', ({ data }: { data: unknown }) => {
-    if (!isPingRequest(data)) return invalidMessage()
-    return {
-      namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION,
-      requestId: data.requestId, ok: true,
-      data: {
-        connected: true,
-        extensionVersion: browser.runtime.getManifest().version,
-        protocolVersion: PROTOCOL_VERSION,
-        capabilities: [...CAPABILITIES],
-      },
-    } satisfies PingResponse
-  })
+const handlePingMessage = ({ data }: { data: unknown }): PingResponse => {
+  if (!isPingRequest(data)) return invalidMessage()
+  const response = {
+    namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION,
+    requestId: data.requestId, ok: true,
+    data: {
+      connected: true,
+      extensionVersion: browser.runtime.getManifest().version,
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities: [...CAPABILITIES],
+    },
+  } satisfies PingResponse
+  return response
+}
 
-  for (const action of TARGET_ACTIONS) onMessage(action, handleTargetMessage)
-  onMessage(SELLERSPRITE_KEYWORD_REVERSE_ACTION, handleKeywordReverseMessage)
-  onMessage(COMPETITOR_RESEARCH_ACTION, handleCompetitorMessage)
-  onMessage(PRODUCT_SELECTION_ACTION, handleProductSelectionMessage)
-  onMessage(KEYWORD_MINING_ACTION, handleKeywordMiningMessage)
-  onMessage(MARKET_SELECTION_ACTION, handleHtmlSessionMessage)
-  onMessage(KEYWORD_PRODUCT_RESEARCH_ACTION, handleHtmlSessionMessage)
+export default defineBackground(() => {
+  onMessage('PING', guarded(handlePingMessage))
+
+  for (const action of TARGET_ACTIONS) onMessage(action, guarded(handleTargetMessage))
+  onMessage(SELLERSPRITE_KEYWORD_REVERSE_ACTION, guarded(handleKeywordReverseMessage))
+  onMessage(COMPETITOR_RESEARCH_ACTION, guarded(handleCompetitorMessage))
+  onMessage(PRODUCT_SELECTION_ACTION, guarded(handleProductSelectionMessage))
+  onMessage(KEYWORD_MINING_ACTION, guarded(handleKeywordMiningMessage))
+  onMessage(MARKET_SELECTION_ACTION, guarded(handleHtmlSessionMessage))
+  onMessage(KEYWORD_PRODUCT_RESEARCH_ACTION, guarded(handleHtmlSessionMessage))
 })
 
 export { handleTargetMessage }

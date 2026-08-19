@@ -183,21 +183,31 @@ export const mineSellerSpriteKeywords = (
 const readNullableString = (value: unknown): string | null | undefined =>
   value === null || value === undefined ? null : typeof value === 'string' ? value : undefined
 
-const readCompetitorItem = (value: unknown): SellerSpriteCompetitorItem | undefined => {
-  if (!isRecord(value) || typeof value.asin !== 'string') return undefined
-  const title = readNullableString(value.title)
-  const brand = readNullableString(value.brand)
-  const imageUrl = readNullableString(value.imageUrl)
-  const price = readNullableNumber(value.price)
-  const rating = readNullableNumber(value.rating)
-  const reviews = readNullableNumber(value.reviews)
-  const estimatedSales = readNullableNumber(value.estimatedSales)
-  return [title, brand, imageUrl, price, rating, reviews, estimatedSales].some((item) => item === undefined)
-    ? undefined
-    : { asin: value.asin, title: title!, brand: brand!, imageUrl: imageUrl!, price: price!, rating: rating!, reviews: reviews!, estimatedSales: estimatedSales! }
+const normalizeNullableString = (value: unknown): string | null =>
+  typeof value === 'string' ? value : null
+
+const normalizeNullableNumber = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value !== 'string' || value.trim() === '') return null
+  const parsed = Number(value.replaceAll(',', ''))
+  return Number.isFinite(parsed) ? parsed : null
 }
 
-const readCompetitorResponse = async (response: Response): Promise<SellerSpriteCompetitorData> => {
+const readProductItem = (value: unknown): SellerSpriteCompetitorItem | undefined => {
+  if (!isRecord(value) || typeof value.asin !== 'string' || value.asin.trim() === '') return undefined
+  return {
+    asin: value.asin,
+    title: normalizeNullableString(value.title ?? value.title0),
+    brand: normalizeNullableString(value.brand ?? value.brand0),
+    imageUrl: normalizeNullableString(value.imageUrl ?? value.imageSrc),
+    price: normalizeNullableNumber(value.price),
+    rating: normalizeNullableNumber(value.rating),
+    reviews: normalizeNullableNumber(value.reviews),
+    estimatedSales: normalizeNullableNumber(value.amzUnit ?? value.estimatedSales),
+  }
+}
+
+const readProductPageResponse = async (response: Response) => {
   if (response.status === 401 || response.status === 403) {
     throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status)
   }
@@ -209,22 +219,32 @@ const readCompetitorResponse = async (response: Response): Promise<SellerSpriteC
   } catch {
     throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
   }
-  if (!isRecord(payload) || !isRecord(payload.data)) {
+  if (!isRecord(payload)) {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  }
+  const hasValidCode = !Object.hasOwn(payload, 'code')
+    || payload.code === 'OK'
+    || payload.code === 0
+    || payload.code === 200
+  if (!hasValidCode) throw new TargetClientError('TARGET_API_ERROR', response.status)
+  if (!isRecord(payload.data)) {
     throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
   }
   const data = payload.data
   const numericKeys = ['page', 'pages', 'size', 'total'] as const
   const numbers = Object.fromEntries(numericKeys.map((key) => [key, readNullableNumber(data[key])])) as Record<(typeof numericKeys)[number], number | null | undefined>
+  const rawItems = data.items
   if (Object.values(numbers).some((item) => item === undefined || item === null)
-    || typeof data.hasNextPage !== 'boolean'
-    || !Array.isArray(data.items)) {
+    || (data.hasNextPage !== undefined && data.hasNextPage !== null && typeof data.hasNextPage !== 'boolean')
+    || (rawItems !== null && !Array.isArray(rawItems))) {
     throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
   }
-  const items = data.items.map(readCompetitorItem)
+  const items = (rawItems ?? []).map(readProductItem)
   if (items.some((item) => item === undefined)) throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
   return {
     page: numbers.page!, pages: numbers.pages!, size: numbers.size!, total: numbers.total!,
-    hasNextPage: data.hasNextPage, items: items as SellerSpriteCompetitorItem[],
+    hasNextPage: rawItems !== null && (data.hasNextPage ?? numbers.page! < numbers.pages!),
+    items: items as SellerSpriteCompetitorItem[],
   }
 }
 
@@ -235,7 +255,7 @@ export const researchSellerSpriteCompetitors = (
   'COMPETITOR_RESEARCH',
   {},
   input,
-  readCompetitorResponse,
+  readProductPageResponse,
 )
 export const selectSellerSpriteProducts = (
   client: TargetClient,
@@ -243,8 +263,27 @@ export const selectSellerSpriteProducts = (
 ): Promise<SellerSpriteProductSelectionData> => client.executeJsonPost(
   'PRODUCT_SELECTION',
   {},
-  input,
-  readCompetitorResponse,
+  {
+    eligibility: input.eligibility,
+    filterSub: input.filterSub,
+    lowPrice: input.lowPrice,
+    market: input.market,
+    monthName: input.monthName,
+    nodeIdPaths: input.nodeIdPaths,
+    order: input.order,
+    page: input.page,
+    pkgDimensionTypeList: input.pkgDimensionTypeList,
+    productTags: input.productTags,
+    salesGrowthType: input.salesGrowthType,
+    selectType: input.selectType,
+    sellerNationList: input.sellerNationList,
+    sellerTypes: input.sellerTypes,
+    size: input.size,
+    symbolFlag: input.symbolFlag,
+    video: input.video,
+    weightUnit: input.weightUnit,
+  },
+  readProductPageResponse,
 )
 
 export const executeSellerSpriteMarketSelection = async (

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   createPingRequest,
+  createSellerSpriteCompetitorRequest,
   createSellerSpriteHtmlSessionRequest,
   createSellerSpriteKeywordMiningRequest,
   createSellerSpriteKeywordReverseRequest,
@@ -8,6 +9,8 @@ import {
   isAllowedWebOrigin,
   isPingRequest,
   isPingResponse,
+  isSellerSpriteCompetitorRequest,
+  isSellerSpriteCompetitorResponse,
   isSellerSpriteHtmlSessionRequest,
   isSellerSpriteHtmlSessionResponse,
   isSellerSpriteKeywordMiningRequest,
@@ -21,11 +24,17 @@ import {
   isTargetResponse,
 } from '../index'
 
+const competitorInput = {
+  asins: [], keywords: 'wireless charger', brand: '', seller: '', lowPrice: 'N' as const,
+  market: 'US', monthName: 'bsr_sales_nearly', nodeIdPaths: [],
+  order: { desc: true, field: 'amz_unit' }, page: 1, size: 20, symbolFlag: false,
+}
+
 const productSelectionInput = {
-  eligibility: [], filterSub: false, lowPrice: '0', market: 'US', monthName: '2026-01',
-  nodeIdPaths: [], order: { desc: true, field: 'sales' }, page: 1, pkgDimensionTypeList: [],
-  productTags: [], selectType: 'CATEGORY', sellerNationList: [], sellerTypes: [], size: 20,
-  symbolFlag: false, weightUnit: 'lb',
+  eligibility: [], filterSub: false, lowPrice: 'N' as const, market: 'US', monthName: 'bsr_sales_nearly',
+  nodeIdPaths: [], order: { desc: true, field: 'amz_unit' }, page: 1, pkgDimensionTypeList: [],
+  productTags: [], salesGrowthType: '30d' as const, selectType: 2 as const, sellerNationList: [],
+  sellerTypes: [], size: 20, symbolFlag: false, video: '' as const, weightUnit: 'g' as const,
 }
 
 const keywordMiningInput = {
@@ -39,8 +48,10 @@ describe('protocol', () => {
     expect(isPingRequest(createPingRequest('request-1'))).toBe(true)
   })
 
-  it('rejects unknown actions and origins', () => {
+  it('rejects unknown actions and origins while allowing local development hosts', () => {
     expect(isPingRequest({ ...createPingRequest('request-1'), action: 'FETCH' })).toBe(false)
+    expect(isAllowedWebOrigin('http://localhost:5173')).toBe(true)
+    expect(isAllowedWebOrigin('http://127.0.0.1:5173')).toBe(true)
     expect(isAllowedWebOrigin('https://attacker.example')).toBe(false)
   })
 
@@ -120,9 +131,45 @@ describe('protocol', () => {
     })).toBe(true)
   })
 
+  it('validates competitor lookup allowlists and paginated responses', () => {
+    const request = createSellerSpriteCompetitorRequest('request-competitor', 'sellersprite', competitorInput)
+    expect(isSellerSpriteCompetitorRequest(request)).toBe(true)
+    expect(isSellerSpriteCompetitorRequest({
+      ...request,
+      payload: { ...request.payload, input: { ...competitorInput, unexpected: true } },
+    })).toBe(false)
+    expect(isSellerSpriteCompetitorRequest({
+      ...request,
+      payload: { ...request.payload, input: { ...competitorInput, keywords: '' } },
+    })).toBe(false)
+
+    expect(isSellerSpriteCompetitorResponse({
+      namespace: 'cookie-amazon-platform', kind: 'response', protocolVersion: 1,
+      requestId: 'request-competitor', action: 'COMPETITOR_RESEARCH', ok: true,
+      data: {
+        items: [{
+          asin: 'B000000000', title: 'Example', brand: null, imageUrl: null,
+          price: 20, rating: 4.5, reviews: 10, estimatedSales: 100,
+        }],
+        page: 1, pages: 1, size: 20, total: 1, hasNextPage: false,
+      },
+    })).toBe(true)
+  })
+
   it('validates product selection allowlists and paginated responses', () => {
     const request = createSellerSpriteProductSelectionRequest('request-8', 'sellersprite', productSelectionInput)
     expect(isSellerSpriteProductSelectionRequest(request)).toBe(true)
+    expect(isSellerSpriteProductSelectionRequest({
+      ...request,
+      payload: {
+        ...request.payload,
+        input: { ...productSelectionInput, keyword: 'wireless charger', lowPrice: '', monthName: '' },
+      },
+    })).toBe(false)
+    expect(isSellerSpriteProductSelectionRequest({
+      ...request,
+      payload: { ...request.payload, input: { ...productSelectionInput, keyword: '无线充电器' } },
+    })).toBe(false)
     expect(isSellerSpriteProductSelectionRequest({
       ...request,
       payload: { ...request.payload, input: { ...productSelectionInput, unexpected: true } },

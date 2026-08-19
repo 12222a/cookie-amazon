@@ -16,10 +16,10 @@ const input = {
 }
 
 const productSelectionInput = {
-  eligibility: [], filterSub: false, lowPrice: '0', market: 'US', monthName: '2026-01',
-  nodeIdPaths: [], order: { desc: true, field: 'sales' }, page: 1, pkgDimensionTypeList: [],
-  productTags: [], selectType: 'CATEGORY', sellerNationList: [], sellerTypes: [], size: 20,
-  symbolFlag: false, weightUnit: 'lb',
+  eligibility: [], filterSub: false, lowPrice: 'N' as const, market: 'US', monthName: 'bsr_sales_nearly',
+  nodeIdPaths: [], order: { desc: true, field: 'amz_unit' }, page: 1, pkgDimensionTypeList: [],
+  productTags: [], salesGrowthType: '30d' as const, selectType: 2 as const, sellerNationList: [],
+  sellerTypes: [], size: 20, symbolFlag: false, video: '' as const, weightUnit: 'g' as const,
 }
 
 const keywordMiningInput = {
@@ -82,7 +82,7 @@ describe('SellerSprite web SDK', () => {
     bridge.sendMessage.mockResolvedValue({
       namespace: 'cookie-amazon-platform', kind: 'response', protocolVersion: 1,
       requestId: 'response-id', action: 'KEYWORD_MINING', ok: false,
-      error: { code: 'OPERATION_DISABLED', message: 'disabled' },
+      error: { code: 'OPERATION_DISABLED' },
     })
 
     await expect(mineSellerSpriteKeywords(keywordMiningInput)).rejects.toMatchObject({ code: 'OPERATION_DISABLED' })

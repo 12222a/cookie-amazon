@@ -2,6 +2,9 @@ import { allowWindowMessaging, onMessage, sendMessage } from 'webext-bridge/cont
 import {
   MESSAGE_NAMESPACE,
   PROTOCOL_VERSION,
+  CONTENT_SCRIPT_PROBE_RESPONSE,
+  CONTENT_SCRIPT_RUNTIME_PROBE_ACTION,
+  CONTENT_SCRIPT_RUNTIME_PROBE_RESPONSE,
   COMPETITOR_RESEARCH_ACTION,
   PRODUCT_SELECTION_ACTION,
   MARKET_SELECTION_ACTION,
@@ -10,6 +13,7 @@ import {
   SELLERSPRITE_KEYWORD_REVERSE_ACTION,
   TARGET_ACTIONS,
   isAllowedWebOrigin,
+  isContentScriptProbeRequest,
   isPingRequest,
   isSellerSpriteCompetitorRequest,
   isSellerSpriteProductSelectionRequest,
@@ -80,10 +84,24 @@ const relayKeywordMiningMessage = async ({ data }: { data: unknown }): Promise<i
 }
 
 export default defineContentScript({
-  matches: ['http://localhost:5173/*'],
+  matches: ['http://localhost:5173/*', 'http://127.0.0.1:5173/*'],
   runAt: 'document_start',
   main() {
+    browser.runtime.onMessage.addListener((message: unknown) =>
+      message === CONTENT_SCRIPT_RUNTIME_PROBE_ACTION
+        ? Promise.resolve(CONTENT_SCRIPT_RUNTIME_PROBE_RESPONSE)
+        : false)
     allowWindowMessaging(MESSAGE_NAMESPACE)
+    window.addEventListener('message', (event: MessageEvent<unknown>) => {
+      if (event.source !== window || event.origin !== location.origin || !isAllowedWebOrigin(event.origin)) return
+      if (!isContentScriptProbeRequest(event.data)) return
+      window.postMessage({
+        namespace: MESSAGE_NAMESPACE,
+        action: CONTENT_SCRIPT_PROBE_RESPONSE,
+        requestId: event.data.requestId,
+        extensionVersion: browser.runtime.getManifest().version,
+      }, location.origin)
+    })
     onMessage('PING', async ({ data }: { data: unknown }): Promise<PingResponse> => {
       if (!isAllowedWebOrigin(location.origin) || !isPingRequest(data)) return invalidMessage()
       try {
