@@ -1,7 +1,7 @@
 export type ConfigHttpMethod = 'GET' | 'POST'
 
 export const TARGET_OPERATIONS = [
-  'CHECK_LOGIN', 'GET_PROFILE', 'SELLERSPRITE_KEYWORD_REVERSE', 'COMPETITOR_RESEARCH',
+  'CHECK_LOGIN', 'GET_PROFILE', 'SELLERSPRITE_KEYWORD_REVERSE', 'SELLERSPRITE_MONTHLY', 'SELLERSPRITE_MARKET_RESEARCH', 'SELLERSPRITE_ABA_PERIODS', 'SELLERSPRITE_ABA_RESEARCH', 'COMPETITOR_RESEARCH',
   'PRODUCT_SELECTION', 'MARKET_SELECTION', 'KEYWORD_PRODUCT_RESEARCH', 'KEYWORD_MINING',
 ] as const
 export type TargetOperation = (typeof TARGET_OPERATIONS)[number]
@@ -11,7 +11,7 @@ export type TargetOperationPolicy = {
   path: `/${string}`
   method: ConfigHttpMethod
   timeoutMs: number
-  response: 'login-status' | 'html-login-probe' | 'profile' | 'keyword-reverse' | 'competitor-research' | 'product-selection' | 'html-session' | 'keyword-mining'
+  response: 'login-status' | 'html-login-probe' | 'profile' | 'keyword-reverse' | 'monthly' | 'market-research' | 'aba-periods' | 'aba-research' | 'competitor-research' | 'product-selection' | 'html-session' | 'keyword-mining'
 }
 
 export type TargetOperationOverrides = Readonly<Record<string, {
@@ -70,10 +70,38 @@ export const createExampleOperationPolicy = (): Readonly<Record<TargetOperation,
   }),
   SELLERSPRITE_KEYWORD_REVERSE: Object.freeze({
     enabled: false,
-    path: '/v3/api/relation/reversing',
+    path: '/v3/api/relation/stat-keywords',
     method: 'POST',
     timeoutMs: 15_000,
     response: 'keyword-reverse',
+  }),
+  SELLERSPRITE_MONTHLY: Object.freeze({
+    enabled: false,
+    path: '/v3/api/relation/ta/monthly',
+    method: 'GET',
+    timeoutMs: 15_000,
+    response: 'monthly',
+  }),
+  SELLERSPRITE_MARKET_RESEARCH: Object.freeze({
+    enabled: false,
+    path: '/v2/market-research',
+    method: 'POST',
+    timeoutMs: 15_000,
+    response: 'market-research',
+  }),
+  SELLERSPRITE_ABA_PERIODS: Object.freeze({
+    enabled: false,
+    path: '/v3/api/aba-research/tables',
+    method: 'GET',
+    timeoutMs: 15_000,
+    response: 'aba-periods',
+  }),
+  SELLERSPRITE_ABA_RESEARCH: Object.freeze({
+    enabled: false,
+    path: '/v3/api/aba-research',
+    method: 'POST',
+    timeoutMs: 20_000,
+    response: 'aba-research',
   }),
   COMPETITOR_RESEARCH: Object.freeze({
     enabled: false,
@@ -129,10 +157,38 @@ export const createSellerSpriteOperationPolicy = (): Readonly<Record<TargetOpera
   }),
   SELLERSPRITE_KEYWORD_REVERSE: Object.freeze({
     enabled: true,
-    path: '/v3/api/relation/reversing',
+    path: '/v3/api/relation/stat-keywords',
     method: 'POST',
     timeoutMs: 15_000,
     response: 'keyword-reverse',
+  }),
+  SELLERSPRITE_MONTHLY: Object.freeze({
+    enabled: true,
+    path: '/v3/api/relation/ta/monthly',
+    method: 'GET',
+    timeoutMs: 15_000,
+    response: 'monthly',
+  }),
+  SELLERSPRITE_MARKET_RESEARCH: Object.freeze({
+    enabled: true,
+    path: '/v2/market-research',
+    method: 'POST',
+    timeoutMs: 15_000,
+    response: 'market-research',
+  }),
+  SELLERSPRITE_ABA_PERIODS: Object.freeze({
+    enabled: true,
+    path: '/v3/api/aba-research/tables',
+    method: 'GET',
+    timeoutMs: 15_000,
+    response: 'aba-periods',
+  }),
+  SELLERSPRITE_ABA_RESEARCH: Object.freeze({
+    enabled: true,
+    path: '/v3/api/aba-research',
+    method: 'POST',
+    timeoutMs: 20_000,
+    response: 'aba-research',
   }),
   COMPETITOR_RESEARCH: Object.freeze({
     enabled: true,

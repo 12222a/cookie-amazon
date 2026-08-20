@@ -9,6 +9,10 @@ import {
   KEYWORD_PRODUCT_RESEARCH_ACTION,
   KEYWORD_MINING_ACTION,
   SELLERSPRITE_KEYWORD_REVERSE_ACTION,
+  SELLERSPRITE_MONTHLY_ACTION,
+  SELLERSPRITE_MARKET_RESEARCH_ACTION,
+  SELLERSPRITE_ABA_PERIODS_ACTION,
+  SELLERSPRITE_ABA_RESEARCH_ACTION,
   TARGET_ACTIONS,
   isPingRequest,
   isSellerSpriteCompetitorRequest,
@@ -16,6 +20,10 @@ import {
   isSellerSpriteHtmlSessionRequest,
   isSellerSpriteKeywordMiningRequest,
   isSellerSpriteKeywordReverseRequest,
+  isSellerSpriteMonthlyRequest,
+  isSellerSpriteMarketResearchRequest,
+  isSellerSpriteAbaPeriodsRequest,
+  isSellerSpriteAbaResearchRequest,
   isTargetRequest,
   type PingResponse,
   type ProtocolError,
@@ -40,7 +48,11 @@ import { TARGET_REGISTRY } from '../src/targets/registry'
 import {
   executeSellerSpriteKeywordProductResearch,
   executeSellerSpriteMarketSelection,
+  listSellerSpriteAbaPeriods,
+  researchSellerSpriteAba,
   mineSellerSpriteKeywords,
+  readSellerSpriteMonthly,
+  researchSellerSpriteMarket,
   reverseSellerSpriteKeywords,
   researchSellerSpriteCompetitors,
   selectSellerSpriteProducts,
@@ -56,10 +68,27 @@ const invalidMessage = (requestId = 'unknown'): ProtocolError => ({
   requestId, ok: false, error: { code: 'INVALID_MESSAGE' },
 })
 
-const targetError = (requestId: string, code: ProtocolError['error']['code']): ProtocolError => ({
+const targetError = (
+  requestId: string,
+  code: ProtocolError['error']['code'],
+  details: { targetCode?: string | number; targetMessage?: string } = {},
+): ProtocolError => ({
   namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION,
-  requestId, ok: false, error: { code },
+  requestId, ok: false,
+  error: {
+    code,
+    ...(details.targetCode === undefined ? {} : { targetCode: details.targetCode }),
+    ...(details.targetMessage === undefined ? {} : { targetMessage: details.targetMessage }),
+  },
 })
+
+const targetClientError = (requestId: string, error: unknown): ProtocolError =>
+  error instanceof TargetClientError
+    ? targetError(requestId, error.code, {
+        ...(error.targetCode === undefined ? {} : { targetCode: error.targetCode }),
+        ...(error.targetMessage === undefined ? {} : { targetMessage: error.targetMessage }),
+      })
+    : targetError(requestId, 'TARGET_API_ERROR')
 
 const requestIdOf = (data: unknown): string =>
   typeof data === 'object' && data !== null
@@ -507,6 +536,102 @@ const handleProductSelectionMessage = async ({ data }: { data: unknown }): Promi
   }
 }
 
+const handleMonthlyMessage = async ({ data }: { data: unknown }): Promise<import('@cookie-amazon/protocol').SellerSpriteMonthlyResponse> => {
+  if (!isSellerSpriteMonthlyRequest(data)) return invalidMessage()
+  const { requestId } = data
+  const adapter = TARGET_REGISTRY.get(data.payload.targetId)
+  if (!adapter || adapter.targetId !== 'sellersprite') return targetError(requestId, 'UNKNOWN_TARGET')
+  const runtimePolicy = resolveRuntimeTargetPolicy(adapter, await configManager.load())
+  if (!runtimePolicy.enabled) return targetError(requestId, 'TARGET_DISABLED')
+  if (!runtimePolicy.capabilities.includes(SELLERSPRITE_MONTHLY_ACTION)) return targetError(requestId, 'OPERATION_DISABLED')
+  if (!(await permissionManager.hasPermission(adapter.targetId))) return targetError(requestId, 'TARGET_PERMISSION_MISSING')
+  try {
+    const result = await withPageFallback(
+      adapter,
+      runtimePolicy,
+      () => readSellerSpriteMonthly(new TargetClient(adapter, undefined, runtimePolicy.operationOverrides), data.payload.input),
+      (client) => readSellerSpriteMonthly(client, data.payload.input),
+    )
+    return { namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION, requestId, action: SELLERSPRITE_MONTHLY_ACTION, ok: true, data: result }
+  } catch (error: unknown) {
+    return targetError(requestId, error instanceof TargetClientError ? error.code : 'TARGET_API_ERROR')
+  }
+}
+const handleMarketResearchMessage = async ({ data }: { data: unknown }): Promise<import('@cookie-amazon/protocol').SellerSpriteMarketResearchResponse> => {
+  if (!isSellerSpriteMarketResearchRequest(data)) return invalidMessage()
+  const { requestId } = data
+  const adapter = TARGET_REGISTRY.get(data.payload.targetId)
+  if (!adapter || adapter.targetId !== 'sellersprite') return targetError(requestId, 'UNKNOWN_TARGET')
+  const runtimePolicy = resolveRuntimeTargetPolicy(adapter, await configManager.load())
+  if (!runtimePolicy.enabled) return targetError(requestId, 'TARGET_DISABLED')
+  if (!runtimePolicy.capabilities.includes('SELLERSPRITE_MARKET_RESEARCH')) return targetError(requestId, 'OPERATION_DISABLED')
+  if (!(await permissionManager.hasPermission(adapter.targetId))) return targetError(requestId, 'TARGET_PERMISSION_MISSING')
+  try {
+    const result = await withPageFallback(
+      adapter,
+      runtimePolicy,
+      () => researchSellerSpriteMarket(new TargetClient(adapter, undefined, runtimePolicy.operationOverrides), data.payload.input),
+      (client) => researchSellerSpriteMarket(client, data.payload.input),
+    )
+    return {
+      namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION,
+      requestId, action: SELLERSPRITE_MARKET_RESEARCH_ACTION, ok: true, data: result,
+    }
+  } catch (error: unknown) {
+    return targetError(requestId, error instanceof TargetClientError ? error.code : 'TARGET_API_ERROR')
+  }
+}
+
+const handleAbaPeriodsMessage = async ({ data }: { data: unknown }): Promise<import('@cookie-amazon/protocol').SellerSpriteAbaPeriodsResponse> => {
+  if (!isSellerSpriteAbaPeriodsRequest(data)) return invalidMessage()
+  const { requestId } = data
+  const adapter = TARGET_REGISTRY.get(data.payload.targetId)
+  if (!adapter || adapter.targetId !== 'sellersprite') return targetError(requestId, 'UNKNOWN_TARGET')
+  const runtimePolicy = resolveRuntimeTargetPolicy(adapter, await configManager.load())
+  if (!runtimePolicy.enabled) return targetError(requestId, 'TARGET_DISABLED')
+  if (!runtimePolicy.capabilities.includes(SELLERSPRITE_ABA_PERIODS_ACTION)) return targetError(requestId, 'OPERATION_DISABLED')
+  if (!(await permissionManager.hasPermission(adapter.targetId))) return targetError(requestId, 'TARGET_PERMISSION_MISSING')
+  try {
+    const result = await withPageFallback(
+      adapter,
+      runtimePolicy,
+      () => listSellerSpriteAbaPeriods(new TargetClient(adapter, undefined, runtimePolicy.operationOverrides)),
+      (client) => listSellerSpriteAbaPeriods(client),
+    )
+    return {
+      namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION,
+      requestId, action: SELLERSPRITE_ABA_PERIODS_ACTION, ok: true, data: result,
+    }
+  } catch (error: unknown) {
+    return targetClientError(requestId, error)
+  }
+}
+
+const handleAbaResearchMessage = async ({ data }: { data: unknown }): Promise<import('@cookie-amazon/protocol').SellerSpriteAbaResearchResponse> => {
+  if (!isSellerSpriteAbaResearchRequest(data)) return invalidMessage()
+  const { requestId } = data
+  const adapter = TARGET_REGISTRY.get(data.payload.targetId)
+  if (!adapter || adapter.targetId !== 'sellersprite') return targetError(requestId, 'UNKNOWN_TARGET')
+  const runtimePolicy = resolveRuntimeTargetPolicy(adapter, await configManager.load())
+  if (!runtimePolicy.enabled) return targetError(requestId, 'TARGET_DISABLED')
+  if (!runtimePolicy.capabilities.includes(SELLERSPRITE_ABA_RESEARCH_ACTION)) return targetError(requestId, 'OPERATION_DISABLED')
+  if (!(await permissionManager.hasPermission(adapter.targetId))) return targetError(requestId, 'TARGET_PERMISSION_MISSING')
+  try {
+    const result = await withPageFallback(
+      adapter,
+      runtimePolicy,
+      () => researchSellerSpriteAba(new TargetClient(adapter, undefined, runtimePolicy.operationOverrides), data.payload.input),
+      (client) => researchSellerSpriteAba(client, data.payload.input),
+    )
+    return {
+      namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION,
+      requestId, action: SELLERSPRITE_ABA_RESEARCH_ACTION, ok: true, data: result,
+    }
+  } catch (error: unknown) {
+    return targetClientError(requestId, error)
+  }
+}
+
 const handleKeywordMiningMessage = async ({ data }: { data: unknown }): Promise<SellerSpriteKeywordMiningResponse> => {
   if (!isSellerSpriteKeywordMiningRequest(data)) return invalidMessage()
   const { requestId } = data
@@ -575,6 +700,10 @@ export default defineBackground(() => {
 
   for (const action of TARGET_ACTIONS) onMessage(action, guarded(handleTargetMessage))
   onMessage(SELLERSPRITE_KEYWORD_REVERSE_ACTION, guarded(handleKeywordReverseMessage))
+  onMessage(SELLERSPRITE_MONTHLY_ACTION, guarded(handleMonthlyMessage))
+  onMessage(SELLERSPRITE_MARKET_RESEARCH_ACTION, guarded(handleMarketResearchMessage))
+  onMessage(SELLERSPRITE_ABA_PERIODS_ACTION, guarded(handleAbaPeriodsMessage))
+  onMessage(SELLERSPRITE_ABA_RESEARCH_ACTION, guarded(handleAbaResearchMessage))
   onMessage(COMPETITOR_RESEARCH_ACTION, guarded(handleCompetitorMessage))
   onMessage(PRODUCT_SELECTION_ACTION, guarded(handleProductSelectionMessage))
   onMessage(KEYWORD_MINING_ACTION, guarded(handleKeywordMiningMessage))

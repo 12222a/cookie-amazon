@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
+import { getSellerSpriteMarketResearchMonths } from '@cookie-amazon/protocol'
 import { TargetClient } from '../client'
 import { TARGET_REGISTRY } from '../registry'
 import {
   SELLERSPRITE_ADAPTER,
   executeSellerSpriteKeywordProductResearch,
   executeSellerSpriteMarketSelection,
+  listSellerSpriteAbaPeriods,
+  researchSellerSpriteAba,
   mineSellerSpriteKeywords,
+  parseSellerSpriteMarketResearchHtml,
+  readSellerSpriteMonthly,
+  researchSellerSpriteMarket,
   researchSellerSpriteCompetitors,
   reverseSellerSpriteKeywords,
   selectSellerSpriteProducts,
@@ -104,47 +110,135 @@ describe('SellerSprite session adapter', () => {
     await expect(SELLERSPRITE_ADAPTER.getProfile(jsonResponse)).rejects.toMatchObject({ code: 'OPERATION_DISABLED' })
   })
 
-  it('posts only the keyword reverse allowlist and minimizes the response', async () => {
+  it('posts the verified stat-keywords request and minimizes the response', async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe('https://www.sellersprite.com/v3/api/relation/reversing?market=US')
+      expect(String(input)).toBe('https://www.sellersprite.com/v3/api/relation/stat-keywords')
       expect(init).toMatchObject({
         method: 'POST',
         credentials: 'include',
         headers: { 'content-type': 'application/json' },
       })
       expect(JSON.parse(String(init?.body))).toEqual({
-        ac: false, asin: 'B000000000', badges: [], conversionKeywordTypes: [], desc: true,
-        exactly: false, filterDeletedKeywords: false, keywordBidMatchType: 'broad', limit: 20,
-        month: '2026-01', order: 'searches', skip: 0, trafficKeywordTypes: [],
+        asin: 'B000000000', marketId: 1, month: '', forceReStat: false, badges: [], limit: 20,
       })
       return new Response(JSON.stringify({
         code: 'OK',
         data: {
           asin: 'B000000000',
+          total: 1,
           items: [{
-            keywords: 'example', searches: 100, products: null, supplyDemandRatio: 1,
+            keywords: 'example', searches: '100', products: null, supplyDemandRatio: 1,
             trafficPercentage: 0.5, purchaseRate: null, bid: 1.2, bidMin: null,
-            bidMax: 2, avgPrice: 20, avgRating: null, avgReviews: 10,
-            searchesTrend: [{ month: '2026-01', searchRank: null, searches: 100 }],
+            bidMax: 2, avgPrice: 20, avgRating: null, avgReviews: '10',
+            searchesTrend: [{ month: '2026-01', searchRank: null, searches: '100' }],
             privateValue: 'must-not-leak',
           }],
+          stats: { privateValue: 'must-not-leak' },
         },
         privateValue: 'must-not-leak',
       }), { status: 200, headers: { 'content-type': 'application/json' } })
     })
 
     await expect(reverseSellerSpriteKeywords(new TargetClient(SELLERSPRITE_ADAPTER, fetcher), {
-      market: 'US', ac: false, asin: 'B000000000', badges: [], conversionKeywordTypes: [],
-      desc: true, exactly: false, filterDeletedKeywords: false, keywordBidMatchType: 'broad',
-      limit: 20, month: '2026-01', order: 'searches', skip: 0, trafficKeywordTypes: [],
+      asin: 'B000000000', marketId: 1, month: '', forceReStat: false, badges: [], limit: 20,
     })).resolves.toEqual({
       asin: 'B000000000',
+      total: 1,
       items: [{
         keywords: 'example', searches: 100, products: null, supplyDemandRatio: 1,
         trafficPercentage: 0.5, purchaseRate: null, bid: 1.2, bidMin: null,
         bidMax: 2, avgPrice: 20, avgRating: null, avgReviews: 10,
         searchesTrend: [{ month: '2026-01', searchRank: null, searches: 100 }],
       }],
+    })
+  })
+
+  it('normalizes null keyword items and rejects malformed keyword rows', async () => {
+    const cappedClient = new TargetClient(SELLERSPRITE_ADAPTER, async () => new Response(JSON.stringify({
+      code: 'OK',
+      data: { asin: 'B000000000', total: '1,000', items: null, stats: null },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    const input = {
+      asin: 'B000000000', marketId: 1, month: '', forceReStat: false, badges: [], limit: 20,
+    }
+    await expect(reverseSellerSpriteKeywords(cappedClient, input)).resolves.toEqual({
+      asin: 'B000000000', total: 1_000, items: [],
+    })
+
+    const malformedClient = new TargetClient(SELLERSPRITE_ADAPTER, async () => new Response(JSON.stringify({
+      code: 'OK',
+      data: { asin: 'B000000000', total: 1, items: [{ keywords: 'example', searches: {} }] },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await expect(reverseSellerSpriteKeywords(malformedClient, input))
+      .rejects.toMatchObject({ code: 'TARGET_RESPONSE_INVALID' })
+  })
+
+  it('loads ABA periods and posts the verified monthly pagination body', async () => {
+    const periodsClient = new TargetClient(SELLERSPRITE_ADAPTER, vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('https://www.sellersprite.com/v3/api/aba-research/tables')
+      expect(init).toMatchObject({ method: 'GET', credentials: 'include' })
+      return new Response(JSON.stringify({
+        code: 'OK', message: '成功',
+        data: {
+          weekTables: [{ table: 'ara_20260815', label: '20260815' }],
+          monthTables: [{ table: 'ara_202607', label: '202607' }],
+          restrictions: [{ privateValue: 'must-not-surface' }],
+        },
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    }))
+    await expect(listSellerSpriteAbaPeriods(periodsClient)).resolves.toEqual({
+      weekTables: [{ table: 'ara_20260815', label: '20260815' }],
+      monthTables: [{ table: 'ara_202607', label: '202607' }],
+    })
+
+    const input = {
+      reverseType: 'M' as const, table: 'ara_202607', q: 'screen protector',
+      market: 'COM' as const, page: 2, size: 50,
+    }
+    const fetcher = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(url)).toBe('https://www.sellersprite.com/v3/api/aba-research')
+      expect(init).toMatchObject({
+        method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' },
+      })
+      expect(JSON.parse(String(init?.body))).toEqual({
+        rankGrowthType: 'W1', size: 50, page: 2, market: 'COM', q: 'screen protector',
+        table: 'ara_202607', reverseType: 'M', departments: [], keywordBidMatchType: 'exact',
+        order: { field: 'searchfrequencyrank', desc: false },
+      })
+      return new Response(JSON.stringify({
+        code: 'OK', message: '成功',
+        data: {
+          pages: 90, page: 2, size: 50, total: 4490, took: 46,
+          items: [{
+            keyword: 'iphone screen protector', keywordCn: '手机膜', searches: '185,231',
+            clicks: 81473, impressions: 4464850, purchaseRate: 0.0073, purchases: 1352,
+            products: 6057, departments: ['Cell Phones & Accessories'], searchRank: 354,
+            searchRankGrowthValue: 4, searchRankGrowthRate: 0.0112, cvsShareRate: 0.3193,
+            clickShareRate: 0.3423, gkDatas: [{ asin: 'must-not-surface' }],
+          }],
+        },
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    })
+    await expect(researchSellerSpriteAba(new TargetClient(SELLERSPRITE_ADAPTER, fetcher), input)).resolves.toEqual({
+      page: 2, pages: 90, size: 50, total: 4490, took: 46, hasNextPage: true,
+      items: [{
+        keyword: 'iphone screen protector', keywordCn: '手机膜', keywordJp: null,
+        searches: 185231, clicks: 81473, impressions: 4464850, purchaseRate: 0.0073,
+        purchases: 1352, products: 6057, departments: ['Cell Phones & Accessories'],
+        searchRank: 354, searchRankGrowthValue: 4, searchRankGrowthRate: 0.0112,
+        cvsShareRate: 0.3193, clickShareRate: 0.3423,
+      }],
+    })
+  })
+
+  it('preserves SellerSprite ABA API error details for diagnostics', async () => {
+    const client = new TargetClient(SELLERSPRITE_ADAPTER, async () => new Response(JSON.stringify({
+      code: 'QUOTA_EXCEEDED', message: '查询次数已用完', data: null,
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await expect(researchSellerSpriteAba(client, {
+      reverseType: 'W', table: 'ara_20260815', q: 'screen protector', market: 'COM', page: 1, size: 50,
+    })).rejects.toMatchObject({
+      code: 'TARGET_API_ERROR', targetCode: 'QUOTA_EXCEEDED', targetMessage: '查询次数已用完',
     })
   })
 
@@ -176,6 +270,7 @@ describe('SellerSprite session adapter', () => {
         items: [{
           asin: 'B000000000', title: 'Example', brand: 'Brand', imageUrl: 'https://example.com/image.jpg',
           price: 20, rating: null, reviews: 10, estimatedSales: 1_000,
+          availableDate: null, availableDays: null,
         }],
       })
   })
@@ -224,8 +319,120 @@ describe('SellerSprite session adapter', () => {
         items: [{
           asin: 'B000000000', title: 'Example', brand: null, imageUrl: null,
           price: 20, rating: null, reviews: 10, estimatedSales: 240,
+          availableDate: null, availableDays: null,
         }],
       })
+  })
+
+  it('posts the verified market form and returns only whitelisted table values', async () => {
+    const selectedMonth = getSellerSpriteMarketResearchMonths()[1]!
+    const fixture = `<!doctype html><html><body><script>window.privateToken='must-not-leak'</script>
+      <table id="table-condition-search"><thead><tr>
+        <th>#</th><th>细分市场 <span>表头说明不得影响字段识别</span></th><th>样本数量</th><th>月总销量</th>
+        <th>月均销量 头部商品</th><th>月均销售额 头部商品</th><th>平均评分数 平均星级</th>
+        <th>平均BSR 头部商品</th><th>平均卖家数 平均价格</th><th>卖家类型</th>
+        <th>集中度指标</th><th>新品数量 新品占比</th><th>商品总数</th><th>退货率 同类目均值</th><th>操作</th>
+      </tr></thead><tbody><tr>
+        <td>1</td><td><a href="javascript:;">Telephone Stands</a><span>private detail</span></td>
+        <td>商品: 24 品牌: 19 卖家: 21</td><td>20,699</td><td>862 2,044 (2.4)</td>
+        <td>$ 10,875 $ 22,525</td><td>1,787 4.3</td><td>196,138 89,900</td>
+        <td>3.8 $ 70.85</td><td>FBA: 54% AMZ: 4% FBM: 31%</td>
+        <td>商品: 98.8% 品牌: 99.2% 卖家: 99.2%</td><td>7 29.17%</td><td>124</td>
+        <td>2.38% 4.68%</td><td>操作</td>
+      </tr></tbody></table></body></html>`
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('https://www.sellersprite.com/v2/market-research')
+      expect(init).toMatchObject({
+        method: 'POST', credentials: 'include',
+        headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+      })
+      const form = new URLSearchParams(String(init?.body))
+      expect(String(init?.body)).toContain('departmentKeyword=phone+stand')
+      expect(String(init?.body)).toContain(`monthName=${selectedMonth}`)
+      expect(form.size).toBe(73)
+      expect([...form.entries()].slice(12).every(([, value]) => value === '')).toBe(true)
+      expect(Object.fromEntries(form.entries())).toMatchObject({
+        marketId: '1', nodeIdPath: '', sampleNumber: '1', topn: '10', newReleaseNum: '12',
+        'order.field': 'total_sales', 'order.desc': 'true', tab: '1', monthName: selectedMonth,
+        newReleaseNumSelect: '12', topNSelect: '10', departmentKeyword: 'phone stand',
+        minAvgSales: '', maxAvgSales: '', minAvgProfit: '', maxAvgProfit: '',
+        minNewAvgSales: '', maxNewAvgSales: '',
+      })
+      return new Response(fixture, { status: 200, headers: { 'content-type': 'text/html;charset=UTF-8' } })
+    })
+
+    const result = await researchSellerSpriteMarket(
+      new TargetClient(SELLERSPRITE_ADAPTER, fetcher),
+      {
+        marketId: 1,
+        departmentKeyword: 'phone stand',
+        monthName: selectedMonth,
+        newReleaseNum: 12,
+      },
+    )
+    expect(result.rows).toEqual([{
+      marketName: 'Telephone Stands', sampleProducts: 24, sampleBrands: 19, sampleSellers: 21,
+      totalSales: 20699, averageSales: 862, headSales: 2044, averageRevenue: 10875,
+      headRevenue: 22525, averageReviews: 1787, averageRating: 4.3, averageBsr: 196138,
+      headBsr: 89900, averageSellers: 3.8, averagePrice: 70.85, fbaRatio: 0.54,
+      amzRatio: 0.04, fbmRatio: 0.31, productConcentration: 0.988,
+      brandConcentration: 0.992, sellerConcentration: 0.992, newProductCount: 7,
+      newProductRatio: 0.2917, totalProducts: 124, profit: null,
+    }])
+    expect(result.fieldCoverage).toEqual({
+      sampleCounts: 1, totalSales: 1, averageSales: 1, averageRevenue: 1, rating: 1,
+      bsr: 1, price: 1, sellerTypes: 1, concentration: 1, newProducts: 1,
+      totalProducts: 1, profit: 0,
+    })
+    expect(JSON.stringify(result)).not.toContain('must-not-leak')
+    expect(JSON.stringify(result)).not.toContain('<html')
+    expect(() => researchSellerSpriteMarket(
+      new TargetClient(SELLERSPRITE_ADAPTER, fetcher),
+      {
+        marketId: 1,
+        departmentKeyword: 'phone stand',
+        monthName: 'bsr_sales_monthly_199901',
+        newReleaseNum: 9,
+      } as never,
+    )).toThrowError(expect.objectContaining({ code: 'TARGET_API_ERROR' }))
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects market HTML without the exact whitelisted table', () => {
+    expect(() => parseSellerSpriteMarketResearchHtml('<table id="other"><tr><td>secret</td></tr></table>'))
+      .toThrowError(expect.objectContaining({ code: 'TARGET_RESPONSE_INVALID' }))
+  })
+
+  it('gets the verified monthly query and minimizes variation fields', async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('https://www.sellersprite.com/v3/api/relation/ta/monthly?asin=B000000000&month=&station=US')
+      expect(init).toMatchObject({ method: 'GET', credentials: 'include' })
+      expect(init?.headers).toBeUndefined()
+      expect(init?.body).toBeUndefined()
+      return new Response(JSON.stringify({
+        code: 'OK',
+        data: {
+          monthlyDto: { unverifiedHistory: 'must-not-surface' },
+          variations: [{
+            asin: 'B000000000', availableDate: '1,700,000,000,000', availableDays: '120',
+            bsrLabel: 'Electronics', bsrRank: '1,234', currency: '$', price: '29.99',
+            rating: 4.5, reviews: '321', reviewsRate: '0.03', station: 'US', title: 'Example',
+            alias: 'must-not-surface', sku: 'private-field',
+          }],
+        },
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    })
+
+    await expect(readSellerSpriteMonthly(new TargetClient(SELLERSPRITE_ADAPTER, fetcher), {
+      asin: 'B000000000', month: '', station: 'US',
+    })).resolves.toEqual({
+      historyStatus: 'not-verified',
+      variations: [{
+        asin: 'B000000000', availableDate: 1_700_000_000_000, availableDays: 120,
+        bsrLabel: 'Electronics', bsrRank: 1_234, currency: '$', price: 29.99,
+        rating: 4.5, reviews: 321, reviewsRate: 0.03, station: 'US', title: 'Example',
+      }],
+    })
   })
 
   it('accepts only empty keyword mining results and rejects unknown non-empty items', async () => {

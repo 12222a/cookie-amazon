@@ -17,6 +17,10 @@ export const CAPABILITIES = [
   'CHECK_LOGIN',
   'GET_PROFILE',
   'SELLERSPRITE_KEYWORD_REVERSE',
+  'SELLERSPRITE_MONTHLY',
+  'SELLERSPRITE_MARKET_RESEARCH',
+  'SELLERSPRITE_ABA_PERIODS',
+  'SELLERSPRITE_ABA_RESEARCH',
   'COMPETITOR_RESEARCH',
   'PRODUCT_SELECTION',
   'MARKET_SELECTION',
@@ -75,7 +79,11 @@ export type ProtocolError = {
   protocolVersion: typeof PROTOCOL_VERSION
   requestId: string
   ok: false
-  error: { code: ProtocolErrorCode }
+  error: {
+    code: ProtocolErrorCode
+    targetCode?: string | number
+    targetMessage?: string
+  }
 }
 
 export type PingResponse = PingSuccess | ProtocolError
@@ -386,20 +394,12 @@ export const isSellerSpriteHtmlSessionResponse = (
 export type JsonPrimitive = string | number | boolean | null
 
 export type SellerSpriteKeywordReverseInput = {
-  market: string
-  ac: boolean
   asin: string
-  badges: JsonPrimitive[]
-  conversionKeywordTypes: JsonPrimitive[]
-  desc: boolean
-  exactly: boolean
-  filterDeletedKeywords: boolean
-  keywordBidMatchType: string
-  limit: number
+  marketId: number
   month: string
-  order: string
-  skip: number
-  trafficKeywordTypes: JsonPrimitive[]
+  forceReStat: boolean
+  badges: JsonPrimitive[]
+  limit: number
 }
 
 export type SellerSpriteKeywordTrend = {
@@ -426,6 +426,7 @@ export type SellerSpriteKeywordItem = {
 
 export type SellerSpriteKeywordReverseData = {
   asin: string
+  total: number
   items: SellerSpriteKeywordItem[]
 }
 
@@ -451,9 +452,7 @@ export type SellerSpriteKeywordReverseSuccess = {
 export type SellerSpriteKeywordReverseResponse = SellerSpriteKeywordReverseSuccess | ProtocolError
 
 const KEYWORD_REVERSE_INPUT_KEYS = [
-  'market', 'ac', 'asin', 'badges', 'conversionKeywordTypes', 'desc', 'exactly',
-  'filterDeletedKeywords', 'keywordBidMatchType', 'limit', 'month', 'order', 'skip',
-  'trafficKeywordTypes',
+  'asin', 'marketId', 'month', 'forceReStat', 'badges', 'limit',
 ] as const
 
 const isBoundedString = (value: unknown, max: number): value is string =>
@@ -478,22 +477,18 @@ export const isSellerSpriteKeywordReverseInput = (
 ): value is SellerSpriteKeywordReverseInput => {
   if (!isRecord(value) || Object.keys(value).length !== KEYWORD_REVERSE_INPUT_KEYS.length) return false
   if (!KEYWORD_REVERSE_INPUT_KEYS.every((key) => Object.hasOwn(value, key))) return false
-  return isBoundedString(value.market, 32)
-    && typeof value.ac === 'boolean'
-    && isBoundedString(value.asin, 64)
+  return isBoundedString(value.asin, 64)
+    && typeof value.marketId === 'number'
+    && Number.isInteger(value.marketId)
+    && value.marketId > 0
+    && value.marketId <= 1_000
+    && isBoundedOptionalString(value.month, 32)
+    && typeof value.forceReStat === 'boolean'
     && isJsonPrimitiveArray(value.badges)
-    && isJsonPrimitiveArray(value.conversionKeywordTypes)
-    && typeof value.desc === 'boolean'
-    && typeof value.exactly === 'boolean'
-    && typeof value.filterDeletedKeywords === 'boolean'
-    && isBoundedString(value.keywordBidMatchType, 64)
     && typeof value.limit === 'number'
-    && Number.isInteger(value.limit) && value.limit > 0 && value.limit <= 100
-    && isBoundedString(value.month, 32)
-    && isBoundedString(value.order, 64)
-    && typeof value.skip === 'number'
-    && Number.isInteger(value.skip) && value.skip >= 0
-    && isJsonPrimitiveArray(value.trafficKeywordTypes)
+    && Number.isInteger(value.limit)
+    && value.limit > 0
+    && value.limit <= 100
 }
 
 export const createSellerSpriteKeywordReverseRequest = (
@@ -560,8 +555,11 @@ export const isSellerSpriteKeywordReverseResponse = (
   return value.ok === true
     && value.action === SELLERSPRITE_KEYWORD_REVERSE_ACTION
     && isRecord(value.data)
-    && Object.keys(value.data).length === 2
+    && Object.keys(value.data).length === 3
     && typeof value.data.asin === 'string'
+    && typeof value.data.total === 'number'
+    && Number.isFinite(value.data.total)
+    && value.data.total >= 0
     && Array.isArray(value.data.items)
     && value.data.items.every(isKeywordItem)
 }
@@ -592,6 +590,8 @@ export type SellerSpriteCompetitorItem = {
   rating: number | null
   reviews: number | null
   estimatedSales: number | null
+  availableDate: number | null
+  availableDays: number | null
 }
 
 export type SellerSpriteCompetitorData = {
@@ -696,7 +696,7 @@ const isNullableString = (value: unknown): value is string | null =>
 
 const isCompetitorItem = (value: unknown): value is SellerSpriteCompetitorItem =>
   isRecord(value)
-  && Object.keys(value).length === 8
+  && Object.keys(value).length === 10
   && typeof value.asin === 'string'
   && isNullableString(value.title)
   && isNullableString(value.brand)
@@ -705,6 +705,8 @@ const isCompetitorItem = (value: unknown): value is SellerSpriteCompetitorItem =
   && isNullableFiniteNumber(value.rating)
   && isNullableFiniteNumber(value.reviews)
   && isNullableFiniteNumber(value.estimatedSales)
+  && isNullableFiniteNumber(value.availableDate)
+  && isNullableFiniteNumber(value.availableDays)
 
 export const isSellerSpriteCompetitorResponse = (
   value: unknown,
@@ -756,6 +758,8 @@ export type SellerSpriteProductSelectionItem = {
   rating: number | null
   reviews: number | null
   estimatedSales: number | null
+  availableDate: number | null
+  availableDays: number | null
 }
 
 export type SellerSpriteProductSelectionData = {
@@ -852,7 +856,7 @@ export const isSellerSpriteProductSelectionRequest = (
 
 const isProductSelectionItem = (value: unknown): value is SellerSpriteProductSelectionItem =>
   isRecord(value)
-  && Object.keys(value).length === 8
+  && Object.keys(value).length === 10
   && typeof value.asin === 'string'
   && isNullableString(value.title)
   && isNullableString(value.brand)
@@ -861,6 +865,8 @@ const isProductSelectionItem = (value: unknown): value is SellerSpriteProductSel
   && isNullableFiniteNumber(value.rating)
   && isNullableFiniteNumber(value.reviews)
   && isNullableFiniteNumber(value.estimatedSales)
+  && isNullableFiniteNumber(value.availableDate)
+  && isNullableFiniteNumber(value.availableDays)
 
 export const isSellerSpriteProductSelectionResponse = (
   value: unknown,
@@ -987,4 +993,527 @@ export const isSellerSpriteKeywordMiningResponse = (
     && Number.isFinite(value.data.size)
     && Number.isFinite(value.data.took)
     && Number.isFinite(value.data.total)
+}
+
+export const SELLERSPRITE_MONTHLY_ACTION = 'SELLERSPRITE_MONTHLY' as const
+
+export type SellerSpriteMonthlyInput = {
+  asin: string
+  month: string
+  station: string
+}
+
+export type SellerSpriteMonthlyVariation = {
+  asin: string
+  availableDate: number | null
+  availableDays: number | null
+  bsrLabel: string | null
+  bsrRank: number | null
+  currency: string | null
+  price: number | null
+  rating: number | null
+  reviews: number | null
+  reviewsRate: number | null
+  station: string | null
+  title: string | null
+}
+
+export type SellerSpriteMonthlyData = {
+  variations: SellerSpriteMonthlyVariation[]
+  historyStatus: 'not-verified'
+}
+
+export type SellerSpriteMonthlyRequest = {
+  namespace: typeof MESSAGE_NAMESPACE
+  kind: 'request'
+  protocolVersion: typeof PROTOCOL_VERSION
+  action: typeof SELLERSPRITE_MONTHLY_ACTION
+  requestId: string
+  payload: { targetId: string; input: SellerSpriteMonthlyInput }
+}
+
+export type SellerSpriteMonthlySuccess = {
+  namespace: typeof MESSAGE_NAMESPACE
+  kind: 'response'
+  protocolVersion: typeof PROTOCOL_VERSION
+  requestId: string
+  action: typeof SELLERSPRITE_MONTHLY_ACTION
+  ok: true
+  data: SellerSpriteMonthlyData
+}
+
+export type SellerSpriteMonthlyResponse = SellerSpriteMonthlySuccess | ProtocolError
+
+const MONTHLY_INPUT_KEYS = ['asin', 'month', 'station'] as const
+const MONTHLY_VARIATION_KEYS = [
+  'asin', 'availableDate', 'availableDays', 'bsrLabel', 'bsrRank', 'currency', 'price',
+  'rating', 'reviews', 'reviewsRate', 'station', 'title',
+] as const
+
+const isNullableBoundedString = (value: unknown, max: number): value is string | null =>
+  value === null || (typeof value === 'string' && value.length <= max)
+
+const isMonthlyVariation = (value: unknown): value is SellerSpriteMonthlyVariation => {
+  if (!isRecord(value) || Object.keys(value).length !== MONTHLY_VARIATION_KEYS.length
+    || !MONTHLY_VARIATION_KEYS.every((key) => Object.hasOwn(value, key))) return false
+  return isBoundedString(value.asin, 32)
+    && isNullableFiniteNumber(value.availableDate)
+    && isNullableFiniteNumber(value.availableDays)
+    && isNullableBoundedString(value.bsrLabel, 256)
+    && isNullableFiniteNumber(value.bsrRank)
+    && isNullableBoundedString(value.currency, 16)
+    && isNullableFiniteNumber(value.price)
+    && isNullableFiniteNumber(value.rating)
+    && isNullableFiniteNumber(value.reviews)
+    && isNullableFiniteNumber(value.reviewsRate)
+    && isNullableBoundedString(value.station, 32)
+    && isNullableBoundedString(value.title, 512)
+}
+
+export const isSellerSpriteMonthlyInput = (value: unknown): value is SellerSpriteMonthlyInput =>
+  isRecord(value)
+  && Object.keys(value).length === MONTHLY_INPUT_KEYS.length
+  && MONTHLY_INPUT_KEYS.every((key) => Object.hasOwn(value, key))
+  && isBoundedString(value.asin, 32)
+  && isBoundedOptionalString(value.month, 32)
+  && isBoundedString(value.station, 32)
+
+export const createSellerSpriteMonthlyRequest = (
+  requestId: string,
+  targetId: string,
+  input: SellerSpriteMonthlyInput,
+): SellerSpriteMonthlyRequest => ({
+  namespace: MESSAGE_NAMESPACE,
+  kind: 'request',
+  protocolVersion: PROTOCOL_VERSION,
+  action: SELLERSPRITE_MONTHLY_ACTION,
+  requestId,
+  payload: { targetId, input },
+})
+
+export const isSellerSpriteMonthlyRequest = (value: unknown): value is SellerSpriteMonthlyRequest => {
+  if (!isRecord(value) || value.namespace !== MESSAGE_NAMESPACE || value.kind !== 'request') return false
+  return value.protocolVersion === PROTOCOL_VERSION
+    && value.action === SELLERSPRITE_MONTHLY_ACTION
+    && isBoundedString(value.requestId, 256)
+    && isRecord(value.payload)
+    && Object.keys(value.payload).length === 2
+    && isBoundedString(value.payload.targetId, 64)
+    && isSellerSpriteMonthlyInput(value.payload.input)
+}
+
+
+export const isSellerSpriteMonthlyResponse = (value: unknown): value is SellerSpriteMonthlyResponse => {
+  if (!isRecord(value) || value.namespace !== MESSAGE_NAMESPACE || value.kind !== 'response') return false
+  if (value.protocolVersion !== PROTOCOL_VERSION || !isBoundedString(value.requestId, 256)) return false
+  if (value.ok === false) return isRecord(value.error) && typeof value.error.code === 'string'
+  return value.ok === true
+    && value.action === SELLERSPRITE_MONTHLY_ACTION
+    && isRecord(value.data)
+    && Object.keys(value.data).length === 2
+    && Array.isArray(value.data.variations)
+    && value.data.variations.every(isMonthlyVariation)
+    && value.data.historyStatus === 'not-verified'
+}
+
+export const SELLERSPRITE_MARKET_RESEARCH_ACTION = 'SELLERSPRITE_MARKET_RESEARCH' as const
+export const SELLERSPRITE_MARKET_RECENT_30_DAYS = 'bsr_sales_nearly' as const
+export const SELLERSPRITE_NEW_RELEASE_MONTHS = [1, 3, 6, 12] as const
+export type SellerSpriteMarketResearchMonth =
+  | typeof SELLERSPRITE_MARKET_RECENT_30_DAYS
+  | `bsr_sales_monthly_${number}`
+export type SellerSpriteNewReleaseMonths = (typeof SELLERSPRITE_NEW_RELEASE_MONTHS)[number]
+
+const marketResearchMonthlyValue = (date: Date, monthsAgo: number): SellerSpriteMarketResearchMonth => {
+  const month = new Date(date.getFullYear(), date.getMonth() - monthsAgo, 1)
+  return `bsr_sales_monthly_${month.getFullYear()}${String(month.getMonth() + 1).padStart(2, '0')}` as SellerSpriteMarketResearchMonth
+}
+
+export const getSellerSpriteMarketResearchMonths = (
+  date = new Date(),
+): readonly SellerSpriteMarketResearchMonth[] => [
+  SELLERSPRITE_MARKET_RECENT_30_DAYS,
+  ...Array.from({ length: 13 }, (_, index) => marketResearchMonthlyValue(date, index + 1)),
+]
+
+export const isSellerSpriteMarketResearchMonth = (
+  value: unknown,
+  date = new Date(),
+): value is SellerSpriteMarketResearchMonth =>
+  typeof value === 'string' && getSellerSpriteMarketResearchMonths(date).includes(value as SellerSpriteMarketResearchMonth)
+
+export const isSellerSpriteNewReleaseMonths = (value: unknown): value is SellerSpriteNewReleaseMonths =>
+  SELLERSPRITE_NEW_RELEASE_MONTHS.includes(value as SellerSpriteNewReleaseMonths)
+
+export type SellerSpriteMarketResearchInput = {
+  marketId: 1
+  departmentKeyword: string
+  monthName: SellerSpriteMarketResearchMonth
+  newReleaseNum: SellerSpriteNewReleaseMonths
+}
+
+export type SellerSpriteMarketResearchRow = {
+  marketName: string
+  sampleProducts: number | null
+  sampleBrands: number | null
+  sampleSellers: number | null
+  totalSales: number | null
+  averageSales: number | null
+  headSales: number | null
+  averageRevenue: number | null
+  headRevenue: number | null
+  averageReviews: number | null
+  averageRating: number | null
+  averageBsr: number | null
+  headBsr: number | null
+  averageSellers: number | null
+  averagePrice: number | null
+  fbaRatio: number | null
+  amzRatio: number | null
+  fbmRatio: number | null
+  productConcentration: number | null
+  brandConcentration: number | null
+  sellerConcentration: number | null
+  newProductCount: number | null
+  newProductRatio: number | null
+  totalProducts: number | null
+  profit: null
+}
+
+export type SellerSpriteMarketResearchCoverage = {
+  sampleCounts: number
+  totalSales: number
+  averageSales: number
+  averageRevenue: number
+  rating: number
+  bsr: number
+  price: number
+  sellerTypes: number
+  concentration: number
+  newProducts: number
+  totalProducts: number
+  profit: 0
+}
+
+export type SellerSpriteMarketResearchData = {
+  rows: SellerSpriteMarketResearchRow[]
+  fieldCoverage: SellerSpriteMarketResearchCoverage
+  profitStatus: 'not-integrated'
+}
+
+export type SellerSpriteMarketResearchRequest = {
+  namespace: typeof MESSAGE_NAMESPACE
+  kind: 'request'
+  protocolVersion: typeof PROTOCOL_VERSION
+  action: typeof SELLERSPRITE_MARKET_RESEARCH_ACTION
+  requestId: string
+  payload: { targetId: string; input: SellerSpriteMarketResearchInput }
+}
+
+export type SellerSpriteMarketResearchSuccess = {
+  namespace: typeof MESSAGE_NAMESPACE
+  kind: 'response'
+  protocolVersion: typeof PROTOCOL_VERSION
+  requestId: string
+  action: typeof SELLERSPRITE_MARKET_RESEARCH_ACTION
+  ok: true
+  data: SellerSpriteMarketResearchData
+}
+
+export type SellerSpriteMarketResearchResponse = SellerSpriteMarketResearchSuccess | ProtocolError
+
+const MARKET_RESEARCH_ROW_KEYS = [
+  'marketName', 'sampleProducts', 'sampleBrands', 'sampleSellers', 'totalSales', 'averageSales',
+  'headSales', 'averageRevenue', 'headRevenue', 'averageReviews', 'averageRating', 'averageBsr',
+  'headBsr', 'averageSellers', 'averagePrice', 'fbaRatio', 'amzRatio', 'fbmRatio',
+  'productConcentration', 'brandConcentration', 'sellerConcentration', 'newProductCount',
+  'newProductRatio', 'totalProducts', 'profit',
+] as const
+const MARKET_RESEARCH_COVERAGE_KEYS = [
+  'sampleCounts', 'totalSales', 'averageSales', 'averageRevenue', 'rating', 'bsr', 'price',
+  'sellerTypes', 'concentration', 'newProducts', 'totalProducts', 'profit',
+] as const
+
+export const isSellerSpriteMarketResearchInput = (value: unknown): value is SellerSpriteMarketResearchInput =>
+  isRecord(value)
+  && Object.keys(value).length === 4
+  && value.marketId === 1
+  && isBoundedString(value.departmentKeyword, 80)
+  && /^[A-Za-z0-9][A-Za-z0-9 &'/-]*$/.test(value.departmentKeyword)
+  && isSellerSpriteMarketResearchMonth(value.monthName)
+  && isSellerSpriteNewReleaseMonths(value.newReleaseNum)
+
+export const createSellerSpriteMarketResearchRequest = (
+  requestId: string,
+  targetId: string,
+  input: SellerSpriteMarketResearchInput,
+): SellerSpriteMarketResearchRequest => ({
+  namespace: MESSAGE_NAMESPACE,
+  kind: 'request',
+  protocolVersion: PROTOCOL_VERSION,
+  action: SELLERSPRITE_MARKET_RESEARCH_ACTION,
+  requestId,
+  payload: { targetId, input },
+})
+
+export const isSellerSpriteMarketResearchRequest = (value: unknown): value is SellerSpriteMarketResearchRequest =>
+  isRecord(value)
+  && value.namespace === MESSAGE_NAMESPACE
+  && value.kind === 'request'
+  && value.protocolVersion === PROTOCOL_VERSION
+  && value.action === SELLERSPRITE_MARKET_RESEARCH_ACTION
+  && isBoundedString(value.requestId, 256)
+  && isRecord(value.payload)
+  && Object.keys(value.payload).length === 2
+  && isBoundedString(value.payload.targetId, 64)
+  && isSellerSpriteMarketResearchInput(value.payload.input)
+
+const isMarketResearchRow = (value: unknown): value is SellerSpriteMarketResearchRow =>
+  isRecord(value)
+  && Object.keys(value).length === MARKET_RESEARCH_ROW_KEYS.length
+  && MARKET_RESEARCH_ROW_KEYS.every((key) => Object.hasOwn(value, key))
+  && isBoundedString(value.marketName, 512)
+  && MARKET_RESEARCH_ROW_KEYS.slice(1, -1).every((key) => isNullableFiniteNumber(value[key]))
+  && value.profit === null
+
+const isMarketResearchCoverage = (value: unknown): value is SellerSpriteMarketResearchCoverage =>
+  isRecord(value)
+  && Object.keys(value).length === MARKET_RESEARCH_COVERAGE_KEYS.length
+  && MARKET_RESEARCH_COVERAGE_KEYS.every((key) => Object.hasOwn(value, key))
+  && MARKET_RESEARCH_COVERAGE_KEYS.every((key) => typeof value[key] === 'number'
+    && Number.isFinite(value[key]) && value[key] >= 0 && value[key] <= 1)
+  && value.profit === 0
+
+export const isSellerSpriteMarketResearchResponse = (value: unknown): value is SellerSpriteMarketResearchResponse => {
+  if (!isRecord(value) || value.namespace !== MESSAGE_NAMESPACE || value.kind !== 'response') return false
+  if (value.protocolVersion !== PROTOCOL_VERSION || !isBoundedString(value.requestId, 256)) return false
+  if (value.ok === false) return isRecord(value.error) && typeof value.error.code === 'string'
+  return value.ok === true
+    && value.action === SELLERSPRITE_MARKET_RESEARCH_ACTION
+    && isRecord(value.data)
+    && Object.keys(value.data).length === 3
+    && Array.isArray(value.data.rows)
+    && value.data.rows.length <= 100
+    && value.data.rows.every(isMarketResearchRow)
+    && isMarketResearchCoverage(value.data.fieldCoverage)
+    && value.data.profitStatus === 'not-integrated'
+}
+
+export const SELLERSPRITE_ABA_PERIODS_ACTION = 'SELLERSPRITE_ABA_PERIODS' as const
+export const SELLERSPRITE_ABA_RESEARCH_ACTION = 'SELLERSPRITE_ABA_RESEARCH' as const
+export const SELLERSPRITE_ABA_MARKETS = ['COM', 'CA', 'GB', 'DE', 'FR', 'JP', 'IT', 'ES', 'IN', 'MX'] as const
+export type SellerSpriteAbaMarket = (typeof SELLERSPRITE_ABA_MARKETS)[number]
+export type SellerSpriteAbaReverseType = 'W' | 'M'
+
+export type SellerSpriteAbaPeriod = {
+  table: string
+  label: string
+}
+
+export type SellerSpriteAbaPeriodsData = {
+  weekTables: SellerSpriteAbaPeriod[]
+  monthTables: SellerSpriteAbaPeriod[]
+}
+
+export type SellerSpriteAbaResearchInput = {
+  reverseType: SellerSpriteAbaReverseType
+  table: string
+  q: string
+  market: SellerSpriteAbaMarket
+  page: number
+  size: number
+}
+
+export type SellerSpriteAbaItem = {
+  keyword: string
+  keywordCn: string | null
+  keywordJp: string | null
+  searches: number | null
+  clicks: number | null
+  impressions: number | null
+  purchaseRate: number | null
+  purchases: number | null
+  products: number | null
+  departments: string[]
+  searchRank: number | null
+  searchRankGrowthValue: number | null
+  searchRankGrowthRate: number | null
+  cvsShareRate: number | null
+  clickShareRate: number | null
+}
+
+export type SellerSpriteAbaResearchData = {
+  page: number
+  pages: number
+  size: number
+  total: number
+  took: number | null
+  hasNextPage: boolean
+  items: SellerSpriteAbaItem[]
+}
+
+export type SellerSpriteAbaPeriodsRequest = {
+  namespace: typeof MESSAGE_NAMESPACE
+  kind: 'request'
+  protocolVersion: typeof PROTOCOL_VERSION
+  action: typeof SELLERSPRITE_ABA_PERIODS_ACTION
+  requestId: string
+  payload: { targetId: string }
+}
+export type SellerSpriteAbaResearchRequest = {
+  namespace: typeof MESSAGE_NAMESPACE
+  kind: 'request'
+  protocolVersion: typeof PROTOCOL_VERSION
+  action: typeof SELLERSPRITE_ABA_RESEARCH_ACTION
+  requestId: string
+  payload: { targetId: string; input: SellerSpriteAbaResearchInput }
+}
+export type SellerSpriteAbaPeriodsSuccess = {
+  namespace: typeof MESSAGE_NAMESPACE
+  kind: 'response'
+  protocolVersion: typeof PROTOCOL_VERSION
+  requestId: string
+  action: typeof SELLERSPRITE_ABA_PERIODS_ACTION
+  ok: true
+  data: SellerSpriteAbaPeriodsData
+}
+export type SellerSpriteAbaResearchSuccess = {
+  namespace: typeof MESSAGE_NAMESPACE
+  kind: 'response'
+  protocolVersion: typeof PROTOCOL_VERSION
+  requestId: string
+  action: typeof SELLERSPRITE_ABA_RESEARCH_ACTION
+  ok: true
+  data: SellerSpriteAbaResearchData
+}
+export type SellerSpriteAbaPeriodsResponse = SellerSpriteAbaPeriodsSuccess | ProtocolError
+export type SellerSpriteAbaResearchResponse = SellerSpriteAbaResearchSuccess | ProtocolError
+
+const ABA_RESEARCH_INPUT_KEYS = ['reverseType', 'table', 'q', 'market', 'page', 'size'] as const
+const ABA_ITEM_KEYS = [
+  'keyword', 'keywordCn', 'keywordJp', 'searches', 'clicks', 'impressions', 'purchaseRate',
+  'purchases', 'products', 'departments', 'searchRank', 'searchRankGrowthValue',
+  'searchRankGrowthRate', 'cvsShareRate', 'clickShareRate',
+] as const
+
+export const isSellerSpriteAbaMarket = (value: unknown): value is SellerSpriteAbaMarket =>
+  SELLERSPRITE_ABA_MARKETS.includes(value as SellerSpriteAbaMarket)
+
+export const isSellerSpriteAbaResearchInput = (value: unknown): value is SellerSpriteAbaResearchInput => {
+  if (!isRecord(value)
+    || Object.keys(value).length !== ABA_RESEARCH_INPUT_KEYS.length
+    || !ABA_RESEARCH_INPUT_KEYS.every((key) => Object.hasOwn(value, key))) return false
+  const tablePattern = value.reverseType === 'W' ? /^ara_\d{8}$/ : value.reverseType === 'M' ? /^ara_\d{6}$/ : null
+  return tablePattern !== null
+    && typeof value.table === 'string'
+    && tablePattern.test(value.table)
+    && isBoundedString(value.q, 256)
+    && isSellerSpriteAbaMarket(value.market)
+    && Number.isInteger(value.page) && (value.page as number) >= 1 && (value.page as number) <= 10_000
+    && Number.isInteger(value.size) && (value.size as number) >= 1 && (value.size as number) <= 50
+}
+
+export const createSellerSpriteAbaPeriodsRequest = (
+  requestId: string,
+  targetId: string,
+): SellerSpriteAbaPeriodsRequest => ({
+  namespace: MESSAGE_NAMESPACE,
+  kind: 'request',
+  protocolVersion: PROTOCOL_VERSION,
+  action: SELLERSPRITE_ABA_PERIODS_ACTION,
+  requestId,
+  payload: { targetId },
+})
+
+export const createSellerSpriteAbaResearchRequest = (
+  requestId: string,
+  targetId: string,
+  input: SellerSpriteAbaResearchInput,
+): SellerSpriteAbaResearchRequest => ({
+  namespace: MESSAGE_NAMESPACE,
+  kind: 'request',
+  protocolVersion: PROTOCOL_VERSION,
+  action: SELLERSPRITE_ABA_RESEARCH_ACTION,
+  requestId,
+  payload: { targetId, input },
+})
+
+export const isSellerSpriteAbaPeriodsRequest = (value: unknown): value is SellerSpriteAbaPeriodsRequest =>
+  isRecord(value)
+  && value.namespace === MESSAGE_NAMESPACE
+  && value.kind === 'request'
+  && value.protocolVersion === PROTOCOL_VERSION
+  && value.action === SELLERSPRITE_ABA_PERIODS_ACTION
+  && isBoundedString(value.requestId, 256)
+  && isRecord(value.payload)
+  && Object.keys(value.payload).length === 1
+  && isBoundedString(value.payload.targetId, 64)
+
+export const isSellerSpriteAbaResearchRequest = (value: unknown): value is SellerSpriteAbaResearchRequest =>
+  isRecord(value)
+  && value.namespace === MESSAGE_NAMESPACE
+  && value.kind === 'request'
+  && value.protocolVersion === PROTOCOL_VERSION
+  && value.action === SELLERSPRITE_ABA_RESEARCH_ACTION
+  && isBoundedString(value.requestId, 256)
+  && isRecord(value.payload)
+  && Object.keys(value.payload).length === 2
+  && isBoundedString(value.payload.targetId, 64)
+  && isSellerSpriteAbaResearchInput(value.payload.input)
+
+const isAbaPeriod = (value: unknown): value is SellerSpriteAbaPeriod =>
+  isRecord(value)
+  && Object.keys(value).length === 2
+  && isBoundedString(value.table, 32)
+  && isBoundedString(value.label, 64)
+
+const isAbaItem = (value: unknown): value is SellerSpriteAbaItem =>
+  isRecord(value)
+  && Object.keys(value).length === ABA_ITEM_KEYS.length
+  && ABA_ITEM_KEYS.every((key) => Object.hasOwn(value, key))
+  && isBoundedString(value.keyword, 512)
+  && isNullableBoundedString(value.keywordCn, 512)
+  && isNullableBoundedString(value.keywordJp, 512)
+  && ['searches', 'clicks', 'impressions', 'purchaseRate', 'purchases', 'products', 'searchRank',
+    'searchRankGrowthValue', 'searchRankGrowthRate', 'cvsShareRate', 'clickShareRate']
+    .every((key) => isNullableFiniteNumber(value[key]))
+  && Array.isArray(value.departments)
+  && value.departments.length <= 50
+  && value.departments.every((item) => isBoundedString(item, 256))
+
+const isAbaProtocolError = (value: unknown): value is ProtocolError['error'] => {
+  if (!isRecord(value) || typeof value.code !== 'string' || Object.keys(value).length > 3) return false
+  return (value.targetCode === undefined || typeof value.targetCode === 'string' || typeof value.targetCode === 'number')
+    && (value.targetMessage === undefined || typeof value.targetMessage === 'string')
+}
+
+export const isSellerSpriteAbaPeriodsResponse = (value: unknown): value is SellerSpriteAbaPeriodsResponse => {
+  if (!isRecord(value) || value.namespace !== MESSAGE_NAMESPACE || value.kind !== 'response') return false
+  if (value.protocolVersion !== PROTOCOL_VERSION || !isBoundedString(value.requestId, 256)) return false
+  if (value.ok === false) return isAbaProtocolError(value.error)
+  return value.ok === true
+    && value.action === SELLERSPRITE_ABA_PERIODS_ACTION
+    && isRecord(value.data)
+    && Object.keys(value.data).length === 2
+    && Array.isArray(value.data.weekTables)
+    && value.data.weekTables.every(isAbaPeriod)
+    && Array.isArray(value.data.monthTables)
+    && value.data.monthTables.every(isAbaPeriod)
+}
+
+export const isSellerSpriteAbaResearchResponse = (value: unknown): value is SellerSpriteAbaResearchResponse => {
+  if (!isRecord(value) || value.namespace !== MESSAGE_NAMESPACE || value.kind !== 'response') return false
+  if (value.protocolVersion !== PROTOCOL_VERSION || !isBoundedString(value.requestId, 256)) return false
+  if (value.ok === false) return isAbaProtocolError(value.error)
+  if (value.ok !== true || value.action !== SELLERSPRITE_ABA_RESEARCH_ACTION || !isRecord(value.data)) return false
+  return Object.keys(value.data).length === 7
+    && Number.isInteger(value.data.page) && (value.data.page as number) >= 1
+    && Number.isInteger(value.data.pages) && (value.data.pages as number) >= 0
+    && Number.isInteger(value.data.size) && (value.data.size as number) >= 1
+    && Number.isFinite(value.data.total) && (value.data.total as number) >= 0
+    && isNullableFiniteNumber(value.data.took)
+    && typeof value.data.hasNextPage === 'boolean'
+    && Array.isArray(value.data.items)
+    && value.data.items.length <= 50
+    && value.data.items.every(isAbaItem)
 }

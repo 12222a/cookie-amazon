@@ -11,12 +11,20 @@ export type FetchImplementation = (input: RequestInfo | URL, init?: RequestInit)
 export class TargetClientError extends Error {
   public readonly code: ProtocolErrorCode
   public readonly status?: number
+  public readonly targetCode?: string | number
+  public readonly targetMessage?: string
 
-  public constructor(code: ProtocolErrorCode, status?: number) {
-    super(code)
+  public constructor(
+    code: ProtocolErrorCode,
+    status?: number,
+    details: { targetCode?: string | number; targetMessage?: string } = {},
+  ) {
+    super(details.targetMessage ?? code)
     this.name = 'TargetClientError'
     this.code = code
     this.status = status
+    this.targetCode = details.targetCode
+    this.targetMessage = details.targetMessage
   }
 }
 
@@ -152,6 +160,14 @@ export class TargetClient {
     return this.execute('GET_PROFILE', readProfile)
   }
 
+  public async executeJsonGet<T>(
+    operation: TargetOperation,
+    query: Readonly<Record<string, string>>,
+    parse: (response: Response) => Promise<T>,
+  ): Promise<T> {
+    return this.execute(operation, (response) => parse(response), { query })
+  }
+
   public async executeJsonPost<T>(
     operation: TargetOperation,
     query: Readonly<Record<string, string>>,
@@ -163,6 +179,17 @@ export class TargetClient {
       (response) => parse(response),
       { query, body: { kind: 'json', value: body } },
     )
+  }
+
+  public async executeFormPost<T>(
+    operation: TargetOperation,
+    form: Readonly<Record<string, string>>,
+    parse: (response: Response) => Promise<T>,
+  ): Promise<T> {
+    return this.execute(operation, (response) => parse(response), {
+      query: {},
+      body: { kind: 'form', value: form },
+    })
   }
 
   public async executeHtmlSession(

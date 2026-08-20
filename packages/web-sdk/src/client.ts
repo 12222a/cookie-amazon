@@ -5,6 +5,10 @@ import {
   createSellerSpriteProductSelectionRequest,
   createSellerSpriteKeywordMiningRequest,
   createSellerSpriteKeywordReverseRequest,
+  createSellerSpriteMonthlyRequest,
+  createSellerSpriteMarketResearchRequest,
+  createSellerSpriteAbaPeriodsRequest,
+  createSellerSpriteAbaResearchRequest,
   createTargetRequest,
   CONTENT_SCRIPT_PROBE_ACTION,
   isAllowedWebOrigin,
@@ -14,12 +18,21 @@ import {
   isSellerSpriteProductSelectionResponse,
   isSellerSpriteKeywordMiningResponse,
   isSellerSpriteKeywordReverseResponse,
+  isSellerSpriteMonthlyResponse,
+  isSellerSpriteMarketResearchResponse,
+  isSellerSpriteAbaPeriodsResponse,
+  isSellerSpriteAbaResearchInput,
+  isSellerSpriteAbaResearchResponse,
   isTargetResponse,
   MESSAGE_NAMESPACE,
   COMPETITOR_RESEARCH_ACTION,
   PRODUCT_SELECTION_ACTION,
   KEYWORD_MINING_ACTION,
   SELLERSPRITE_KEYWORD_REVERSE_ACTION,
+  SELLERSPRITE_MONTHLY_ACTION,
+  SELLERSPRITE_MARKET_RESEARCH_ACTION,
+  SELLERSPRITE_ABA_PERIODS_ACTION,
+  SELLERSPRITE_ABA_RESEARCH_ACTION,
   type ExtensionStatus,
   type PingRequest,
   type SellerSpriteCompetitorData,
@@ -34,6 +47,17 @@ import {
   type SellerSpriteKeywordReverseData,
   type SellerSpriteKeywordReverseInput,
   type SellerSpriteKeywordReverseRequest,
+  type SellerSpriteMonthlyData,
+  type SellerSpriteMonthlyInput,
+  type SellerSpriteMonthlyRequest,
+  type SellerSpriteMarketResearchData,
+  type SellerSpriteMarketResearchInput,
+  type SellerSpriteMarketResearchRequest,
+  type SellerSpriteAbaPeriodsData,
+  type SellerSpriteAbaPeriodsRequest,
+  type SellerSpriteAbaResearchData,
+  type SellerSpriteAbaResearchInput,
+  type SellerSpriteAbaResearchRequest,
   type TargetAction,
   type TargetDescriptor,
   type TargetListData,
@@ -90,7 +114,7 @@ export const probeContentScript = async (options: WebSdkOptions = {}): Promise<C
 
 const requestWithTimeout = async (
   action: string,
-  request: PingRequest | TargetRequest | SellerSpriteKeywordReverseRequest | SellerSpriteCompetitorRequest | SellerSpriteProductSelectionRequest | SellerSpriteKeywordMiningRequest,
+  request: PingRequest | TargetRequest | SellerSpriteKeywordReverseRequest | SellerSpriteMonthlyRequest | SellerSpriteMarketResearchRequest | SellerSpriteCompetitorRequest | SellerSpriteProductSelectionRequest | SellerSpriteKeywordMiningRequest | SellerSpriteAbaPeriodsRequest | SellerSpriteAbaResearchRequest,
   timeoutMs: number,
 ): Promise<unknown> => {
   let timeoutId: number | undefined
@@ -217,6 +241,87 @@ export const selectSellerSpriteProducts = async (
   }
 }
 
+export const readSellerSpriteMonthly = async (
+  input: SellerSpriteMonthlyInput,
+  options: WebSdkOptions = {},
+): Promise<SellerSpriteMonthlyData> => {
+  if (!isAllowedWebOrigin(window.location.origin)) throw new WebSdkError('INVALID_ORIGIN')
+  initializeBridge()
+  const request = createSellerSpriteMonthlyRequest(createRequestId(), 'sellersprite', input)
+  try {
+    const response = await requestWithTimeout(SELLERSPRITE_MONTHLY_ACTION, request, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    if (!isSellerSpriteMonthlyResponse(response)) throw new WebSdkError('INVALID_MESSAGE')
+    if (!response.ok) throw new WebSdkError(response.error.code)
+    return response.data
+  } catch (error: unknown) {
+    if (error instanceof WebSdkError) throw error
+    throw new WebSdkError('EXTENSION_UNAVAILABLE')
+  }
+}
+
+export const researchSellerSpriteMarket = async (
+  input: SellerSpriteMarketResearchInput,
+  options: WebSdkOptions = {},
+): Promise<SellerSpriteMarketResearchData> => {
+  if (!isAllowedWebOrigin(window.location.origin)) throw new WebSdkError('INVALID_ORIGIN')
+  initializeBridge()
+  const request = createSellerSpriteMarketResearchRequest(createRequestId(), 'sellersprite', input)
+  try {
+    const response = await requestWithTimeout(SELLERSPRITE_MARKET_RESEARCH_ACTION, request, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    if (!isSellerSpriteMarketResearchResponse(response)) throw new WebSdkError('INVALID_MESSAGE')
+    if (!response.ok) throw new WebSdkError(response.error.code)
+    return response.data
+  } catch (error: unknown) {
+    if (error instanceof WebSdkError) throw error
+    throw new WebSdkError('EXTENSION_UNAVAILABLE')
+  }
+}
+
+const abaProtocolError = (error: {
+  code: import('@cookie-amazon/protocol').ProtocolErrorCode
+  targetCode?: string | number
+  targetMessage?: string
+}): WebSdkError => new WebSdkError(error.code, {
+  ...(error.targetCode === undefined ? {} : { targetCode: error.targetCode }),
+  ...(error.targetMessage === undefined ? {} : { targetMessage: error.targetMessage }),
+})
+
+export const listSellerSpriteAbaPeriods = async (
+  options: WebSdkOptions = {},
+): Promise<SellerSpriteAbaPeriodsData> => {
+  if (!isAllowedWebOrigin(window.location.origin)) throw new WebSdkError('INVALID_ORIGIN')
+  initializeBridge()
+  const request = createSellerSpriteAbaPeriodsRequest(createRequestId(), 'sellersprite')
+  try {
+    const response = await requestWithTimeout(SELLERSPRITE_ABA_PERIODS_ACTION, request, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    if (!isSellerSpriteAbaPeriodsResponse(response)) throw new WebSdkError('INVALID_MESSAGE')
+    if (!response.ok) throw abaProtocolError(response.error)
+    return response.data
+  } catch (error: unknown) {
+    if (error instanceof WebSdkError) throw error
+    throw new WebSdkError('EXTENSION_UNAVAILABLE')
+  }
+}
+
+export const researchSellerSpriteAba = async (
+  input: SellerSpriteAbaResearchInput,
+  options: WebSdkOptions = {},
+): Promise<SellerSpriteAbaResearchData> => {
+  if (!isAllowedWebOrigin(window.location.origin)) throw new WebSdkError('INVALID_ORIGIN')
+  if (!isSellerSpriteAbaResearchInput(input)) throw new WebSdkError('INVALID_MESSAGE')
+  initializeBridge()
+  const request = createSellerSpriteAbaResearchRequest(createRequestId(), 'sellersprite', input)
+  try {
+    const response = await requestWithTimeout(SELLERSPRITE_ABA_RESEARCH_ACTION, request, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    if (!isSellerSpriteAbaResearchResponse(response)) throw new WebSdkError('INVALID_MESSAGE')
+    if (!response.ok) throw abaProtocolError(response.error)
+    return response.data
+  } catch (error: unknown) {
+    if (error instanceof WebSdkError) throw error
+    throw new WebSdkError('EXTENSION_UNAVAILABLE')
+  }
+}
+
 export const mineSellerSpriteKeywords = async (
   input: SellerSpriteKeywordMiningInput,
   options: WebSdkOptions = {},
@@ -243,6 +348,13 @@ export type {
   SellerSpriteProductSelectionInput,
   SellerSpriteKeywordMiningData,
   SellerSpriteKeywordMiningInput,
+  SellerSpriteMonthlyData,
+  SellerSpriteMonthlyInput,
+  SellerSpriteMarketResearchData,
+  SellerSpriteMarketResearchInput,
+  SellerSpriteAbaPeriodsData,
+  SellerSpriteAbaResearchData,
+  SellerSpriteAbaResearchInput,
   SellerSpriteKeywordReverseData,
   SellerSpriteKeywordReverseInput,
   TargetDescriptor,

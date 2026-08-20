@@ -9,6 +9,11 @@ export type ProductObservation = {
   rating: number | null
   reviews: number | null
   estimatedSales: number | null
+  availableDate?: number | null
+  availableDays?: number | null
+  bsrLabel?: string | null
+  bsrRank?: number | null
+  monthlyDataStatus?: 'available' | 'not-requested' | 'unavailable'
 }
 
 export type ProductSnapshot = {
@@ -65,6 +70,8 @@ const toObservation = (
   rating: item.rating,
   reviews: item.reviews,
   estimatedSales: item.estimatedSales,
+  availableDate: item.availableDate,
+  availableDays: item.availableDays,
 })
 
 export const toSnapshot = (

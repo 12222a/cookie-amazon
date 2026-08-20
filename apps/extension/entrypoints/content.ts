@@ -11,6 +11,10 @@ import {
   KEYWORD_PRODUCT_RESEARCH_ACTION,
   KEYWORD_MINING_ACTION,
   SELLERSPRITE_KEYWORD_REVERSE_ACTION,
+  SELLERSPRITE_MONTHLY_ACTION,
+  SELLERSPRITE_MARKET_RESEARCH_ACTION,
+  SELLERSPRITE_ABA_PERIODS_ACTION,
+  SELLERSPRITE_ABA_RESEARCH_ACTION,
   TARGET_ACTIONS,
   isAllowedWebOrigin,
   isContentScriptProbeRequest,
@@ -20,6 +24,10 @@ import {
   isSellerSpriteHtmlSessionRequest,
   isSellerSpriteKeywordMiningRequest,
   isSellerSpriteKeywordReverseRequest,
+  isSellerSpriteMonthlyRequest,
+  isSellerSpriteMarketResearchRequest,
+  isSellerSpriteAbaPeriodsRequest,
+  isSellerSpriteAbaResearchRequest,
   isTargetRequest,
   type PingResponse,
   type ProtocolError,
@@ -78,6 +86,26 @@ const relayHtmlSessionMessage = async ({ data }: { data: unknown }): Promise<imp
   try { return await sendMessage(data.action, data, 'background') as unknown as import('@cookie-amazon/protocol').SellerSpriteHtmlSessionResponse } catch { return extensionUnavailable(data.requestId) }
 }
 
+const relayMonthlyMessage = async ({ data }: { data: unknown }): Promise<import('@cookie-amazon/protocol').SellerSpriteMonthlyResponse> => {
+  if (!isAllowedWebOrigin(location.origin) || !isSellerSpriteMonthlyRequest(data)) return invalidMessage()
+  try { return await sendMessage(data.action, data, 'background') as unknown as import('@cookie-amazon/protocol').SellerSpriteMonthlyResponse } catch { return extensionUnavailable(data.requestId) }
+}
+
+const relayMarketResearchMessage = async ({ data }: { data: unknown }): Promise<import('@cookie-amazon/protocol').SellerSpriteMarketResearchResponse> => {
+  if (!isAllowedWebOrigin(location.origin) || !isSellerSpriteMarketResearchRequest(data)) return invalidMessage()
+  try { return await sendMessage(data.action, data, 'background') as unknown as import('@cookie-amazon/protocol').SellerSpriteMarketResearchResponse } catch { return extensionUnavailable(data.requestId) }
+}
+
+const relayAbaPeriodsMessage = async ({ data }: { data: unknown }): Promise<import('@cookie-amazon/protocol').SellerSpriteAbaPeriodsResponse> => {
+  if (!isAllowedWebOrigin(location.origin) || !isSellerSpriteAbaPeriodsRequest(data)) return invalidMessage()
+  try { return await sendMessage(data.action, data, 'background') as unknown as import('@cookie-amazon/protocol').SellerSpriteAbaPeriodsResponse } catch { return extensionUnavailable(data.requestId) }
+}
+
+const relayAbaResearchMessage = async ({ data }: { data: unknown }): Promise<import('@cookie-amazon/protocol').SellerSpriteAbaResearchResponse> => {
+  if (!isAllowedWebOrigin(location.origin) || !isSellerSpriteAbaResearchRequest(data)) return invalidMessage()
+  try { return await sendMessage(data.action, data, 'background') as unknown as import('@cookie-amazon/protocol').SellerSpriteAbaResearchResponse } catch { return extensionUnavailable(data.requestId) }
+}
+
 const relayKeywordMiningMessage = async ({ data }: { data: unknown }): Promise<import('@cookie-amazon/protocol').SellerSpriteKeywordMiningResponse> => {
   if (!isAllowedWebOrigin(location.origin) || !isSellerSpriteKeywordMiningRequest(data)) return invalidMessage()
   try { return await sendMessage(data.action, data, 'background') as unknown as import('@cookie-amazon/protocol').SellerSpriteKeywordMiningResponse } catch { return extensionUnavailable(data.requestId) }
@@ -112,6 +140,10 @@ export default defineContentScript({
     })
     for (const action of TARGET_ACTIONS) onMessage(action, relayTargetMessage)
     onMessage(SELLERSPRITE_KEYWORD_REVERSE_ACTION, relayKeywordReverseMessage)
+    onMessage(SELLERSPRITE_MONTHLY_ACTION, relayMonthlyMessage)
+    onMessage(SELLERSPRITE_MARKET_RESEARCH_ACTION, relayMarketResearchMessage)
+    onMessage(SELLERSPRITE_ABA_PERIODS_ACTION, relayAbaPeriodsMessage)
+    onMessage(SELLERSPRITE_ABA_RESEARCH_ACTION, relayAbaResearchMessage)
     onMessage(COMPETITOR_RESEARCH_ACTION, relayCompetitorMessage)
     onMessage(PRODUCT_SELECTION_ACTION, relayProductSelectionMessage)
     onMessage(KEYWORD_MINING_ACTION, relayKeywordMiningMessage)

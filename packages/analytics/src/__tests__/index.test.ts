@@ -20,6 +20,8 @@ const item = (
   rating: 4,
   reviews: 100,
   estimatedSales: 500,
+  availableDate: null,
+  availableDays: null,
   ...overrides,
 })
 
@@ -61,6 +63,8 @@ describe('toSnapshot', () => {
           rating: 4,
           reviews: 100,
           estimatedSales: 500,
+          availableDate: null,
+          availableDays: null,
         },
       ],
     })

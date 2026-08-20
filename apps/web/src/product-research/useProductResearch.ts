@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   buildSeries,
   computeTrends,
@@ -9,14 +9,38 @@ import {
   type ProductTrend,
   type TrendMetric,
 } from '@cookie-amazon/analytics'
-import { researchSellerSpriteCompetitors, WebSdkError } from '@cookie-amazon/web-sdk'
+import {
+  researchSellerSpriteCompetitors,
+  researchSellerSpriteMarket,
+  WebSdkError,
+  type SellerSpriteMarketResearchData,
+  type SellerSpriteMarketResearchInput,
+} from '@cookie-amazon/web-sdk'
 import { listSnapshots, putSnapshot } from '../store/snapshots'
 import {
   buildCompetitorResearchInput,
+  buildMarketResearchInput,
   validateProductResearchQuery,
   type ProductResearchQuery,
 } from './input'
 import { enrichProducts, type OpportunityProduct, type ProductSource } from './opportunity'
+import {
+  buildKeywordMarketReport,
+  type AsinKeywordEvidence,
+  type KeywordMarketReport,
+} from './keyword-market'
+import {
+  EMPTY_KEYWORD_LOOKUP,
+  prepareKeywordLookup,
+  type KeywordLookupState,
+} from './keyword-lookup'
+import {
+  EMPTY_MONTHLY_LOOKUP,
+  mergeMonthlyEvidence,
+  prepareMonthlyLookup,
+  type AsinMonthlyEvidence,
+  type MonthlyLookupState,
+} from './monthly-lookup'
 
 const createSnapshotId = (): string =>
   `snap-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -40,10 +64,22 @@ const demoSnapshot = (market: string, keyword: string): ProductSnapshot => ({
   observations: [...DEMO_PRODUCTS],
 })
 
+export type MarketResearchState = {
+  status: 'idle' | 'loading' | 'complete' | 'unavailable' | 'unsupported-market'
+  data: SellerSpriteMarketResearchData | null
+  filters: Pick<SellerSpriteMarketResearchInput, 'monthName' | 'newReleaseNum'> | null
+}
+
+const EMPTY_MARKET_RESEARCH: MarketResearchState = { status: 'idle', data: null, filters: null }
+
 export type ProductResearchState = {
   snapshots: readonly ProductSnapshot[]
   products: readonly ProductObservation[]
   opportunityProducts: readonly OpportunityProduct[]
+  keywordReport: KeywordMarketReport | null
+  keywordLookup: KeywordLookupState
+  monthlyLookup: MonthlyLookupState
+  marketResearch: MarketResearchState
   series: readonly ProductSeries[]
   trends: readonly ProductTrend[]
   refreshing: boolean
@@ -62,9 +98,15 @@ export const useProductResearch = (
   const [snapshots, setSnapshots] = useState<readonly ProductSnapshot[]>([])
   const [products, setProducts] = useState<readonly ProductObservation[]>(DEMO_PRODUCTS)
   const [source, setSource] = useState<ProductSource | 'demo'>('demo')
+  const [keywordEvidence, setKeywordEvidence] = useState<readonly AsinKeywordEvidence[]>([])
+  const [monthlyEvidence, setMonthlyEvidence] = useState<readonly AsinMonthlyEvidence[]>([])
+  const [keywordLookup, setKeywordLookup] = useState<KeywordLookupState>(EMPTY_KEYWORD_LOOKUP)
+  const [monthlyLookup, setMonthlyLookup] = useState<MonthlyLookupState>(EMPTY_MONTHLY_LOOKUP)
+  const [marketResearch, setMarketResearch] = useState<MarketResearchState>(EMPTY_MARKET_RESEARCH)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const asyncLookupRequestId = useRef(0)
 
   useEffect(() => {
     let active = true
@@ -94,6 +136,13 @@ export const useProductResearch = (
     }
     setRefreshing(true)
     setError(null)
+    const lookupRequestId = asyncLookupRequestId.current + 1
+    asyncLookupRequestId.current = lookupRequestId
+    setKeywordEvidence([])
+    setMonthlyEvidence([])
+    setKeywordLookup(EMPTY_KEYWORD_LOOKUP)
+    setMonthlyLookup(EMPTY_MONTHLY_LOOKUP)
+    setMarketResearch(EMPTY_MARKET_RESEARCH)
     try {
       if (!targetReady) {
         setError('TARGET_NOT_READY')
@@ -101,29 +150,91 @@ export const useProductResearch = (
       }
       const input = buildCompetitorResearchInput(query)
       const data = await researchSellerSpriteCompetitors(input, { timeoutMs: 15_000 })
+      if (asyncLookupRequestId.current !== lookupRequestId) return
       const snapshot = toSnapshot(data, {
         snapshotId: createSnapshotId(),
         capturedAt: Date.now(),
         market: query.market,
         selectType: 'v3-api',
       })
-      await putSnapshot(snapshot)
-      const stored = await listSnapshots()
-      setSnapshots(stored)
       setProducts(snapshot.observations)
       setSource('v3-api')
+
+      if (query.market === 'US') {
+        const marketInput = buildMarketResearchInput(
+          query.keyword,
+          query.market,
+          query.monthName,
+          query.newReleaseNum,
+        )
+        const filters = { monthName: marketInput.monthName, newReleaseNum: marketInput.newReleaseNum }
+        setMarketResearch({ status: 'loading', data: null, filters })
+        void (async () => {
+          try {
+            const marketData = await researchSellerSpriteMarket(marketInput, { timeoutMs: 15_000 })
+            if (asyncLookupRequestId.current !== lookupRequestId) return
+            setMarketResearch({
+              status: marketData.rows.length > 0 ? 'complete' : 'unavailable',
+              data: marketData,
+              filters,
+            })
+          } catch {
+            if (asyncLookupRequestId.current === lookupRequestId) {
+              setMarketResearch({ status: 'unavailable', data: null, filters })
+            }
+          }
+        })()
+      } else {
+        setMarketResearch({ status: 'unsupported-market', data: null, filters: null })
+      }
+
+      const keywordLookupJob = prepareKeywordLookup(data, query.market)
+      const monthlyLookupJob = prepareMonthlyLookup(data, query.market)
+      setKeywordLookup(keywordLookupJob.initialState)
+      setMonthlyLookup(monthlyLookupJob.initialState)
+      void (async () => {
+        const keywordResult = await keywordLookupJob.run()
+        if (asyncLookupRequestId.current !== lookupRequestId) return
+        setKeywordEvidence(keywordResult.evidence)
+        setKeywordLookup(keywordResult.state)
+
+        const monthlyResult = await monthlyLookupJob.run()
+        if (asyncLookupRequestId.current !== lookupRequestId) return
+        setMonthlyEvidence(monthlyResult.evidence)
+        setMonthlyLookup(monthlyResult.state)
+      })()
+      await putSnapshot(snapshot)
+      const stored = await listSnapshots()
+      if (asyncLookupRequestId.current !== lookupRequestId) return
+      setSnapshots(stored)
     } catch (reason: unknown) {
-      setError(reason instanceof WebSdkError ? reason.code : 'REFRESH_FAILED')
+      if (asyncLookupRequestId.current === lookupRequestId) {
+        setError(reason instanceof WebSdkError ? reason.code : 'REFRESH_FAILED')
+      }
     } finally {
-      setRefreshing(false)
+      if (asyncLookupRequestId.current === lookupRequestId) setRefreshing(false)
     }
   }, [targetReady])
 
   const series = useMemo(() => buildSeries(snapshots), [snapshots])
   const trends = useMemo(() => computeTrends(series, metric), [series, metric])
-  const opportunityProducts = useMemo(() => enrichProducts(products, source), [products, source])
+  const productsWithMonthly = useMemo(
+    () => mergeMonthlyEvidence(products, monthlyEvidence),
+    [monthlyEvidence, products],
+  )
+  const opportunityProducts = useMemo(
+    () => enrichProducts(productsWithMonthly, source),
+    [productsWithMonthly, source],
+  )
+  const keywordReport = useMemo(
+    () => keywordEvidence.length === 0 ? null : buildKeywordMarketReport(keywordEvidence),
+    [keywordEvidence],
+  )
 
-  return { snapshots, products, opportunityProducts, series, trends, refreshing, loading, error, source, refresh }
+  return {
+    snapshots, products: productsWithMonthly, opportunityProducts, keywordReport, keywordLookup, monthlyLookup, marketResearch, series, trends,
+    refreshing, loading, error, source, refresh,
+  }
 }
 
 export { DEMO_PRODUCTS }

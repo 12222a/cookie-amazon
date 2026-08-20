@@ -9,7 +9,7 @@ const formatMoney = (value: number | null): string =>
   value === null ? '—' : `$${value.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
 
 const scoreTone = (score: number | null): string =>
-  score === null ? 'score-muted' : score >= 75 ? 'score-strong' : score >= 60 ? 'score-watch' : 'score-risk'
+  score === null ? 'score-muted' : score >= 70 ? 'score-strong' : score >= 50 ? 'score-watch' : 'score-risk'
 
 export function ProductResults({
   products,
@@ -24,7 +24,7 @@ export function ProductResults({
         <span className="pr-empty-mark">⌁</span>
         <div>
           <strong>还没有结果</strong>
-          <p>输入关键词开始一次选品扫描，结果会在这里按机会分排序。</p>
+          <p>输入关键词开始一次市场扫描，结果会在这里按研究优先级排序。</p>
         </div>
       </div>
     )
@@ -42,7 +42,9 @@ export function ProductResults({
               <th scope="col">月销量</th>
               <th scope="col">月销售额</th>
               <th scope="col">评分 / 评论</th>
-              <th scope="col">机会分</th>
+              <th scope="col">Listing Age</th>
+              <th scope="col">BSR 快照</th>
+              <th scope="col">研究优先级</th>
               <th scope="col">来源</th>
             </tr>
           </thead>
@@ -67,7 +69,9 @@ export function ProductResults({
                     <span className="pr-rating">{product.rating === null ? '—' : `★ ${product.rating.toFixed(1)}`}</span>
                     <small className="pr-review-count">{formatNumber(product.reviews)} reviews</small>
                   </td>
-                  <td><span className={`pr-score ${scoreTone(product.opportunity)}`}>{product.opportunity ?? '—'}</span></td>
+                  <td className="pr-number">{product.availableDays == null ? '—' : `${Math.round(product.availableDays)} 天`}</td>
+                  <td className="pr-number" title={product.bsrLabel ?? undefined}>{formatNumber(product.bsrRank ?? null)}</td>
+                  <td><span className={`pr-score ${scoreTone(product.researchPriority)}`}>{product.researchPriority ?? '—'}</span></td>
                   <td><span className={`pr-source pr-source--${product.source}`}>{product.source === 'v3-api' ? 'v3 API' : product.source === 'v2-dom' ? 'v2 DOM' : 'Demo'}</span></td>
                 </tr>
               )
@@ -75,7 +79,7 @@ export function ProductResults({
           </tbody>
         </table>
       </div>
-      <div className="pr-table-footer"><span>显示 {products.length} 个商品</span><span>机会分 = 需求 × 竞争 × 评价的快速估算</span></div>
+      <div className="pr-table-footer"><span>显示 {products.length} 个商品</span><span>研究优先级基于当前结果集内的销量、评论壁垒与评分相对位置</span></div>
     </div>
   )
 }
