@@ -21,9 +21,9 @@ const productSelectionInput = {
 }
 
 const keywordMiningInput = {
-  amazonChoice: false, desc: true, filterRootWord: false, historyDate: '2026-01',
-  keyword: 'wireless earbuds', keywordBidMatchType: 'broad', market: 'US', matchType: 'BROAD',
-  orderBy: 'searches', pageNum: 1, pageSize: 20,
+  amazonChoice: false, desc: true, filterRootWord: 0, historyDate: '',
+  keyword: 'phone stand', keywordBidMatchType: 'exact', market: 1, matchType: 0,
+  orderBy: 21, pageNum: 1, pageSize: 50,
 }
 
 describe('SellerSprite web SDK', () => {

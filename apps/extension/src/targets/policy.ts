@@ -132,7 +132,7 @@ export const createExampleOperationPolicy = (): Readonly<Record<TargetOperation,
     response: 'html-session',
   }),
   KEYWORD_MINING: Object.freeze({
-    enabled: false,
+    enabled: true,
     path: '/v3/api/keyword-miner',
     method: 'POST',
     timeoutMs: 15_000,
@@ -219,7 +219,7 @@ export const createSellerSpriteOperationPolicy = (): Readonly<Record<TargetOpera
     response: 'html-session',
   }),
   KEYWORD_MINING: Object.freeze({
-    enabled: false,
+    enabled: true,
     path: '/v3/api/keyword-miner',
     method: 'POST',
     timeoutMs: 15_000,

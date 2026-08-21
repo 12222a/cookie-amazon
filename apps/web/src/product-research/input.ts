@@ -4,6 +4,7 @@ import {
   isSellerSpriteMarketResearchMonth,
   isSellerSpriteNewReleaseMonths,
   type SellerSpriteCompetitorInput,
+  type SellerSpriteKeywordMiningInput,
   type SellerSpriteKeywordReverseInput,
   type SellerSpriteMarketResearchInput,
   type SellerSpriteMarketResearchMonth,
@@ -82,6 +83,36 @@ export const buildKeywordReverseInput = (
     forceReStat: false,
     badges: [],
     limit: 50,
+  }
+}
+
+export const buildKeywordMiningInput = (
+  keyword: string,
+  market: string,
+  page = 1,
+  pageSize = 50,
+): SellerSpriteKeywordMiningInput => {
+  const normalizedKeyword = keyword.trim()
+  const keywordMarket = SELLERSPRITE_KEYWORD_MARKETS[market]
+  if (!keywordMarket) throw new Error('UNSUPPORTED_KEYWORD_MARKET')
+  if (normalizedKeyword.length === 0 || normalizedKeyword.length > 80 || !KEYWORD_PATTERN.test(normalizedKeyword)) {
+    throw new Error('INVALID_KEYWORD')
+  }
+  if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    throw new Error('INVALID_KEYWORD_PAGINATION')
+  }
+  return {
+    keyword: normalizedKeyword,
+    market: keywordMarket,
+    pageNum: page,
+    pageSize,
+    historyDate: '',
+    orderBy: 21,
+    desc: true,
+    filterRootWord: 0,
+    matchType: 0,
+    amazonChoice: false,
+    keywordBidMatchType: 'exact',
   }
 }
 

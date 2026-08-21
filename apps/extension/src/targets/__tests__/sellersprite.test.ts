@@ -31,9 +31,9 @@ const competitorInput = {
 }
 
 const keywordMiningInput = {
-  amazonChoice: false, desc: true, filterRootWord: false, historyDate: '2026-01',
-  keyword: 'wireless earbuds', keywordBidMatchType: 'broad', market: 'US', matchType: 'BROAD',
-  orderBy: 'searches', pageNum: 1, pageSize: 20,
+  amazonChoice: false, desc: true, filterRootWord: 0, historyDate: '',
+  keyword: 'phone stand', keywordBidMatchType: 'exact', market: 1, matchType: 0,
+  orderBy: 21, pageNum: 1, pageSize: 50,
 }
 
 const htmlResponse = (
@@ -435,27 +435,58 @@ describe('SellerSprite session adapter', () => {
     })
   })
 
-  it('accepts only empty keyword mining results and rejects unknown non-empty items', async () => {
-    const emptyFetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  it('posts keyword mining requests and whitelists the paginated response fields', async () => {
+    expect(SELLERSPRITE_ADAPTER.operations.KEYWORD_MINING).toEqual({
+      enabled: true, path: '/v3/api/keyword-miner', method: 'POST', timeoutMs: 15_000,
+      response: 'keyword-mining',
+    })
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe('https://www.sellersprite.com/v3/api/keyword-miner')
-      expect(init).toMatchObject({ method: 'POST', credentials: 'include' })
+      expect(init).toMatchObject({
+        method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' },
+      })
       expect(JSON.parse(String(init?.body))).toEqual(keywordMiningInput)
       return new Response(JSON.stringify({
-        code: 'OK',
-        data: { items: [], page: 1, size: 20, took: 12, total: 0 },
-      }), { status: 200, headers: { 'content-type': 'application/json' } })
+        code: 'OK', message: '', success: true,
+        data: {
+          page: 1, size: 50, total: 5992, took: 361,
+          items: [{
+            market: 'GLOBAL', marketId: 1, website: 'https://www.amazon.com',
+            keyword: 'phone stand', keywordCn: '手机支架', keywordJp: 'フォーンスタンド',
+            departments: [{ code: 'wireless', label: 'Cell Phones & Accessories' }],
+            trends: [{ month: '202607', search: 234037, searchRank: 2516 }],
+            month: '2026.07', searches: 234037, purchases: 9689, purchaseRate: 0.0414,
+            products: 2942, adProducts: 123, supplyDemandRatio: 0.8, avgPrice: 18.5,
+            avgReviews: 1000, avgRating: 4.4, bid: 1.2, phrasePpc: 1.1, broadPpc: 1.3,
+            exactPpc: 1.5, cvsShareRate: 0.2, wordCount: 2, titleDensity: 0.4,
+            spr: 12, relevancy: 0.9, absoluteRelevancy: 80, amazonChoice: true,
+            searchRank: 100, searchWeeklyRank: 105, clicks: 50000, impressions: 200000,
+            privateValue: 'must-not-leak', gkDatas: [{ asin: 'must-not-leak' }],
+          }],
+        },
+      }), { status: 200, headers: { 'content-type': 'application/json;charset=UTF-8' } })
     })
-    const miningOverride = { KEYWORD_MINING: { enabled: true } } as const
-    await expect(mineSellerSpriteKeywords(new TargetClient(SELLERSPRITE_ADAPTER, emptyFetcher, miningOverride), keywordMiningInput))
-      .resolves.toEqual({ items: [], page: 1, size: 20, took: 12, total: 0 })
 
-    const nonEmptyFetcher = new TargetClient(SELLERSPRITE_ADAPTER, async () => new Response(JSON.stringify({
-      code: 'OK', data: { items: [{ keyword: 'unknown' }], page: 1, size: 20, took: 12, total: 1 },
-    }), { status: 200, headers: { 'content-type': 'application/json' } }), miningOverride)
-    await expect(mineSellerSpriteKeywords(nonEmptyFetcher, keywordMiningInput))
-      .rejects.toMatchObject({ code: 'TARGET_RESPONSE_INVALID' })
+    await expect(mineSellerSpriteKeywords(new TargetClient(SELLERSPRITE_ADAPTER, fetcher), keywordMiningInput))
+      .resolves.toEqual({
+        page: 1, size: 50, total: 5992, took: 361,
+        items: [{
+          market: 'GLOBAL', marketId: 1, website: 'https://www.amazon.com',
+          keyword: 'phone stand', keywordCn: '手机支架', keywordJp: 'フォーンスタンド',
+          departments: [{ code: 'wireless', label: 'Cell Phones & Accessories' }],
+          trends: [{ month: '202607', search: 234037, searchRank: 2516 }],
+          month: '2026.07', searches: 234037, purchases: 9689, purchaseRate: 0.0414,
+          products: 2942, adProducts: 123, supplyDemandRatio: 0.8, avgPrice: 18.5,
+          avgReviews: 1000, avgRating: 4.4, bid: 1.2, phrasePpc: 1.1, broadPpc: 1.3,
+          exactPpc: 1.5, cvsShareRate: 0.2, wordCount: 2, titleDensity: 0.4,
+          spr: 12, relevancy: 0.9, absoluteRelevancy: 80, amazonChoice: true,
+          searchRank: 100, searchWeeklyRank: 105, clicks: 50000, impressions: 200000,
+        }],
+      })
+    expect(JSON.stringify(await Promise.resolve(keywordMiningInput))).not.toContain('privateValue')
 
-    await expect(mineSellerSpriteKeywords(new TargetClient(SELLERSPRITE_ADAPTER, emptyFetcher), keywordMiningInput))
+    const disabledClient = new TargetClient(SELLERSPRITE_ADAPTER, fetcher, { KEYWORD_MINING: { enabled: false } })
+    await expect(mineSellerSpriteKeywords(disabledClient, keywordMiningInput))
       .rejects.toMatchObject({ code: 'OPERATION_DISABLED' })
   })
 

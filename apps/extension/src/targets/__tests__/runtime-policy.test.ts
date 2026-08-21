@@ -47,14 +47,14 @@ describe('runtime target policy', () => {
     const policy = resolveRuntimeTargetPolicy(adapter, null)
     expect(policy.enabled).toBe(true)
     expect(policy.features.profile).toBe(true)
-    expect(policy.capabilities).toEqual(['CHECK_LOGIN', 'GET_PROFILE'])
+    expect(policy.capabilities).toEqual(['CHECK_LOGIN', 'GET_PROFILE', 'KEYWORD_MINING'])
   })
 
   it('applies target, feature, and operation kill switches', () => {
     expect(resolveRuntimeTargetPolicy(adapter, configWithTarget(remoteTarget({ enabled: false }))).enabled).toBe(false)
 
     const featureDisabled = configWithTarget(remoteTarget({ features: { profile: false } }))
-    expect(resolveRuntimeTargetPolicy(adapter, featureDisabled).capabilities).toEqual(['CHECK_LOGIN'])
+    expect(resolveRuntimeTargetPolicy(adapter, featureDisabled).capabilities).toEqual(['CHECK_LOGIN', 'KEYWORD_MINING'])
 
     const operationDisabled = configWithTarget(remoteTarget({
       operations: {
@@ -62,7 +62,7 @@ describe('runtime target policy', () => {
         GET_PROFILE: remoteOperation('GET_PROFILE', { enabled: false }),
       },
     }))
-    expect(resolveRuntimeTargetPolicy(adapter, operationDisabled).capabilities).toEqual(['CHECK_LOGIN'])
+    expect(resolveRuntimeTargetPolicy(adapter, operationDisabled).capabilities).toEqual(['CHECK_LOGIN', 'KEYWORD_MINING'])
   })
 
   it('cannot change compiled endpoints, methods, or increase timeouts', () => {
@@ -72,7 +72,7 @@ describe('runtime target policy', () => {
         GET_PROFILE: remoteOperation('GET_PROFILE', { path: '/api/arbitrary' }),
       },
     }))
-    expect(resolveRuntimeTargetPolicy(adapter, changedPath).capabilities).toEqual(['CHECK_LOGIN'])
+    expect(resolveRuntimeTargetPolicy(adapter, changedPath).capabilities).toEqual(['CHECK_LOGIN', 'KEYWORD_MINING'])
 
     const changedMethod = configWithTarget(remoteTarget({
       operations: {
@@ -80,7 +80,7 @@ describe('runtime target policy', () => {
         GET_PROFILE: remoteOperation('GET_PROFILE', { method: 'POST' }),
       },
     }))
-    expect(resolveRuntimeTargetPolicy(adapter, changedMethod).capabilities).toEqual(['CHECK_LOGIN'])
+    expect(resolveRuntimeTargetPolicy(adapter, changedMethod).capabilities).toEqual(['CHECK_LOGIN', 'KEYWORD_MINING'])
 
     const increasedTimeout = configWithTarget(remoteTarget({
       operations: {
@@ -90,7 +90,7 @@ describe('runtime target policy', () => {
         }),
       },
     }))
-    expect(resolveRuntimeTargetPolicy(adapter, increasedTimeout).capabilities).toEqual(['CHECK_LOGIN'])
+    expect(resolveRuntimeTargetPolicy(adapter, increasedTimeout).capabilities).toEqual(['CHECK_LOGIN', 'KEYWORD_MINING'])
   })
 
   it('requires login checking for the profile capability and ignores unknown config entries', () => {
@@ -108,6 +108,6 @@ describe('runtime target policy', () => {
     }))
     config.targets.UNKNOWN_TARGET = remoteTarget()
 
-    expect(resolveRuntimeTargetPolicy(adapter, config).capabilities).toEqual([])
+    expect(resolveRuntimeTargetPolicy(adapter, config).capabilities).toEqual(['KEYWORD_MINING'])
   })
 })

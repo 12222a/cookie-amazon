@@ -891,23 +891,111 @@ export const KEYWORD_MINING_ACTION = 'KEYWORD_MINING' as const
 export type SellerSpriteKeywordMiningInput = {
   amazonChoice: boolean
   desc: boolean
-  filterRootWord: boolean
+  filterRootWord: number
   historyDate: string
   keyword: string
   keywordBidMatchType: string
-  market: string
-  matchType: string
-  orderBy: string
+  market: number
+  matchType: number
+  orderBy: number
   pageNum: number
   pageSize: number
 }
 
+export type SellerSpriteKeywordMiningDepartment = {
+  code: string
+  label: string
+}
+
+export type SellerSpriteKeywordMiningTrend = {
+  month: string
+  search: number | null
+  searchRank: number | null
+}
+
+export type SellerSpriteKeywordMiningItem = {
+  keyword: string
+  keywordCn: string | null
+  keywordJp: string | null
+  market: string | null
+  marketId: number | null
+  website: string | null
+  departments: SellerSpriteKeywordMiningDepartment[]
+  trends: SellerSpriteKeywordMiningTrend[]
+  month: string | null
+  searches: number | null
+  purchases: number | null
+  purchaseRate: number | null
+  products: number | null
+  adProducts: number | null
+  supplyDemandRatio: number | null
+  avgPrice: number | null
+  avgReviews: number | null
+  avgRating: number | null
+  bid: number | null
+  phrasePpc: number | null
+  broadPpc: number | null
+  exactPpc: number | null
+  cvsShareRate: number | null
+  wordCount: number | null
+  titleDensity: number | null
+  spr: number | null
+  relevancy: number | null
+  absoluteRelevancy: number | null
+  amazonChoice: boolean | null
+  searchRank: number | null
+  searchWeeklyRank: number | null
+  clicks: number | null
+  impressions: number | null
+}
+
 export type SellerSpriteKeywordMiningData = {
-  items: []
+  items: SellerSpriteKeywordMiningItem[]
   page: number
   size: number
   took: number
   total: number
+}
+
+const KEYWORD_MINING_ITEM_KEYS = [
+  'keyword', 'keywordCn', 'keywordJp', 'market', 'marketId', 'website', 'departments', 'trends', 'month',
+  'searches', 'purchases', 'purchaseRate', 'products', 'adProducts', 'supplyDemandRatio', 'avgPrice',
+  'avgReviews', 'avgRating', 'bid', 'phrasePpc', 'broadPpc', 'exactPpc', 'cvsShareRate', 'wordCount',
+  'titleDensity', 'spr', 'relevancy', 'absoluteRelevancy', 'amazonChoice', 'searchRank', 'searchWeeklyRank',
+  'clicks', 'impressions',
+] as const
+
+const isKeywordMiningDepartment = (value: unknown): value is SellerSpriteKeywordMiningDepartment =>
+  isRecord(value)
+  && Object.keys(value).length === 2
+  && typeof value.code === 'string'
+  && typeof value.label === 'string'
+
+const isKeywordMiningTrend = (value: unknown): value is SellerSpriteKeywordMiningTrend =>
+  isRecord(value)
+  && Object.keys(value).length === 3
+  && typeof value.month === 'string'
+  && isNullableFiniteNumber(value.search)
+  && isNullableFiniteNumber(value.searchRank)
+
+const isKeywordMiningItem = (value: unknown): value is SellerSpriteKeywordMiningItem => {
+  if (!isRecord(value) || Object.keys(value).length !== KEYWORD_MINING_ITEM_KEYS.length
+    || !KEYWORD_MINING_ITEM_KEYS.every((key) => Object.hasOwn(value, key))) return false
+  const nullableStrings = ['keywordCn', 'keywordJp', 'market', 'website', 'month'] as const
+  const nullableNumbers = [
+    'marketId', 'searches', 'purchases', 'purchaseRate', 'products', 'adProducts', 'supplyDemandRatio',
+    'avgPrice', 'avgReviews', 'avgRating', 'bid', 'phrasePpc', 'broadPpc', 'exactPpc', 'cvsShareRate',
+    'wordCount', 'titleDensity', 'spr', 'relevancy', 'absoluteRelevancy', 'searchRank', 'searchWeeklyRank',
+    'clicks', 'impressions',
+  ] as const
+  return typeof value.keyword === 'string'
+    && nullableStrings.every((key) => isNullableString(value[key]))
+    && nullableNumbers.every((key) => isNullableFiniteNumber(value[key]))
+    && (typeof value.amazonChoice === 'boolean' || value.amazonChoice === null)
+    && Array.isArray(value.departments)
+    && value.departments.every(isKeywordMiningDepartment)
+    && Array.isArray(value.trends)
+    && value.trends.every(isKeywordMiningTrend)
 }
 export type SellerSpriteKeywordMiningRequest = {
   namespace: typeof MESSAGE_NAMESPACE
@@ -940,13 +1028,17 @@ export const isSellerSpriteKeywordMiningInput = (
   if (!KEYWORD_MINING_INPUT_KEYS.every((key) => Object.hasOwn(value, key))) return false
   return typeof value.amazonChoice === 'boolean'
     && typeof value.desc === 'boolean'
-    && typeof value.filterRootWord === 'boolean'
-    && isBoundedString(value.historyDate, 32)
+    && typeof value.filterRootWord === 'number'
+    && Number.isInteger(value.filterRootWord) && value.filterRootWord >= 0 && value.filterRootWord <= 1
+    && isBoundedOptionalString(value.historyDate, 32)
     && isBoundedString(value.keyword, 256)
     && isBoundedString(value.keywordBidMatchType, 64)
-    && isBoundedString(value.market, 32)
-    && isBoundedString(value.matchType, 64)
-    && isBoundedString(value.orderBy, 64)
+    && typeof value.market === 'number'
+    && Number.isInteger(value.market) && value.market > 0 && value.market <= 1000
+    && typeof value.matchType === 'number'
+    && Number.isInteger(value.matchType) && value.matchType >= 0 && value.matchType <= 100
+    && typeof value.orderBy === 'number'
+    && Number.isInteger(value.orderBy) && value.orderBy >= 0 && value.orderBy <= 1000
     && typeof value.pageNum === 'number'
     && Number.isInteger(value.pageNum) && value.pageNum > 0 && value.pageNum <= 10_000
     && typeof value.pageSize === 'number'
@@ -988,7 +1080,7 @@ export const isSellerSpriteKeywordMiningResponse = (
   if (value.ok !== true || value.action !== KEYWORD_MINING_ACTION || !isRecord(value.data)) return false
   return Object.keys(value.data).length === 5
     && Array.isArray(value.data.items)
-    && value.data.items.length === 0
+    && value.data.items.every(isKeywordMiningItem)
     && Number.isFinite(value.data.page)
     && Number.isFinite(value.data.size)
     && Number.isFinite(value.data.took)

@@ -24,7 +24,10 @@ import type {
   SellerSpriteProductSelectionInput,
   SellerSpriteHtmlSessionData,
   SellerSpriteKeywordMiningData,
+  SellerSpriteKeywordMiningDepartment,
   SellerSpriteKeywordMiningInput,
+  SellerSpriteKeywordMiningItem,
+  SellerSpriteKeywordMiningTrend,
   SellerSpriteAbaItem,
   SellerSpriteAbaPeriodsData,
   SellerSpriteAbaResearchData,
@@ -495,6 +498,63 @@ export const researchSellerSpriteMarket = (
   readMarketResearchResponse,
 )
 
+const readKeywordMiningDepartment = (value: unknown): SellerSpriteKeywordMiningDepartment | undefined => {
+  if (!isRecord(value) || typeof value.code !== 'string' || typeof value.label !== 'string') return undefined
+  return { code: value.code.slice(0, 128), label: value.label.slice(0, 256) }
+}
+
+const readKeywordMiningTrend = (value: unknown): SellerSpriteKeywordMiningTrend | undefined => {
+  if (!isRecord(value) || typeof value.month !== 'string') return undefined
+  return {
+    month: value.month.slice(0, 32),
+    search: normalizeNullableNumber(value.search),
+    searchRank: normalizeNullableNumber(value.searchRank),
+  }
+}
+
+const readKeywordMiningItem = (value: unknown): SellerSpriteKeywordMiningItem | undefined => {
+  if (!isRecord(value) || typeof value.keyword !== 'string' || value.keyword.trim() === '') return undefined
+  if (!Array.isArray(value.departments) || !Array.isArray(value.trends)) return undefined
+  const departments = value.departments.map(readKeywordMiningDepartment)
+  const trends = value.trends.map(readKeywordMiningTrend)
+  if (departments.some((item) => item === undefined) || trends.some((item) => item === undefined)) return undefined
+  return {
+    keyword: value.keyword.slice(0, 512),
+    keywordCn: normalizeNullableString(value.keywordCn),
+    keywordJp: normalizeNullableString(value.keywordJp),
+    market: normalizeNullableString(value.market),
+    marketId: normalizeNullableNumber(value.marketId),
+    website: normalizeNullableString(value.website),
+    departments: departments as SellerSpriteKeywordMiningDepartment[],
+    trends: trends as SellerSpriteKeywordMiningTrend[],
+    month: normalizeNullableString(value.month),
+    searches: normalizeNullableNumber(value.searches),
+    purchases: normalizeNullableNumber(value.purchases),
+    purchaseRate: normalizeNullableNumber(value.purchaseRate),
+    products: normalizeNullableNumber(value.products),
+    adProducts: normalizeNullableNumber(value.adProducts),
+    supplyDemandRatio: normalizeNullableNumber(value.supplyDemandRatio),
+    avgPrice: normalizeNullableNumber(value.avgPrice),
+    avgReviews: normalizeNullableNumber(value.avgReviews),
+    avgRating: normalizeNullableNumber(value.avgRating),
+    bid: normalizeNullableNumber(value.bid),
+    phrasePpc: normalizeNullableNumber(value.phrasePpc),
+    broadPpc: normalizeNullableNumber(value.broadPpc),
+    exactPpc: normalizeNullableNumber(value.exactPpc),
+    cvsShareRate: normalizeNullableNumber(value.cvsShareRate),
+    wordCount: normalizeNullableNumber(value.wordCount),
+    titleDensity: normalizeNullableNumber(value.titleDensity),
+    spr: normalizeNullableNumber(value.spr),
+    relevancy: normalizeNullableNumber(value.relevancy),
+    absoluteRelevancy: normalizeNullableNumber(value.absoluteRelevancy),
+    amazonChoice: typeof value.amazonChoice === 'boolean' ? value.amazonChoice : null,
+    searchRank: normalizeNullableNumber(value.searchRank),
+    searchWeeklyRank: normalizeNullableNumber(value.searchWeeklyRank),
+    clicks: normalizeNullableNumber(value.clicks),
+    impressions: normalizeNullableNumber(value.impressions),
+  }
+}
+
 const readKeywordMiningResponse = async (response: Response): Promise<SellerSpriteKeywordMiningData> => {
   if (response.status === 401 || response.status === 403) {
     throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status)
@@ -507,20 +567,41 @@ const readKeywordMiningResponse = async (response: Response): Promise<SellerSpri
   } catch {
     throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
   }
-  if (!isRecord(payload) || !isRecord(payload.data)) {
-    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  const details = isRecord(payload)
+    ? {
+        ...(typeof payload.code === 'string' || typeof payload.code === 'number' ? { targetCode: payload.code } : {}),
+        ...(typeof payload.message === 'string' ? { targetMessage: payload.message.slice(0, 512) } : {}),
+      }
+    : {}
+  if (!isRecord(payload)) throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  if (payload.code !== 'OK' && payload.code !== 0 && payload.code !== 200) {
+    throw new TargetClientError('TARGET_API_ERROR', response.status, details)
   }
+  if (!isRecord(payload.data)) throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
   const data = payload.data
-  if (Object.keys(data).length !== 5
-    || !Array.isArray(data.items)
-    || data.items.length !== 0
-    || typeof data.page !== 'number' || !Number.isFinite(data.page)
-    || typeof data.size !== 'number' || !Number.isFinite(data.size)
-    || typeof data.took !== 'number' || !Number.isFinite(data.took)
-    || typeof data.total !== 'number' || !Number.isFinite(data.total)) {
+  const page = normalizeNullableNumber(data.page)
+  const size = normalizeNullableNumber(data.size)
+  const total = normalizeNullableNumber(data.total)
+  const took = normalizeNullableNumber(data.took)
+  if (page === null || size === null || total === null || took === null
+    || !Number.isInteger(page) || page < 1
+    || !Number.isInteger(size) || size < 1
+    || !Number.isInteger(total) || total < 0
+    || !Number.isInteger(took) || took < 0
+    || !Array.isArray(data.items)) {
     throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
   }
-  return { items: [], page: data.page, size: data.size, took: data.took, total: data.total }
+  const items = data.items.map(readKeywordMiningItem)
+  if (items.some((item) => item === undefined)) {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  }
+  return {
+    items: items as SellerSpriteKeywordMiningItem[],
+    page,
+    size,
+    took,
+    total,
+  }
 }
 
 export const mineSellerSpriteKeywords = (

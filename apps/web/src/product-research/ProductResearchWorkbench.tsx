@@ -3,8 +3,10 @@ import { useEffect, useMemo, useState } from 'react'
 import type { TrendMetric } from '@cookie-amazon/analytics'
 import {
   listSellerSpriteAbaPeriods,
+  mineSellerSpriteKeywords,
   researchSellerSpriteAba,
   WebSdkError,
+  type SellerSpriteKeywordMiningData,
   type SellerSpriteAbaPeriodsData,
   type SellerSpriteAbaResearchData,
 } from '@cookie-amazon/web-sdk'
@@ -16,6 +18,7 @@ import {
 import { downloadCsv } from './csv'
 import {
   DEFAULT_QUERY,
+  buildKeywordMiningInput,
   getMarketResearchMonthOptions,
   type ProductResearchQuery,
 } from './input'
@@ -110,6 +113,9 @@ export function ProductResearchWorkbench({
   const [abaData, setAbaData] = useState<SellerSpriteAbaResearchData | null>(null)
   const [abaStatus, setAbaStatus] = useState<'idle' | 'periods' | 'loading'>('idle')
   const [abaError, setAbaError] = useState<string | null>(null)
+  const [keywordMiningData, setKeywordMiningData] = useState<SellerSpriteKeywordMiningData | null>(null)
+  const [keywordMiningStatus, setKeywordMiningStatus] = useState<'idle' | 'loading'>('idle')
+  const [keywordMiningError, setKeywordMiningError] = useState<string | null>(null)
   const [minPriority, setMinPriority] = useState('0')
   const [category, setCategory] = useState('all')
   const { products, opportunityProducts, keywordReport, keywordLookup, monthlyLookup, marketResearch, series, trends, refreshing, loading, error, source, snapshots, refresh } = useProductResearch(
@@ -195,6 +201,26 @@ export function ProductResearchWorkbench({
         : reason instanceof Error ? reason.message : 'ABA_RESEARCH_FAILED')
     } finally {
       setAbaStatus('idle')
+    }
+  }
+
+  const runKeywordMining = async (page = 1): Promise<void> => {
+    if (!targetReady) {
+      setKeywordMiningError('SellerSprite 尚未连接，请先连接扩展后再挖掘关键词。')
+      return
+    }
+    setKeywordMiningStatus('loading')
+    setKeywordMiningError(null)
+    try {
+      const input = buildKeywordMiningInput(query.keyword, query.market, page, 50)
+      const data = await mineSellerSpriteKeywords(input, { timeoutMs: 20_000 })
+      setKeywordMiningData(data)
+    } catch (reason: unknown) {
+      setKeywordMiningError(reason instanceof WebSdkError
+        ? reason.targetMessage ?? reason.targetCode?.toString() ?? reason.code
+        : reason instanceof Error ? reason.message : 'KEYWORD_MINING_FAILED')
+    } finally {
+      setKeywordMiningStatus('idle')
     }
   }
 
@@ -314,6 +340,31 @@ export function ProductResearchWorkbench({
       {keywordLookupMessage ? <div className="pr-connection-feedback" role="status"><span>关键词数据</span><strong>{keywordLookupMessage}</strong></div> : null}
       {monthlyLookupMessage ? <div className="pr-connection-feedback" role="status"><span>月度数据</span><strong>{monthlyLookupMessage}</strong></div> : null}
       {marketResearchMessage ? <div className="pr-connection-feedback" role="status"><span>市场数据</span><strong>{marketResearchMessage}</strong></div> : null}
+
+      <section className="pr-aba-panel" aria-label="关键词挖掘">
+        <div className="pr-section-heading"><div><span className="pr-section-index">KW</span><h3>关键词挖掘</h3>{keywordMiningData ? <span className="pr-count">{keywordMiningData.total.toLocaleString()} 词</span> : null}</div></div>
+        <div className="pr-aba-controls">
+          <div className="pr-aba-context"><span>关键词</span><strong>{query.keyword.trim() || '等待上方输入'}</strong></div>
+          <div className="pr-aba-context"><span>站点</span><strong>{query.market} · {query.market === 'US' ? 'market 1' : '暂未验证'}</strong></div>
+          <button type="button" className="pr-search-button" disabled={!targetReady || keywordMiningStatus !== 'idle'} onClick={() => { void runKeywordMining(1) }}>{!targetReady ? '需要连接扩展' : keywordMiningStatus === 'loading' ? '挖掘中…' : '挖掘关键词 →'}</button>
+        </div>
+        {keywordMiningError ? <div className="pr-error pr-aba-error" role="alert"><strong>关键词挖掘未完成</strong><span>{keywordMiningError}</span></div> : null}
+        {keywordMiningData ? <div className="pr-table-shell">
+          <div className="pr-table-scroll"><table className="pr-products-table pr-aba-table"><thead><tr>
+            <th scope="col">关键词</th><th scope="col">搜索量</th><th scope="col">购买量 / 购买率</th><th scope="col">商品数</th><th scope="col">供需比</th><th scope="col">平均价格</th><th scope="col">相关性</th><th scope="col">类目</th>
+          </tr></thead><tbody>{keywordMiningData.items.map((item, index) => <tr key={`${item.keyword}-${index}`}>
+            <td className="pr-aba-keyword"><strong>{item.keyword}</strong>{item.keywordCn ? <small>{item.keywordCn}</small> : null}</td>
+            <td className="pr-number">{formatCompact(item.searches)}</td><td className="pr-number">{formatCompact(item.purchases)} / {formatShare(item.purchaseRate)}</td>
+            <td className="pr-number">{formatCompact(item.products)}</td><td className="pr-number">{item.supplyDemandRatio?.toFixed(2) ?? '—'}</td>
+            <td className="pr-number">{item.avgPrice === null ? '—' : item.avgPrice.toFixed(2)}</td><td className="pr-number">{item.relevancy?.toFixed(2) ?? '—'}</td>
+            <td>{item.departments.length > 0 ? item.departments.map((department) => department.label).join(' / ') : '—'}</td>
+          </tr>)}</tbody></table></div>
+          <div className="pr-table-footer"><span>第 {keywordMiningData.page} 页 · 每页 {keywordMiningData.size} · SellerSprite 关键词挖掘</span><span className="pr-aba-pagination">
+            <button type="button" disabled={keywordMiningStatus !== 'idle' || keywordMiningData.page <= 1} onClick={() => { void runKeywordMining(keywordMiningData.page - 1) }}>← 上一页</button>
+            <button type="button" disabled={keywordMiningStatus !== 'idle' || keywordMiningData.page * keywordMiningData.size >= keywordMiningData.total} onClick={() => { void runKeywordMining(keywordMiningData.page + 1) }}>下一页 →</button>
+          </span></div>
+        </div> : <div className="pr-empty"><span className="pr-empty-mark">⌕</span><div><strong>用当前关键词挖掘搜索词</strong><p>读取 SellerSprite v3 关键词挖掘结果，展示搜索量、购买率、商品数和类目；未纳入的原始字段不会透传到页面。</p></div></div>}
+      </section>
 
       <section className="pr-aba-panel" aria-label="ABA 数据选品">
         <div className="pr-section-heading"><div><span className="pr-section-index">ABA</span><h3>ABA 数据选品 · 验证真实需求</h3>{abaData ? <span className="pr-count">{abaData.total.toLocaleString()} 词</span> : null}</div></div>
