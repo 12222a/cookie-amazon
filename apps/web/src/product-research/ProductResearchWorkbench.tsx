@@ -7,8 +7,8 @@ import {
   WebSdkError,
   type SellerSpriteAbaPeriodsData,
   type SellerSpriteAbaResearchData,
-  type SellerSpriteAbaResearchInput,
 } from '@cookie-amazon/web-sdk'
+import { getAbaMarket, prepareAbaSearch } from './aba-search'
 import { downloadCsv } from './csv'
 import {
   DEFAULT_QUERY,
@@ -32,10 +32,6 @@ const MARKET_OPTIONS = [
   ['US', '美国'], ['JP', '日本'], ['GB', '英国'], ['DE', '德国'], ['FR', '法国'],
   ['IT', '意大利'], ['ES', '西班牙'], ['CA', '加拿大'], ['IN', '印度'], ['MX', '墨西哥'],
 ] as const
-
-const ABA_MARKET_BY_STATION: Readonly<Record<string, SellerSpriteAbaResearchInput['market']>> = {
-  US: 'COM', CA: 'CA', GB: 'GB', DE: 'DE', FR: 'FR', JP: 'JP', IT: 'IT', ES: 'ES', IN: 'IN', MX: 'MX',
-}
 
 const formatAbaPeriod = (label: string, reverseType: 'W' | 'M'): string => {
   if (reverseType === 'M' && /^\d{6}$/.test(label)) return `${label.slice(0, 4)}-${label.slice(4)}`
@@ -151,19 +147,27 @@ export function ProductResearchWorkbench({
     setAbaError(null)
   }
   const runAbaSearch = async (page = 1): Promise<void> => {
-    const market = ABA_MARKET_BY_STATION[query.market]
-    if (!targetReady || market === undefined || abaTable === '' || query.keyword.trim() === '') {
-      setAbaError(!targetReady ? '请先连接 SellerSprite' : query.keyword.trim() === '' ? '请输入 ABA 关键词' : 'ABA 周期或市场不可用')
-      return
-    }
-    setAbaStatus('loading')
+    const needsPeriods = abaTable === ''
+    setAbaStatus(needsPeriods ? 'periods' : 'loading')
     setAbaError(null)
     try {
-      const data = await researchSellerSpriteAba({
+      const prepared = await prepareAbaSearch({
+        targetReady,
+        station: query.market,
+        keyword: query.keyword,
         reverseType: abaReverseType,
         table: abaTable,
+      }, () => listSellerSpriteAbaPeriods({ timeoutMs: 15_000 }))
+      if (prepared.periods !== null) {
+        setAbaPeriods(prepared.periods)
+        setAbaTable(prepared.table)
+      }
+      setAbaStatus('loading')
+      const data = await researchSellerSpriteAba({
+        reverseType: abaReverseType,
+        table: prepared.table,
         q: query.keyword.trim(),
-        market,
+        market: prepared.market,
         page,
         size: 50,
       }, { timeoutMs: 20_000 })
@@ -171,7 +175,7 @@ export function ProductResearchWorkbench({
     } catch (reason: unknown) {
       setAbaError(reason instanceof WebSdkError
         ? reason.targetMessage ?? reason.targetCode?.toString() ?? reason.code
-        : 'ABA_RESEARCH_FAILED')
+        : reason instanceof Error ? reason.message : 'ABA_RESEARCH_FAILED')
     } finally {
       setAbaStatus('idle')
     }
@@ -302,7 +306,7 @@ export function ProductResearchWorkbench({
             {abaPeriodOptions.map((period) => <option key={period.table} value={period.table}>{formatAbaPeriod(period.label, abaReverseType)}</option>)}
           </select></label>
           <div className="pr-aba-context"><span>关键词</span><strong>{query.keyword.trim() || '等待上方输入'}</strong></div>
-          <div className="pr-aba-context"><span>市场</span><strong>{query.market} · {ABA_MARKET_BY_STATION[query.market] ?? '不支持'}</strong></div>
+          <div className="pr-aba-context"><span>市场</span><strong>{query.market} · {getAbaMarket(query.market) ?? '不支持'}</strong></div>
           <button type="button" className="pr-search-button" disabled={abaStatus !== 'idle'} onClick={() => { void runAbaSearch(1) }}>{abaStatus === 'periods' ? '加载周期…' : abaStatus === 'loading' ? '查询中…' : '查询 ABA →'}</button>
         </div>
         {abaError ? <div className="pr-error pr-aba-error" role="alert"><strong>ABA 查询未完成</strong><span>{abaError}</span></div> : null}
