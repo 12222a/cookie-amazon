@@ -9,6 +9,7 @@ import {
 } from '@cookie-amazon/web-sdk'
 import type { ExtensionStatus, TargetDescriptor } from '@cookie-amazon/protocol'
 import { ProductResearchWorkbench } from './product-research/ProductResearchWorkbench'
+import { hasAbaCapabilities } from './product-research/aba-search'
 
 export function App(): ReactElement {
   const [status, setStatus] = useState<ExtensionStatus | null>(null)
@@ -54,6 +55,7 @@ export function App(): ReactElement {
 
   const sellersprite = useMemo(() => targets.find((target) => target.targetId === 'sellersprite'), [targets])
   const targetReady = loginVerified && sellersprite?.status === 'ready'
+  const abaSupported = hasAbaCapabilities(status?.capabilities)
 
   const connectTarget = async (): Promise<void> => {
     setConnecting(true)
@@ -117,6 +119,8 @@ export function App(): ReactElement {
       <ProductResearchWorkbench
         targetId="sellersprite"
         targetReady={Boolean(targetReady)}
+        abaSupported={abaSupported}
+        extensionVersion={status?.extensionVersion}
         onConnect={() => void connectTarget()}
         connectionMessage={message}
         connecting={connecting}

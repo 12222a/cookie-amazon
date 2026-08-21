@@ -1,10 +1,24 @@
 import { describe, expect, it, vi } from 'vitest'
-import { prepareAbaSearch } from './aba-search'
+import { describeAbaExtensionError, hasAbaCapabilities, prepareAbaSearch } from './aba-search'
 
 const periods = {
   weekTables: [{ table: 'ara_20260815', label: '20260815' }],
   monthTables: [{ table: 'ara_202607', label: '202607' }],
 }
+
+describe('ABA extension compatibility', () => {
+  it('requires both ABA bridge capabilities', () => {
+    expect(hasAbaCapabilities(['SELLERSPRITE_ABA_PERIODS', 'SELLERSPRITE_ABA_RESEARCH'])).toBe(true)
+    expect(hasAbaCapabilities(['SELLERSPRITE_ABA_PERIODS'])).toBe(false)
+    expect(hasAbaCapabilities(null)).toBe(false)
+  })
+
+  it('turns an unavailable bridge code into actionable reload instructions', () => {
+    expect(describeAbaExtensionError('EXTENSION_UNAVAILABLE', '0.1.1')).toContain('chrome://extensions')
+    expect(describeAbaExtensionError('EXTENSION_UNAVAILABLE', '0.1.1')).toContain('v0.1.1')
+    expect(describeAbaExtensionError('TARGET_NOT_LOGGED_IN', '0.1.2')).toBe('TARGET_NOT_LOGGED_IN')
+  })
+})
 
 describe('prepareAbaSearch', () => {
   it('reuses an already selected period without another request', async () => {

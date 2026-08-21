@@ -8,7 +8,11 @@ import {
   type SellerSpriteAbaPeriodsData,
   type SellerSpriteAbaResearchData,
 } from '@cookie-amazon/web-sdk'
-import { getAbaMarket, prepareAbaSearch } from './aba-search'
+import {
+  describeAbaExtensionError,
+  getAbaMarket,
+  prepareAbaSearch,
+} from './aba-search'
 import { downloadCsv } from './csv'
 import {
   DEFAULT_QUERY,
@@ -84,12 +88,16 @@ const updateQuery = <K extends keyof ProductResearchQuery>(
 export function ProductResearchWorkbench({
   targetId,
   targetReady = false,
+  abaSupported = false,
+  extensionVersion,
   onConnect,
   connectionMessage,
   connecting = false,
 }: {
   targetId: string
   targetReady?: boolean
+  abaSupported?: boolean
+  extensionVersion?: string
   onConnect?: () => void
   connectionMessage?: string | null
   connecting?: boolean
@@ -112,11 +120,14 @@ export function ProductResearchWorkbench({
 
   useEffect(() => {
     let active = true
-    if (!targetReady) {
+    if (!targetReady || !abaSupported) {
       setAbaPeriods(null)
       setAbaTable('')
       setAbaData(null)
       setAbaStatus('idle')
+      setAbaError(targetReady && !abaSupported
+        ? `当前扩展${extensionVersion ? ` v${extensionVersion}` : ''}不包含 ABA 通道。请重新构建并在 chrome://extensions 重新加载扩展，然后刷新本页面。`
+        : null)
       return () => { active = false }
     }
     setAbaStatus('periods')
@@ -132,11 +143,12 @@ export function ProductResearchWorkbench({
         if (!active) return
         setAbaStatus('idle')
         setAbaError(reason instanceof WebSdkError
-          ? reason.targetMessage ?? reason.targetCode?.toString() ?? reason.code
+          ? reason.targetMessage ?? reason.targetCode?.toString()
+            ?? describeAbaExtensionError(reason.code, extensionVersion)
           : 'ABA_PERIODS_FAILED')
       })
     return () => { active = false }
-  }, [targetReady])
+  }, [abaSupported, extensionVersion, targetReady])
 
   const abaPeriodOptions = abaReverseType === 'W' ? abaPeriods?.weekTables ?? [] : abaPeriods?.monthTables ?? []
   const changeAbaReverseType = (reverseType: 'W' | 'M'): void => {
@@ -147,6 +159,10 @@ export function ProductResearchWorkbench({
     setAbaError(null)
   }
   const runAbaSearch = async (page = 1): Promise<void> => {
+    if (!abaSupported) {
+      setAbaError(`当前扩展${extensionVersion ? ` v${extensionVersion}` : ''}不包含 ABA 通道。请重新构建并在 chrome://extensions 重新加载扩展，然后刷新本页面。`)
+      return
+    }
     const needsPeriods = abaTable === ''
     setAbaStatus(needsPeriods ? 'periods' : 'loading')
     setAbaError(null)
@@ -174,7 +190,8 @@ export function ProductResearchWorkbench({
       setAbaData(data)
     } catch (reason: unknown) {
       setAbaError(reason instanceof WebSdkError
-        ? reason.targetMessage ?? reason.targetCode?.toString() ?? reason.code
+        ? reason.targetMessage ?? reason.targetCode?.toString()
+          ?? describeAbaExtensionError(reason.code, extensionVersion)
         : reason instanceof Error ? reason.message : 'ABA_RESEARCH_FAILED')
     } finally {
       setAbaStatus('idle')
@@ -302,12 +319,12 @@ export function ProductResearchWorkbench({
         <div className="pr-section-heading"><div><span className="pr-section-index">ABA</span><h3>ABA 数据选品 · 验证真实需求</h3>{abaData ? <span className="pr-count">{abaData.total.toLocaleString()} 词</span> : null}</div></div>
         <div className="pr-aba-controls">
           <label><span>粒度</span><select value={abaReverseType} onChange={(event) => changeAbaReverseType(event.target.value as 'W' | 'M')}><option value="W">周度</option><option value="M">月度</option></select></label>
-          <label><span>具体周期</span><select value={abaTable} disabled={abaStatus === 'periods' || abaPeriodOptions.length === 0} onChange={(event) => { setAbaTable(event.target.value); setAbaData(null) }}>
+          <label><span>具体周期</span><select value={abaTable} disabled={!abaSupported || abaStatus === 'periods' || abaPeriodOptions.length === 0} onChange={(event) => { setAbaTable(event.target.value); setAbaData(null) }}>
             {abaPeriodOptions.map((period) => <option key={period.table} value={period.table}>{formatAbaPeriod(period.label, abaReverseType)}</option>)}
           </select></label>
           <div className="pr-aba-context"><span>关键词</span><strong>{query.keyword.trim() || '等待上方输入'}</strong></div>
           <div className="pr-aba-context"><span>市场</span><strong>{query.market} · {getAbaMarket(query.market) ?? '不支持'}</strong></div>
-          <button type="button" className="pr-search-button" disabled={abaStatus !== 'idle'} onClick={() => { void runAbaSearch(1) }}>{abaStatus === 'periods' ? '加载周期…' : abaStatus === 'loading' ? '查询中…' : '查询 ABA →'}</button>
+          <button type="button" className="pr-search-button" disabled={!abaSupported || abaStatus !== 'idle'} onClick={() => { void runAbaSearch(1) }}>{!abaSupported ? '需要重载扩展' : abaStatus === 'periods' ? '加载周期…' : abaStatus === 'loading' ? '查询中…' : '查询 ABA →'}</button>
         </div>
         {abaError ? <div className="pr-error pr-aba-error" role="alert"><strong>ABA 查询未完成</strong><span>{abaError}</span></div> : null}
         {abaData ? <div className="pr-table-shell">

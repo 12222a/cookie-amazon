@@ -20,6 +20,17 @@ const ABA_MARKET_BY_STATION: Readonly<Record<string, SellerSpriteAbaMarket>> = {
 export const getAbaMarket = (station: string): SellerSpriteAbaMarket | undefined =>
   ABA_MARKET_BY_STATION[station]
 
+export const hasAbaCapabilities = (capabilities: readonly string[] | null | undefined): boolean =>
+  capabilities?.includes('SELLERSPRITE_ABA_PERIODS') === true
+  && capabilities.includes('SELLERSPRITE_ABA_RESEARCH')
+
+export const describeAbaExtensionError = (
+  code: string,
+  extensionVersion?: string,
+): string => code === 'EXTENSION_UNAVAILABLE'
+  ? `扩展 ABA 通道不可用${extensionVersion ? `（当前 v${extensionVersion}）` : ''}。请在 chrome://extensions 重新加载扩展，再刷新本页面。`
+  : code
+
 export type AbaSearchPreparation = {
   market: SellerSpriteAbaMarket
   table: string
