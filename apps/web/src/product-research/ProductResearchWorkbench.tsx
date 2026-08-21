@@ -307,7 +307,7 @@ export function ProductResearchWorkbench({
       <div className="pr-capability-strip">
         <span><b className="lane-api">v3</b> 竞品 + US ASIN 反查关键词</span>
         <span><b className="lane-dom">live</b> US 市场总量 / FBA / 集中度 / 新品；关键词趋势；月度商品快照</span>
-        <span className="pr-capability-note">Cookie 由浏览器会话自动携带，不落盘</span>
+        <span className="pr-capability-note">使用当前已授权会话，敏感凭据不落盘</span>
       </div>
 
       {connectionMessage ? <div className="pr-connection-feedback" role="status"><span>连接状态</span><strong>{connectionMessage}</strong></div> : null}

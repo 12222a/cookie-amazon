@@ -72,14 +72,14 @@ export function App(): ReactElement {
 
       if (target.status === 'permission-required') {
         setLoginVerified(false)
-        setMessage('扩展已连接，但 SellerSprite 尚未授权。请点击浏览器工具栏中的 Cookie Amazon Platform 扩展，再点击“授权 SellerSprite”。')
+        setMessage('扩展已连接，但 SellerSprite 尚未授权。请点击浏览器工具栏中的“跨境选品助手”，再点击“授权 SellerSprite”。')
         return
       }
 
       const login = await checkLogin('sellersprite', { timeoutMs: 20_000 })
       setLoginVerified(login.loggedIn)
       const connectionMessage = login.connectionState === 'NO_COOKIE'
-        ? '未发现 SellerSprite Cookie，已打开 SellerSprite，请登录后再次点击连接。'
+        ? '未检测到 SellerSprite 登录会话，已打开 SellerSprite，请登录后再次点击连接。'
         : login.connectionState === 'BACKGROUND_OK'
           ? 'SellerSprite 已登录，后台模式可用。'
           : login.connectionState === 'PAGE_CONTEXT_OK'
@@ -109,7 +109,7 @@ export function App(): ReactElement {
   return (
     <main className="app-shell">
       <header className="app-topbar">
-        <div className="app-brand"><span className="app-logo">CA</span><span>Cookie Amazon <small>RESEARCH OS</small></span></div>
+        <div className="app-brand"><span className="app-logo">PR</span><span>跨境选品助手 <small>RESEARCH OS</small></span></div>
         <nav aria-label="主导航"><a className="is-active" href="#research">选品研究</a><a href="#history">历史快照</a><a href="#settings">连接设置</a></nav>
         <div className="app-top-actions"><span className={`app-status ${targetReady ? 'is-live' : ''}`}><i />{targetReady ? 'LIVE' : 'DEMO'}</span><button type="button" className="app-icon-button" aria-label="检测浏览器扩展" onClick={() => void checkExtension()} disabled={checking}>{checking ? '…' : '⟳'}</button></div>
       </header>
