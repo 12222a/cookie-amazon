@@ -5,6 +5,8 @@ import {
   PROTOCOL_VERSION,
   COMPETITOR_RESEARCH_ACTION,
   PRODUCT_SELECTION_ACTION,
+  SELLERSPRITE_CATEGORY_NODES_ACTION,
+  SELLERSPRITE_REVIEW_COMMENTS_ACTION,
   MARKET_SELECTION_ACTION,
   KEYWORD_PRODUCT_RESEARCH_ACTION,
   KEYWORD_MINING_ACTION,
@@ -17,6 +19,8 @@ import {
   isPingRequest,
   isSellerSpriteCompetitorRequest,
   isSellerSpriteProductSelectionRequest,
+  isSellerSpriteCategoryNodesRequest,
+  isSellerSpriteReviewCommentsRequest,
   isSellerSpriteHtmlSessionRequest,
   isSellerSpriteKeywordMiningRequest,
   isSellerSpriteKeywordReverseRequest,
@@ -56,6 +60,8 @@ import {
   reverseSellerSpriteKeywords,
   researchSellerSpriteCompetitors,
   selectSellerSpriteProducts,
+  listSellerSpriteCategoryNodes,
+  listSellerSpriteReviewComments,
 } from '../src/targets/sellersprite'
 import { resolveOperationPolicy } from '../src/targets/policy'
 import { resolveRuntimeTargetPolicy } from '../src/targets/runtime-policy'
@@ -536,6 +542,50 @@ const handleProductSelectionMessage = async ({ data }: { data: unknown }): Promi
   }
 }
 
+const handleCategoryNodesMessage = async ({ data }: { data: unknown }): Promise<import('@cookie-amazon/protocol').SellerSpriteCategoryNodesResponse> => {
+  if (!isSellerSpriteCategoryNodesRequest(data)) return invalidMessage()
+  const { requestId } = data
+  const adapter = TARGET_REGISTRY.get(data.payload.targetId)
+  if (!adapter || adapter.targetId !== 'sellersprite') return targetError(requestId, 'UNKNOWN_TARGET')
+  const runtimePolicy = resolveRuntimeTargetPolicy(adapter, await configManager.load())
+  if (!runtimePolicy.enabled) return targetError(requestId, 'TARGET_DISABLED')
+  if (!runtimePolicy.capabilities.includes(SELLERSPRITE_CATEGORY_NODES_ACTION)) return targetError(requestId, 'OPERATION_DISABLED')
+  if (!(await permissionManager.hasPermission(adapter.targetId))) return targetError(requestId, 'TARGET_PERMISSION_MISSING')
+  try {
+    const result = await withPageFallback(
+      adapter,
+      runtimePolicy,
+      () => listSellerSpriteCategoryNodes(new TargetClient(adapter, undefined, runtimePolicy.operationOverrides), data.payload.input),
+      (client) => listSellerSpriteCategoryNodes(client, data.payload.input),
+    )
+    return { namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION, requestId, action: SELLERSPRITE_CATEGORY_NODES_ACTION, ok: true, data: result }
+  } catch (error: unknown) {
+    return targetClientError(requestId, error)
+  }
+}
+
+const handleReviewCommentsMessage = async ({ data }: { data: unknown }): Promise<import('@cookie-amazon/protocol').SellerSpriteReviewCommentsResponse> => {
+  if (!isSellerSpriteReviewCommentsRequest(data)) return invalidMessage()
+  const { requestId } = data
+  const adapter = TARGET_REGISTRY.get(data.payload.targetId)
+  if (!adapter || adapter.targetId !== 'sellersprite') return targetError(requestId, 'UNKNOWN_TARGET')
+  const runtimePolicy = resolveRuntimeTargetPolicy(adapter, await configManager.load())
+  if (!runtimePolicy.enabled) return targetError(requestId, 'TARGET_DISABLED')
+  if (!runtimePolicy.capabilities.includes(SELLERSPRITE_REVIEW_COMMENTS_ACTION)) return targetError(requestId, 'OPERATION_DISABLED')
+  if (!(await permissionManager.hasPermission(adapter.targetId))) return targetError(requestId, 'TARGET_PERMISSION_MISSING')
+  try {
+    const result = await withPageFallback(
+      adapter,
+      runtimePolicy,
+      () => listSellerSpriteReviewComments(new TargetClient(adapter, undefined, runtimePolicy.operationOverrides), data.payload.input),
+      (client) => listSellerSpriteReviewComments(client, data.payload.input),
+    )
+    return { namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION, requestId, action: SELLERSPRITE_REVIEW_COMMENTS_ACTION, ok: true, data: result }
+  } catch (error: unknown) {
+    return targetClientError(requestId, error)
+  }
+}
+
 const handleMonthlyMessage = async ({ data }: { data: unknown }): Promise<import('@cookie-amazon/protocol').SellerSpriteMonthlyResponse> => {
   if (!isSellerSpriteMonthlyRequest(data)) return invalidMessage()
   const { requestId } = data
@@ -706,6 +756,8 @@ export default defineBackground(() => {
   onMessage(SELLERSPRITE_ABA_RESEARCH_ACTION, guarded(handleAbaResearchMessage))
   onMessage(COMPETITOR_RESEARCH_ACTION, guarded(handleCompetitorMessage))
   onMessage(PRODUCT_SELECTION_ACTION, guarded(handleProductSelectionMessage))
+  onMessage(SELLERSPRITE_CATEGORY_NODES_ACTION, guarded(handleCategoryNodesMessage))
+  onMessage(SELLERSPRITE_REVIEW_COMMENTS_ACTION, guarded(handleReviewCommentsMessage))
   onMessage(KEYWORD_MINING_ACTION, guarded(handleKeywordMiningMessage))
   onMessage(MARKET_SELECTION_ACTION, guarded(handleHtmlSessionMessage))
   onMessage(KEYWORD_PRODUCT_RESEARCH_ACTION, guarded(handleHtmlSessionMessage))

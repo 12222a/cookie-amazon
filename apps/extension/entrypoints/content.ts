@@ -7,6 +7,8 @@ import {
   CONTENT_SCRIPT_RUNTIME_PROBE_RESPONSE,
   COMPETITOR_RESEARCH_ACTION,
   PRODUCT_SELECTION_ACTION,
+  SELLERSPRITE_CATEGORY_NODES_ACTION,
+  SELLERSPRITE_REVIEW_COMMENTS_ACTION,
   MARKET_SELECTION_ACTION,
   KEYWORD_PRODUCT_RESEARCH_ACTION,
   KEYWORD_MINING_ACTION,
@@ -21,6 +23,8 @@ import {
   isPingRequest,
   isSellerSpriteCompetitorRequest,
   isSellerSpriteProductSelectionRequest,
+  isSellerSpriteCategoryNodesRequest,
+  isSellerSpriteReviewCommentsRequest,
   isSellerSpriteHtmlSessionRequest,
   isSellerSpriteKeywordMiningRequest,
   isSellerSpriteKeywordReverseRequest,
@@ -79,6 +83,16 @@ const relayProductSelectionMessage = async ({ data }: { data: unknown }): Promis
   } catch {
     return extensionUnavailable(data.requestId)
   }
+}
+
+const relayCategoryNodesMessage = async ({ data }: { data: unknown }): Promise<import('@cookie-amazon/protocol').SellerSpriteCategoryNodesResponse> => {
+  if (!isAllowedWebOrigin(location.origin) || !isSellerSpriteCategoryNodesRequest(data)) return invalidMessage()
+  try { return await sendMessage(data.action, data, 'background') as unknown as import('@cookie-amazon/protocol').SellerSpriteCategoryNodesResponse } catch { return extensionUnavailable(data.requestId) }
+}
+
+const relayReviewCommentsMessage = async ({ data }: { data: unknown }): Promise<import('@cookie-amazon/protocol').SellerSpriteReviewCommentsResponse> => {
+  if (!isAllowedWebOrigin(location.origin) || !isSellerSpriteReviewCommentsRequest(data)) return invalidMessage()
+  try { return await sendMessage(data.action, data, 'background') as unknown as import('@cookie-amazon/protocol').SellerSpriteReviewCommentsResponse } catch { return extensionUnavailable(data.requestId) }
 }
 
 const relayHtmlSessionMessage = async ({ data }: { data: unknown }): Promise<import('@cookie-amazon/protocol').SellerSpriteHtmlSessionResponse> => {
@@ -146,6 +160,8 @@ export default defineContentScript({
     onMessage(SELLERSPRITE_ABA_RESEARCH_ACTION, relayAbaResearchMessage)
     onMessage(COMPETITOR_RESEARCH_ACTION, relayCompetitorMessage)
     onMessage(PRODUCT_SELECTION_ACTION, relayProductSelectionMessage)
+    onMessage(SELLERSPRITE_CATEGORY_NODES_ACTION, relayCategoryNodesMessage)
+    onMessage(SELLERSPRITE_REVIEW_COMMENTS_ACTION, relayReviewCommentsMessage)
     onMessage(KEYWORD_MINING_ACTION, relayKeywordMiningMessage)
     onMessage(MARKET_SELECTION_ACTION, relayHtmlSessionMessage)
     onMessage(KEYWORD_PRODUCT_RESEARCH_ACTION, relayHtmlSessionMessage)

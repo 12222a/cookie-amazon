@@ -26,6 +26,8 @@ export const CAPABILITIES = [
   'MARKET_SELECTION',
   'KEYWORD_PRODUCT_RESEARCH',
   'KEYWORD_MINING',
+  'SELLERSPRITE_CATEGORY_NODES',
+  'SELLERSPRITE_REVIEW_COMMENTS',
 ] as const
 
 export type Capability = (typeof CAPABILITIES)[number]
@@ -733,19 +735,22 @@ export type SellerSpriteProductSelectionInput = {
   filterSub: boolean
   lowPrice: 'Y' | 'N'
   market: string
+  maxPrice: string
+  maxRanking: string
+  maxSales: string
+  maxSellers: string
+  minRanking: string
   monthName: string
   nodeIdPaths: JsonPrimitive[]
   order: { desc: boolean; field: string }
   page: number
   pkgDimensionTypeList: JsonPrimitive[]
   productTags: JsonPrimitive[]
-  salesGrowthType: '30d'
-  selectType: 2
+  selectType: '2'
   sellerNationList: JsonPrimitive[]
   sellerTypes: JsonPrimitive[]
   size: number
   symbolFlag: boolean
-  video: '' | 'Y'
   weightUnit: 'g'
 }
 
@@ -760,6 +765,13 @@ export type SellerSpriteProductSelectionItem = {
   estimatedSales: number | null
   availableDate: number | null
   availableDays: number | null
+  salesGrowth?: number | null
+  salesGrowthYoy?: number | null
+  revenue?: number | null
+  bsrRank?: number | null
+  sellers?: number | null
+  categoryName?: string | null
+  nodeLabelPath?: string | null
 }
 
 export type SellerSpriteProductSelectionData = {
@@ -790,9 +802,10 @@ export type SellerSpriteProductSelectionSuccess = {
 export type SellerSpriteProductSelectionResponse = SellerSpriteProductSelectionSuccess | ProtocolError
 
 const PRODUCT_SELECTION_INPUT_KEYS = [
-  'eligibility', 'filterSub', 'lowPrice', 'market', 'monthName', 'nodeIdPaths', 'order', 'page',
-  'pkgDimensionTypeList', 'productTags', 'salesGrowthType', 'selectType', 'sellerNationList',
-  'sellerTypes', 'size', 'symbolFlag', 'video', 'weightUnit',
+  'eligibility', 'filterSub', 'lowPrice', 'market', 'maxPrice', 'maxRanking', 'maxSales',
+  'maxSellers', 'minRanking', 'monthName', 'nodeIdPaths', 'order', 'page',
+  'pkgDimensionTypeList', 'productTags', 'selectType', 'sellerNationList',
+  'sellerTypes', 'size', 'symbolFlag', 'weightUnit',
 ] as const
 
 const isStrictPrimitiveArray = (value: unknown): value is JsonPrimitive[] =>
@@ -807,6 +820,11 @@ export const isSellerSpriteProductSelectionInput = (
     && typeof value.filterSub === 'boolean'
     && (value.lowPrice === 'Y' || value.lowPrice === 'N')
     && isBoundedString(value.market, 32)
+    && isBoundedOptionalString(value.maxPrice, 32)
+    && isBoundedOptionalString(value.maxRanking, 32)
+    && isBoundedOptionalString(value.maxSales, 32)
+    && isBoundedOptionalString(value.maxSellers, 32)
+    && isBoundedOptionalString(value.minRanking, 32)
     && isBoundedString(value.monthName, 32)
     && isStrictPrimitiveArray(value.nodeIdPaths)
     && isRecord(value.order)
@@ -817,14 +835,12 @@ export const isSellerSpriteProductSelectionInput = (
     && Number.isInteger(value.page) && value.page > 0 && value.page <= 10_000
     && isStrictPrimitiveArray(value.pkgDimensionTypeList)
     && isStrictPrimitiveArray(value.productTags)
-    && value.salesGrowthType === '30d'
-    && value.selectType === 2
+    && value.selectType === '2'
     && isStrictPrimitiveArray(value.sellerNationList)
     && isStrictPrimitiveArray(value.sellerTypes)
     && typeof value.size === 'number'
     && Number.isInteger(value.size) && value.size > 0 && value.size <= 100
     && typeof value.symbolFlag === 'boolean'
-    && (value.video === '' || value.video === 'Y')
     && value.weightUnit === 'g'
 }
 
@@ -854,9 +870,16 @@ export const isSellerSpriteProductSelectionRequest = (
   return isSellerSpriteProductSelectionInput(value.payload.input)
 }
 
+const PRODUCT_SELECTION_ITEM_KEYS = [
+  'asin', 'title', 'brand', 'imageUrl', 'price', 'rating', 'reviews', 'estimatedSales',
+  'availableDate', 'availableDays', 'salesGrowth', 'salesGrowthYoy', 'revenue', 'bsrRank',
+  'sellers', 'categoryName', 'nodeLabelPath',
+] as const
+
 const isProductSelectionItem = (value: unknown): value is SellerSpriteProductSelectionItem =>
   isRecord(value)
-  && Object.keys(value).length === 10
+  && Object.keys(value).length === PRODUCT_SELECTION_ITEM_KEYS.length
+  && PRODUCT_SELECTION_ITEM_KEYS.every((key) => Object.hasOwn(value, key))
   && typeof value.asin === 'string'
   && isNullableString(value.title)
   && isNullableString(value.brand)
@@ -867,6 +890,13 @@ const isProductSelectionItem = (value: unknown): value is SellerSpriteProductSel
   && isNullableFiniteNumber(value.estimatedSales)
   && isNullableFiniteNumber(value.availableDate)
   && isNullableFiniteNumber(value.availableDays)
+  && isNullableFiniteNumber(value.salesGrowth)
+  && isNullableFiniteNumber(value.salesGrowthYoy)
+  && isNullableFiniteNumber(value.revenue)
+  && isNullableFiniteNumber(value.bsrRank)
+  && isNullableFiniteNumber(value.sellers)
+  && isNullableString(value.categoryName)
+  && isNullableString(value.nodeLabelPath)
 
 export const isSellerSpriteProductSelectionResponse = (
   value: unknown,
@@ -884,6 +914,237 @@ export const isSellerSpriteProductSelectionResponse = (
     && typeof data.hasNextPage === 'boolean'
     && Array.isArray(data.items)
     && data.items.every(isProductSelectionItem)
+}
+
+export const SELLERSPRITE_CATEGORY_NODES_ACTION = 'SELLERSPRITE_CATEGORY_NODES' as const
+
+export type SellerSpriteCategoryNodesInput = {
+  marketld: number
+  table: 'bsr_sales_nearly'
+}
+export type SellerSpriteCategoryNode = {
+  id: string
+  label: string
+  labelLocale: string | null
+  products: number | null
+  children: number
+}
+export type SellerSpriteCategoryNodesData = {
+  parent: string | null
+  items: SellerSpriteCategoryNode[]
+}
+export type SellerSpriteCategoryNodesRequest = {
+  namespace: typeof MESSAGE_NAMESPACE
+  kind: 'request'
+  protocolVersion: typeof PROTOCOL_VERSION
+  action: typeof SELLERSPRITE_CATEGORY_NODES_ACTION
+  requestId: string
+  payload: { targetId: string; input: SellerSpriteCategoryNodesInput }
+}
+export type SellerSpriteCategoryNodesSuccess = {
+  namespace: typeof MESSAGE_NAMESPACE
+  kind: 'response'
+  protocolVersion: typeof PROTOCOL_VERSION
+  requestId: string
+  action: typeof SELLERSPRITE_CATEGORY_NODES_ACTION
+  ok: true
+  data: SellerSpriteCategoryNodesData
+}
+export type SellerSpriteCategoryNodesResponse = SellerSpriteCategoryNodesSuccess | ProtocolError
+
+export const isSellerSpriteCategoryNodesInput = (value: unknown): value is SellerSpriteCategoryNodesInput =>
+  isRecord(value)
+  && Object.keys(value).length === 2
+  && Number.isInteger(value.marketld)
+  && typeof value.marketld === 'number'
+  && value.marketld > 0
+  && value.marketld <= 1000
+  && value.table === 'bsr_sales_nearly'
+
+export const createSellerSpriteCategoryNodesRequest = (
+  requestId: string,
+  targetId: string,
+  input: SellerSpriteCategoryNodesInput,
+): SellerSpriteCategoryNodesRequest => ({
+  namespace: MESSAGE_NAMESPACE, kind: 'request', protocolVersion: PROTOCOL_VERSION,
+  action: SELLERSPRITE_CATEGORY_NODES_ACTION, requestId, payload: { targetId, input },
+})
+
+export const isSellerSpriteCategoryNodesRequest = (value: unknown): value is SellerSpriteCategoryNodesRequest =>
+  isRecord(value)
+  && value.namespace === MESSAGE_NAMESPACE
+  && value.kind === 'request'
+  && value.protocolVersion === PROTOCOL_VERSION
+  && value.action === SELLERSPRITE_CATEGORY_NODES_ACTION
+  && isBoundedString(value.requestId, 256)
+  && isRecord(value.payload)
+  && Object.keys(value.payload).length === 2
+  && isBoundedString(value.payload.targetId, 64)
+  && isSellerSpriteCategoryNodesInput(value.payload.input)
+
+const isCategoryNode = (value: unknown): value is SellerSpriteCategoryNode =>
+  isRecord(value)
+  && Object.keys(value).length === 5
+  && isBoundedString(value.id, 64)
+  && isBoundedString(value.label, 256)
+  && isNullableBoundedString(value.labelLocale, 256)
+  && isNullableFiniteNumber(value.products)
+  && typeof value.children === 'number'
+  && Number.isInteger(value.children)
+  && value.children >= 0
+
+export const isSellerSpriteCategoryNodesResponse = (value: unknown): value is SellerSpriteCategoryNodesResponse => {
+  if (!isRecord(value) || value.namespace !== MESSAGE_NAMESPACE || value.kind !== 'response') return false
+  if (value.protocolVersion !== PROTOCOL_VERSION || !isBoundedString(value.requestId, 256)) return false
+  if (value.ok === false) return isRecord(value.error) && typeof value.error.code === 'string'
+  return value.ok === true
+    && value.action === SELLERSPRITE_CATEGORY_NODES_ACTION
+    && isRecord(value.data)
+    && Object.keys(value.data).length === 2
+    && isNullableBoundedString(value.data.parent, 64)
+    && Array.isArray(value.data.items)
+    && value.data.items.length <= 100
+    && value.data.items.every(isCategoryNode)
+}
+
+export const SELLERSPRITE_REVIEW_COMMENTS_ACTION = 'SELLERSPRITE_REVIEW_COMMENTS' as const
+
+export type SellerSpriteReviewCommentsInput = {
+  asin: string
+  keyword: ''
+  market: string
+  pageNum: number
+  pageSize: number
+  reviewEndTime: null
+  reviewStartTime: null
+  order: { fieldName: 'date'; sort: 1 }
+  starList: number[]
+  typeList: string[]
+  variations: string[]
+}
+export type SellerSpriteReviewComment = {
+  id: string
+  asin: string
+  parent: string | null
+  date: number
+  title: string
+  titleCn: string | null
+  content: string
+  contentCn: string | null
+  star: number
+  skus: string[]
+  likes: number
+  images: string[]
+  verified: boolean
+  vine: boolean
+}
+export type SellerSpriteReviewCommentsData = {
+  page: number
+  size: number
+  total: number
+  took: number
+  items: SellerSpriteReviewComment[]
+}
+export type SellerSpriteReviewCommentsRequest = {
+  namespace: typeof MESSAGE_NAMESPACE
+  kind: 'request'
+  protocolVersion: typeof PROTOCOL_VERSION
+  action: typeof SELLERSPRITE_REVIEW_COMMENTS_ACTION
+  requestId: string
+  payload: { targetId: string; input: SellerSpriteReviewCommentsInput }
+}
+export type SellerSpriteReviewCommentsSuccess = {
+  namespace: typeof MESSAGE_NAMESPACE
+  kind: 'response'
+  protocolVersion: typeof PROTOCOL_VERSION
+  requestId: string
+  action: typeof SELLERSPRITE_REVIEW_COMMENTS_ACTION
+  ok: true
+  data: SellerSpriteReviewCommentsData
+}
+export type SellerSpriteReviewCommentsResponse = SellerSpriteReviewCommentsSuccess | ProtocolError
+
+const REVIEW_COMMENTS_INPUT_KEYS = [
+  'asin', 'keyword', 'market', 'pageNum', 'pageSize', 'reviewEndTime', 'reviewStartTime',
+  'order', 'starList', 'typeList', 'variations',
+] as const
+export const isSellerSpriteReviewCommentsInput = (value: unknown): value is SellerSpriteReviewCommentsInput => {
+  if (!isRecord(value) || Object.keys(value).length !== REVIEW_COMMENTS_INPUT_KEYS.length
+    || !REVIEW_COMMENTS_INPUT_KEYS.every((key) => Object.hasOwn(value, key))) return false
+  return /^[A-Z0-9]{10}$/.test(String(value.asin))
+    && value.keyword === ''
+    && isBoundedString(value.market, 16)
+    && typeof value.pageNum === 'number' && Number.isInteger(value.pageNum) && value.pageNum > 0 && value.pageNum <= 10_000
+    && typeof value.pageSize === 'number' && Number.isInteger(value.pageSize) && value.pageSize > 0 && value.pageSize <= 50
+    && value.reviewEndTime === null
+    && value.reviewStartTime === null
+    && isRecord(value.order) && Object.keys(value.order).length === 2
+    && value.order.fieldName === 'date' && value.order.sort === 1
+    && Array.isArray(value.starList) && value.starList.length <= 5
+    && value.starList.every((star) => typeof star === 'number' && Number.isInteger(star) && star >= 1 && star <= 5)
+    && Array.isArray(value.typeList) && value.typeList.length <= 20 && value.typeList.every((item) => isBoundedString(item, 64))
+    && Array.isArray(value.variations) && value.variations.length <= 100 && value.variations.every((item) => isBoundedString(item, 256))
+}
+
+export const createSellerSpriteReviewCommentsRequest = (
+  requestId: string,
+  targetId: string,
+  input: SellerSpriteReviewCommentsInput,
+): SellerSpriteReviewCommentsRequest => ({
+  namespace: MESSAGE_NAMESPACE, kind: 'request', protocolVersion: PROTOCOL_VERSION,
+  action: SELLERSPRITE_REVIEW_COMMENTS_ACTION, requestId, payload: { targetId, input },
+})
+
+export const isSellerSpriteReviewCommentsRequest = (value: unknown): value is SellerSpriteReviewCommentsRequest =>
+  isRecord(value)
+  && value.namespace === MESSAGE_NAMESPACE
+  && value.kind === 'request'
+  && value.protocolVersion === PROTOCOL_VERSION
+  && value.action === SELLERSPRITE_REVIEW_COMMENTS_ACTION
+  && isBoundedString(value.requestId, 256)
+  && isRecord(value.payload)
+  && Object.keys(value.payload).length === 2
+  && isBoundedString(value.payload.targetId, 64)
+  && isSellerSpriteReviewCommentsInput(value.payload.input)
+
+const REVIEW_COMMENT_KEYS = [
+  'id', 'asin', 'parent', 'date', 'title', 'titleCn', 'content', 'contentCn', 'star',
+  'skus', 'likes', 'images', 'verified', 'vine',
+] as const
+const isReviewComment = (value: unknown): value is SellerSpriteReviewComment => {
+  if (!isRecord(value) || Object.keys(value).length !== REVIEW_COMMENT_KEYS.length
+    || !REVIEW_COMMENT_KEYS.every((key) => Object.hasOwn(value, key))) return false
+  return isBoundedString(value.id, 128)
+    && isBoundedString(value.asin, 32)
+    && isNullableBoundedString(value.parent, 32)
+    && typeof value.date === 'number' && Number.isFinite(value.date)
+    && isBoundedOptionalString(value.title, 1024)
+    && isNullableBoundedString(value.titleCn, 1024)
+    && isBoundedOptionalString(value.content, 10_000)
+    && isNullableBoundedString(value.contentCn, 10_000)
+    && typeof value.star === 'number' && Number.isInteger(value.star) && value.star >= 1 && value.star <= 5
+    && Array.isArray(value.skus) && value.skus.length <= 100 && value.skus.every((item) => isBoundedString(item, 512))
+    && typeof value.likes === 'number' && Number.isFinite(value.likes) && value.likes >= 0
+    && Array.isArray(value.images) && value.images.length <= 50 && value.images.every((item) => isBoundedString(item, 2048))
+    && typeof value.verified === 'boolean'
+    && typeof value.vine === 'boolean'
+}
+
+export const isSellerSpriteReviewCommentsResponse = (value: unknown): value is SellerSpriteReviewCommentsResponse => {
+  if (!isRecord(value) || value.namespace !== MESSAGE_NAMESPACE || value.kind !== 'response') return false
+  if (value.protocolVersion !== PROTOCOL_VERSION || !isBoundedString(value.requestId, 256)) return false
+  if (value.ok === false) return isRecord(value.error) && typeof value.error.code === 'string'
+  return value.ok === true
+    && value.action === SELLERSPRITE_REVIEW_COMMENTS_ACTION
+    && isRecord(value.data)
+    && Object.keys(value.data).length === 5
+    && typeof value.data.page === 'number' && Number.isInteger(value.data.page) && value.data.page > 0
+    && typeof value.data.size === 'number' && Number.isInteger(value.data.size) && value.data.size > 0
+    && typeof value.data.total === 'number' && Number.isInteger(value.data.total) && value.data.total >= 0
+    && typeof value.data.took === 'number' && Number.isFinite(value.data.took) && value.data.took >= 0
+    && Array.isArray(value.data.items)
+    && value.data.items.length <= 50
+    && value.data.items.every(isReviewComment)
 }
 
 export const KEYWORD_MINING_ACTION = 'KEYWORD_MINING' as const

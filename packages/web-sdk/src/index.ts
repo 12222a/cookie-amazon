@@ -15,6 +15,8 @@ export {
   researchSellerSpriteCompetitors,
   reverseSellerSpriteKeywords,
   selectSellerSpriteProducts,
+  listSellerSpriteCategoryNodes,
+  listSellerSpriteReviewComments,
   mineSellerSpriteKeywords,
 } from './client'
 export { WebSdkError } from './errors'
@@ -23,6 +25,11 @@ export type {
   SellerSpriteCompetitorInput,
   SellerSpriteProductSelectionData,
   SellerSpriteProductSelectionInput,
+  SellerSpriteCategoryNodesData,
+  SellerSpriteCategoryNodesInput,
+  SellerSpriteCategoryNode,
+  SellerSpriteReviewCommentsData,
+  SellerSpriteReviewCommentsInput,
   SellerSpriteMonthlyData,
   SellerSpriteMonthlyInput,
   SellerSpriteMarketResearchData,

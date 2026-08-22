@@ -3,6 +3,7 @@ export type ConfigHttpMethod = 'GET' | 'POST'
 export const TARGET_OPERATIONS = [
   'CHECK_LOGIN', 'GET_PROFILE', 'SELLERSPRITE_KEYWORD_REVERSE', 'SELLERSPRITE_MONTHLY', 'SELLERSPRITE_MARKET_RESEARCH', 'SELLERSPRITE_ABA_PERIODS', 'SELLERSPRITE_ABA_RESEARCH', 'COMPETITOR_RESEARCH',
   'PRODUCT_SELECTION', 'MARKET_SELECTION', 'KEYWORD_PRODUCT_RESEARCH', 'KEYWORD_MINING',
+  'SELLERSPRITE_CATEGORY_NODES', 'SELLERSPRITE_REVIEW_COMMENTS',
 ] as const
 export type TargetOperation = (typeof TARGET_OPERATIONS)[number]
 
@@ -11,7 +12,7 @@ export type TargetOperationPolicy = {
   path: `/${string}`
   method: ConfigHttpMethod
   timeoutMs: number
-  response: 'login-status' | 'html-login-probe' | 'profile' | 'keyword-reverse' | 'monthly' | 'market-research' | 'aba-periods' | 'aba-research' | 'competitor-research' | 'product-selection' | 'html-session' | 'keyword-mining'
+  response: 'login-status' | 'html-login-probe' | 'profile' | 'keyword-reverse' | 'monthly' | 'market-research' | 'aba-periods' | 'aba-research' | 'competitor-research' | 'product-selection' | 'html-session' | 'keyword-mining' | 'category-nodes' | 'review-comments'
 }
 
 export type TargetOperationOverrides = Readonly<Record<string, {
@@ -138,6 +139,20 @@ export const createExampleOperationPolicy = (): Readonly<Record<TargetOperation,
     timeoutMs: 15_000,
     response: 'keyword-mining',
   }),
+  SELLERSPRITE_CATEGORY_NODES: Object.freeze({
+    enabled: false,
+    path: '/v2/competitor-lookup/nodes',
+    method: 'GET',
+    timeoutMs: 15_000,
+    response: 'category-nodes',
+  }),
+  SELLERSPRITE_REVIEW_COMMENTS: Object.freeze({
+    enabled: false,
+    path: '/v3/api/review-analysis/comment',
+    method: 'POST',
+    timeoutMs: 20_000,
+    response: 'review-comments',
+  }),
 })
 
 export const createSellerSpriteOperationPolicy = (): Readonly<Record<TargetOperation, TargetOperationPolicy>> => Object.freeze({
@@ -224,5 +239,19 @@ export const createSellerSpriteOperationPolicy = (): Readonly<Record<TargetOpera
     method: 'POST',
     timeoutMs: 15_000,
     response: 'keyword-mining',
+  }),
+  SELLERSPRITE_CATEGORY_NODES: Object.freeze({
+    enabled: true,
+    path: '/v2/competitor-lookup/nodes',
+    method: 'GET',
+    timeoutMs: 15_000,
+    response: 'category-nodes',
+  }),
+  SELLERSPRITE_REVIEW_COMMENTS: Object.freeze({
+    enabled: true,
+    path: '/v3/api/review-analysis/comment',
+    method: 'POST',
+    timeoutMs: 20_000,
+    response: 'review-comments',
   }),
 })

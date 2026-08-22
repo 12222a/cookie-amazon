@@ -7,7 +7,7 @@ const bridge = vi.hoisted(() => ({
 
 vi.mock('webext-bridge/window', () => bridge)
 
-import { listSellerSpriteAbaPeriods, mineSellerSpriteKeywords, readSellerSpriteMonthly, researchSellerSpriteAba, researchSellerSpriteMarket, reverseSellerSpriteKeywords, selectSellerSpriteProducts } from '../client'
+import { listSellerSpriteAbaPeriods, listSellerSpriteCategoryNodes, listSellerSpriteReviewComments, mineSellerSpriteKeywords, readSellerSpriteMonthly, researchSellerSpriteAba, researchSellerSpriteMarket, reverseSellerSpriteKeywords, selectSellerSpriteProducts } from '../client'
 
 const input = {
   asin: 'B000000000', marketId: 1, month: '2026-01', forceReStat: false, badges: [], limit: 20,
@@ -15,9 +15,10 @@ const input = {
 
 const productSelectionInput = {
   eligibility: [], filterSub: false, lowPrice: 'N' as const, market: 'US', monthName: 'bsr_sales_nearly',
-  nodeIdPaths: [], order: { desc: true, field: 'amz_unit' }, page: 1, pkgDimensionTypeList: [],
-  productTags: [], salesGrowthType: '30d' as const, selectType: 2 as const, sellerNationList: [],
-  sellerTypes: [], size: 20, symbolFlag: false, video: '' as const, weightUnit: 'g' as const,
+  nodeIdPaths: ['2619525011'], order: { desc: true, field: 'total_units' }, page: 1, pkgDimensionTypeList: [],
+  productTags: [], selectType: '2' as const, sellerNationList: [], sellerTypes: [], size: 60,
+  symbolFlag: false, weightUnit: 'g' as const, minRanking: '10000', maxRanking: '50000',
+  maxSales: '300', maxPrice: '30', maxSellers: '1',
 }
 
 const keywordMiningInput = {
@@ -171,6 +172,38 @@ describe('SellerSprite web SDK', () => {
       action: 'PRODUCT_SELECTION',
       payload: { targetId: 'sellersprite', input: productSelectionInput },
     })
+  })
+
+  it('sends strict category and review requests through the bridge', async () => {
+    const categoryData = { parent: null, items: [] }
+    bridge.sendMessage.mockResolvedValueOnce({
+      namespace: 'cookie-amazon-platform', kind: 'response', protocolVersion: 1,
+      requestId: 'response-id', action: 'SELLERSPRITE_CATEGORY_NODES', ok: true, data: categoryData,
+    })
+    const categoryInput = { marketld: 1, table: 'bsr_sales_nearly' as const }
+    await expect(listSellerSpriteCategoryNodes(categoryInput)).resolves.toEqual(categoryData)
+    expect(bridge.sendMessage.mock.calls[0]).toMatchObject([
+      'SELLERSPRITE_CATEGORY_NODES',
+      { action: 'SELLERSPRITE_CATEGORY_NODES', payload: { targetId: 'sellersprite', input: categoryInput } },
+      'content-script',
+    ])
+
+    const reviewData = { page: 1, size: 20, total: 0, took: 0, items: [] }
+    bridge.sendMessage.mockResolvedValueOnce({
+      namespace: 'cookie-amazon-platform', kind: 'response', protocolVersion: 1,
+      requestId: 'response-id', action: 'SELLERSPRITE_REVIEW_COMMENTS', ok: true, data: reviewData,
+    })
+    const reviewInput = {
+      asin: 'B08H26Z7D9', keyword: '' as const, market: 'US', pageNum: 1, pageSize: 20,
+      reviewEndTime: null, reviewStartTime: null, order: { fieldName: 'date' as const, sort: 1 as const },
+      starList: [], typeList: [], variations: [],
+    }
+    await expect(listSellerSpriteReviewComments(reviewInput)).resolves.toEqual(reviewData)
+    expect(bridge.sendMessage.mock.calls[1]).toMatchObject([
+      'SELLERSPRITE_REVIEW_COMMENTS',
+      { action: 'SELLERSPRITE_REVIEW_COMMENTS', payload: { targetId: 'sellersprite', input: reviewInput } },
+      'content-script',
+    ])
   })
 
   it('sends the keyword mining request and surfaces protocol error codes', async () => {

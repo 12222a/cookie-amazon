@@ -25,6 +25,7 @@ import {
 import { buildOpportunityReport, opportunityProductsToCsv } from './opportunity'
 import { MarketResearchResults } from './MarketResearchResults'
 import { ProductResults } from './ProductResults'
+import { P0OpportunityPanel } from './P0OpportunityPanel'
 import type { MonthlyFieldCoverage } from './monthly-lookup'
 import { useProductResearch } from './useProductResearch'
 
@@ -335,6 +336,8 @@ export function ProductResearchWorkbench({
         <span><b className="lane-dom">live</b> US 市场总量 / FBA / 集中度 / 新品；关键词趋势；月度商品快照</span>
         <span className="pr-capability-note">使用当前已授权会话，敏感凭据不落盘</span>
       </div>
+
+      <P0OpportunityPanel targetReady={targetReady} />
 
       {connectionMessage ? <div className="pr-connection-feedback" role="status"><span>连接状态</span><strong>{connectionMessage}</strong></div> : null}
       {keywordLookupMessage ? <div className="pr-connection-feedback" role="status"><span>关键词数据</span><strong>{keywordLookupMessage}</strong></div> : null}

@@ -13,6 +13,8 @@ import {
   isSellerSpriteMarketResearchMonth,
   isSellerSpriteNewReleaseMonths,
   createSellerSpriteProductSelectionRequest,
+  createSellerSpriteCategoryNodesRequest,
+  createSellerSpriteReviewCommentsRequest,
   isAllowedWebOrigin,
   isPingRequest,
   isPingResponse,
@@ -34,6 +36,10 @@ import {
   isSellerSpriteAbaResearchResponse,
   isSellerSpriteProductSelectionRequest,
   isSellerSpriteProductSelectionResponse,
+  isSellerSpriteCategoryNodesRequest,
+  isSellerSpriteCategoryNodesResponse,
+  isSellerSpriteReviewCommentsRequest,
+  isSellerSpriteReviewCommentsResponse,
   createTargetRequest,
   isTargetRequest,
   isTargetResponse,
@@ -47,9 +53,10 @@ const competitorInput = {
 
 const productSelectionInput = {
   eligibility: [], filterSub: false, lowPrice: 'N' as const, market: 'US', monthName: 'bsr_sales_nearly',
-  nodeIdPaths: [], order: { desc: true, field: 'amz_unit' }, page: 1, pkgDimensionTypeList: [],
-  productTags: [], salesGrowthType: '30d' as const, selectType: 2 as const, sellerNationList: [],
-  sellerTypes: [], size: 20, symbolFlag: false, video: '' as const, weightUnit: 'g' as const,
+  nodeIdPaths: ['2619525011'], order: { desc: true, field: 'total_units' }, page: 1, pkgDimensionTypeList: [],
+  productTags: [], selectType: '2' as const, sellerNationList: [], sellerTypes: [], size: 60,
+  symbolFlag: false, weightUnit: 'g' as const, minRanking: '10000', maxRanking: '50000',
+  maxSales: '300', maxPrice: '30', maxSellers: '1',
 }
 
 const keywordMiningInput = {
@@ -227,7 +234,8 @@ describe('protocol', () => {
         items: [{
           asin: 'B000000000', title: 'Example', brand: null, imageUrl: null,
           price: 20, rating: null, reviews: 10, estimatedSales: null,
-          availableDate: null, availableDays: null,
+          availableDate: null, availableDays: null, salesGrowth: null, salesGrowthYoy: null,
+          revenue: null, bsrRank: null, sellers: null, categoryName: null, nodeLabelPath: null,
         }],
       },
     })).toBe(true)
@@ -239,6 +247,45 @@ describe('protocol', () => {
         items: [{ asin: 'B000000000', title: 'Example', brand: null, imageUrl: null, price: 20, rating: null, reviews: 10, estimatedSales: null, leak: 'x' }],
       },
     })).toBe(false)
+  })
+
+  it('validates category nodes and review comment allowlists', () => {
+    const categoryRequest = createSellerSpriteCategoryNodesRequest('category-1', 'sellersprite', {
+      marketld: 1, table: 'bsr_sales_nearly',
+    })
+    expect(isSellerSpriteCategoryNodesRequest(categoryRequest)).toBe(true)
+    expect(isSellerSpriteCategoryNodesRequest({
+      ...categoryRequest,
+      payload: { ...categoryRequest.payload, input: { marketId: 1, table: 'bsr_sales_nearly' } },
+    })).toBe(false)
+    expect(isSellerSpriteCategoryNodesResponse({
+      namespace: 'cookie-amazon-platform', kind: 'response', protocolVersion: 1,
+      requestId: 'category-1', action: 'SELLERSPRITE_CATEGORY_NODES', ok: true,
+      data: { parent: null, items: [{ id: '2619525011', label: 'Appliances', labelLocale: '家电', products: 83290, children: 7 }] },
+    })).toBe(true)
+
+    const reviewInput = {
+      asin: 'B08H26Z7D9', keyword: '' as const, market: 'US', pageNum: 1, pageSize: 20,
+      reviewEndTime: null, reviewStartTime: null, order: { fieldName: 'date' as const, sort: 1 as const },
+      starList: [], typeList: [], variations: [],
+    }
+    const reviewRequest = createSellerSpriteReviewCommentsRequest('review-1', 'sellersprite', reviewInput)
+    expect(isSellerSpriteReviewCommentsRequest(reviewRequest)).toBe(true)
+    expect(isSellerSpriteReviewCommentsRequest({
+      ...reviewRequest, payload: { ...reviewRequest.payload, input: { ...reviewInput, unexpectedField: 'blocked' } },
+    })).toBe(false)
+    expect(isSellerSpriteReviewCommentsResponse({
+      namespace: 'cookie-amazon-platform', kind: 'response', protocolVersion: 1,
+      requestId: 'review-1', action: 'SELLERSPRITE_REVIEW_COMMENTS', ok: true,
+      data: {
+        page: 1, size: 20, total: 207, took: 0,
+        items: [{
+          id: 'USR1', asin: 'B08H26Z7D9', parent: 'B0FH9C8V7Y', date: 1782748800000,
+          title: 'Worth it', titleCn: '值得', content: 'Works well', contentCn: '很好用',
+          star: 5, skus: ['Color: Ivory'], likes: 0, images: [], verified: true, vine: false,
+        }],
+      },
+    })).toBe(true)
   })
 
   it('validates keyword mining allowlists and only accepts observed empty results', () => {

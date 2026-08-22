@@ -3,6 +3,8 @@ import {
   createPingRequest,
   createSellerSpriteCompetitorRequest,
   createSellerSpriteProductSelectionRequest,
+  createSellerSpriteCategoryNodesRequest,
+  createSellerSpriteReviewCommentsRequest,
   createSellerSpriteKeywordMiningRequest,
   createSellerSpriteKeywordReverseRequest,
   createSellerSpriteMonthlyRequest,
@@ -16,6 +18,8 @@ import {
   isPingResponse,
   isSellerSpriteCompetitorResponse,
   isSellerSpriteProductSelectionResponse,
+  isSellerSpriteCategoryNodesResponse,
+  isSellerSpriteReviewCommentsResponse,
   isSellerSpriteKeywordMiningResponse,
   isSellerSpriteKeywordReverseResponse,
   isSellerSpriteMonthlyResponse,
@@ -27,6 +31,8 @@ import {
   MESSAGE_NAMESPACE,
   COMPETITOR_RESEARCH_ACTION,
   PRODUCT_SELECTION_ACTION,
+  SELLERSPRITE_CATEGORY_NODES_ACTION,
+  SELLERSPRITE_REVIEW_COMMENTS_ACTION,
   KEYWORD_MINING_ACTION,
   SELLERSPRITE_KEYWORD_REVERSE_ACTION,
   SELLERSPRITE_MONTHLY_ACTION,
@@ -41,6 +47,13 @@ import {
   type SellerSpriteProductSelectionData,
   type SellerSpriteProductSelectionInput,
   type SellerSpriteProductSelectionRequest,
+  type SellerSpriteCategoryNodesData,
+  type SellerSpriteCategoryNodesInput,
+  type SellerSpriteCategoryNode,
+  type SellerSpriteCategoryNodesRequest,
+  type SellerSpriteReviewCommentsData,
+  type SellerSpriteReviewCommentsInput,
+  type SellerSpriteReviewCommentsRequest,
   type SellerSpriteKeywordMiningData,
   type SellerSpriteKeywordMiningInput,
   type SellerSpriteKeywordMiningRequest,
@@ -114,7 +127,7 @@ export const probeContentScript = async (options: WebSdkOptions = {}): Promise<C
 
 const requestWithTimeout = async (
   action: string,
-  request: PingRequest | TargetRequest | SellerSpriteKeywordReverseRequest | SellerSpriteMonthlyRequest | SellerSpriteMarketResearchRequest | SellerSpriteCompetitorRequest | SellerSpriteProductSelectionRequest | SellerSpriteKeywordMiningRequest | SellerSpriteAbaPeriodsRequest | SellerSpriteAbaResearchRequest,
+  request: PingRequest | TargetRequest | SellerSpriteKeywordReverseRequest | SellerSpriteMonthlyRequest | SellerSpriteMarketResearchRequest | SellerSpriteCompetitorRequest | SellerSpriteProductSelectionRequest | SellerSpriteCategoryNodesRequest | SellerSpriteReviewCommentsRequest | SellerSpriteKeywordMiningRequest | SellerSpriteAbaPeriodsRequest | SellerSpriteAbaResearchRequest,
   timeoutMs: number,
 ): Promise<unknown> => {
   let timeoutId: number | undefined
@@ -241,6 +254,42 @@ export const selectSellerSpriteProducts = async (
   }
 }
 
+export const listSellerSpriteCategoryNodes = async (
+  input: SellerSpriteCategoryNodesInput,
+  options: WebSdkOptions = {},
+): Promise<SellerSpriteCategoryNodesData> => {
+  if (!isAllowedWebOrigin(window.location.origin)) throw new WebSdkError('INVALID_ORIGIN')
+  initializeBridge()
+  const request = createSellerSpriteCategoryNodesRequest(createRequestId(), 'sellersprite', input)
+  try {
+    const response = await requestWithTimeout(SELLERSPRITE_CATEGORY_NODES_ACTION, request, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    if (!isSellerSpriteCategoryNodesResponse(response)) throw new WebSdkError('INVALID_MESSAGE')
+    if (!response.ok) throw new WebSdkError(response.error.code)
+    return response.data
+  } catch (error: unknown) {
+    if (error instanceof WebSdkError) throw error
+    throw new WebSdkError('EXTENSION_UNAVAILABLE')
+  }
+}
+
+export const listSellerSpriteReviewComments = async (
+  input: SellerSpriteReviewCommentsInput,
+  options: WebSdkOptions = {},
+): Promise<SellerSpriteReviewCommentsData> => {
+  if (!isAllowedWebOrigin(window.location.origin)) throw new WebSdkError('INVALID_ORIGIN')
+  initializeBridge()
+  const request = createSellerSpriteReviewCommentsRequest(createRequestId(), 'sellersprite', input)
+  try {
+    const response = await requestWithTimeout(SELLERSPRITE_REVIEW_COMMENTS_ACTION, request, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    if (!isSellerSpriteReviewCommentsResponse(response)) throw new WebSdkError('INVALID_MESSAGE')
+    if (!response.ok) throw new WebSdkError(response.error.code)
+    return response.data
+  } catch (error: unknown) {
+    if (error instanceof WebSdkError) throw error
+    throw new WebSdkError('EXTENSION_UNAVAILABLE')
+  }
+}
+
 export const readSellerSpriteMonthly = async (
   input: SellerSpriteMonthlyInput,
   options: WebSdkOptions = {},
@@ -346,6 +395,11 @@ export type {
   SellerSpriteCompetitorInput,
   SellerSpriteProductSelectionData,
   SellerSpriteProductSelectionInput,
+  SellerSpriteCategoryNodesData,
+  SellerSpriteCategoryNodesInput,
+  SellerSpriteCategoryNode,
+  SellerSpriteReviewCommentsData,
+  SellerSpriteReviewCommentsInput,
   SellerSpriteKeywordMiningData,
   SellerSpriteKeywordMiningInput,
   SellerSpriteMonthlyData,

@@ -5,6 +5,9 @@ import {
 import {
   isSellerSpriteAbaResearchInput,
   isSellerSpriteMarketResearchInput,
+  isSellerSpriteReviewCommentsInput,
+  isSellerSpriteCategoryNodesInput,
+  isSellerSpriteProductSelectionInput,
 } from '@cookie-amazon/protocol'
 import type {
   SellerSpriteKeywordItem,
@@ -22,6 +25,12 @@ import type {
   SellerSpriteCompetitorItem,
   SellerSpriteProductSelectionData,
   SellerSpriteProductSelectionInput,
+  SellerSpriteCategoryNodesData,
+  SellerSpriteCategoryNodesInput,
+  SellerSpriteCategoryNode,
+  SellerSpriteReviewCommentsData,
+  SellerSpriteReviewCommentsInput,
+  SellerSpriteReviewComment,
   SellerSpriteHtmlSessionData,
   SellerSpriteKeywordMiningData,
   SellerSpriteKeywordMiningDepartment,
@@ -626,6 +635,29 @@ const normalizeNullableNumber = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+const readProductSelectionItem = (value: unknown): import('@cookie-amazon/protocol').SellerSpriteProductSelectionItem | undefined => {
+  if (!isRecord(value) || typeof value.asin !== 'string' || value.asin.trim() === '') return undefined
+  return {
+    asin: value.asin.slice(0, 32),
+    title: normalizeNullableString(value.title ?? value.title0),
+    brand: normalizeNullableString(value.brand ?? value.brand0),
+    imageUrl: normalizeNullableString(value.imageUrl ?? value.imageSrc),
+    price: normalizeNullableNumber(value.price ?? value.averagePrice),
+    rating: normalizeNullableNumber(value.rating),
+    reviews: normalizeNullableNumber(value.reviews),
+    estimatedSales: normalizeNullableNumber(value.totalUnits ?? value.amzUnit ?? value.estimatedSales),
+    availableDate: normalizeNullableNumber(value.availableDate),
+    availableDays: normalizeNullableNumber(value.availableDays),
+    salesGrowth: normalizeNullableNumber(value.totalUnitsGrowth),
+    salesGrowthYoy: normalizeNullableNumber(value.totalUnitsGrowthYoy),
+    revenue: normalizeNullableNumber(value.totalAmount),
+    bsrRank: normalizeNullableNumber(value.bsrRank),
+    sellers: normalizeNullableNumber(value.sellers),
+    categoryName: normalizeNullableString(value.categoryName),
+    nodeLabelPath: normalizeNullableString(value.nodeLabelPath),
+  }
+}
+
 const readProductItem = (value: unknown): SellerSpriteCompetitorItem | undefined => {
   if (!isRecord(value) || typeof value.asin !== 'string' || value.asin.trim() === '') return undefined
   return {
@@ -642,7 +674,10 @@ const readProductItem = (value: unknown): SellerSpriteCompetitorItem | undefined
   }
 }
 
-const readProductPageResponse = async (response: Response) => {
+const readProductPageResponseWith = async <T>(
+  response: Response,
+  readItem: (value: unknown) => T | undefined,
+): Promise<{ page: number; pages: number; size: number; total: number; hasNextPage: boolean; items: T[] }> => {
   if (response.status === 401 || response.status === 403) {
     throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status)
   }
@@ -674,14 +709,20 @@ const readProductPageResponse = async (response: Response) => {
     || (rawItems !== null && !Array.isArray(rawItems))) {
     throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
   }
-  const items = (rawItems ?? []).map(readProductItem)
+  const items = (rawItems ?? []).map(readItem)
   if (items.some((item) => item === undefined)) throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
   return {
     page: numbers.page!, pages: numbers.pages!, size: numbers.size!, total: numbers.total!,
     hasNextPage: rawItems !== null && (data.hasNextPage ?? numbers.page! < numbers.pages!),
-    items: items as SellerSpriteCompetitorItem[],
+    items: items as T[],
   }
 }
+
+const readProductPageResponse = (response: Response): Promise<SellerSpriteCompetitorData> =>
+  readProductPageResponseWith(response, readProductItem)
+
+const readProductSelectionPageResponse = (response: Response): Promise<SellerSpriteProductSelectionData> =>
+  readProductPageResponseWith(response, readProductSelectionItem)
 
 export const researchSellerSpriteCompetitors = (
   client: TargetClient,
@@ -695,31 +736,184 @@ export const researchSellerSpriteCompetitors = (
 export const selectSellerSpriteProducts = (
   client: TargetClient,
   input: SellerSpriteProductSelectionInput,
-): Promise<SellerSpriteProductSelectionData> => client.executeJsonPost(
+): Promise<SellerSpriteProductSelectionData> => {
+  if (!isSellerSpriteProductSelectionInput(input) || input.nodeIdPaths.length !== 1) {
+    throw new TargetClientError('TARGET_API_ERROR')
+  }
+  return client.executeJsonPost(
   'PRODUCT_SELECTION',
   {},
   {
-    eligibility: input.eligibility,
-    filterSub: input.filterSub,
-    lowPrice: input.lowPrice,
     market: input.market,
-    monthName: input.monthName,
-    nodeIdPaths: input.nodeIdPaths,
-    order: input.order,
     page: input.page,
-    pkgDimensionTypeList: input.pkgDimensionTypeList,
-    productTags: input.productTags,
-    salesGrowthType: input.salesGrowthType,
-    selectType: input.selectType,
-    sellerNationList: input.sellerNationList,
-    sellerTypes: input.sellerTypes,
     size: input.size,
     symbolFlag: input.symbolFlag,
-    video: input.video,
+    monthName: input.monthName,
+    selectType: input.selectType,
+    filterSub: input.filterSub,
     weightUnit: input.weightUnit,
+    order: input.order,
+    productTags: input.productTags,
+    nodeIdPaths: input.nodeIdPaths,
+    sellerTypes: input.sellerTypes,
+    eligibility: input.eligibility,
+    pkgDimensionTypeList: input.pkgDimensionTypeList,
+    sellerNationList: input.sellerNationList,
+    minRanking: input.minRanking,
+    maxRanking: input.maxRanking,
+    maxSales: input.maxSales,
+    maxPrice: input.maxPrice,
+    maxSellers: input.maxSellers,
+    lowPrice: input.lowPrice,
   },
-  readProductPageResponse,
-)
+    readProductSelectionPageResponse,
+  )
+}
+
+const readSellerSpriteJson = async (response: Response): Promise<Record<string, unknown>> => {
+  if (response.url) {
+    try {
+      const finalUrl = new URL(response.url)
+      if (/\/(?:login|signin)(?:\/|$)/i.test(finalUrl.pathname)) {
+        throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status)
+      }
+    } catch (error: unknown) {
+      if (error instanceof TargetClientError) throw error
+    }
+  }
+  let payload: unknown
+  try {
+    payload = await response.json()
+  } catch {
+    if (response.status === 401 || response.status === 403) throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status)
+    if (response.status === 429) throw new TargetClientError('TARGET_RATE_LIMITED', response.status)
+    if (!response.ok) throw new TargetClientError('TARGET_API_ERROR', response.status)
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  }
+  const details = isRecord(payload) ? {
+    ...(typeof payload.code === 'string' || typeof payload.code === 'number' ? { targetCode: payload.code } : {}),
+    ...(typeof payload.message === 'string' ? { targetMessage: payload.message.slice(0, 512) } : {}),
+  } : {}
+  if (response.status === 401 || response.status === 403) throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status, details)
+  if (response.status === 429) throw new TargetClientError('TARGET_RATE_LIMITED', response.status, details)
+  if (!response.ok) throw new TargetClientError('TARGET_API_ERROR', response.status, details)
+  if (!isRecord(payload)) throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  if (payload.code !== 'OK' && payload.code !== 0 && payload.code !== 200) {
+    throw new TargetClientError('TARGET_API_ERROR', response.status, details)
+  }
+  return payload
+}
+
+const readCategoryNode = (value: unknown): SellerSpriteCategoryNode | undefined => {
+  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.label !== 'string') return undefined
+  const children = normalizeNullableNumber(value.children)
+  if (children === null || !Number.isInteger(children) || children < 0) return undefined
+  return {
+    id: value.id.slice(0, 64),
+    label: value.label.slice(0, 256),
+    labelLocale: typeof value.nodeLabelLocale === 'string' ? value.nodeLabelLocale.slice(0, 256) : null,
+    products: normalizeNullableNumber(value.products),
+    children,
+  }
+}
+
+const readCategoryNodesResponse = async (response: Response): Promise<SellerSpriteCategoryNodesData> => {
+  const payload = await readSellerSpriteJson(response)
+  if (!Array.isArray(payload.items)) throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  const items = payload.items.map(readCategoryNode)
+  if (items.some((item) => item === undefined) || items.length > 100) {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  }
+  let parent: string | null
+  if (payload.parent === null || payload.parent === undefined) {
+    parent = null
+  } else if (typeof payload.parent === 'string') {
+    parent = payload.parent.slice(0, 64)
+  } else {
+    const parentNode = readCategoryNode(payload.parent)
+    if (parentNode === undefined) throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+    parent = parentNode.id
+  }
+  return { parent, items: items as SellerSpriteCategoryNode[] }
+}
+
+export const listSellerSpriteCategoryNodes = (
+  client: TargetClient,
+  input: SellerSpriteCategoryNodesInput,
+): Promise<SellerSpriteCategoryNodesData> => {
+  if (!isSellerSpriteCategoryNodesInput(input)) throw new TargetClientError('TARGET_API_ERROR')
+  return client.executeJsonGet(
+    'SELLERSPRITE_CATEGORY_NODES',
+    { marketld: String(input.marketld), table: input.table },
+    readCategoryNodesResponse,
+  )
+}
+
+const cleanReviewString = (value: unknown, maxLength: number): string | null =>
+  typeof value === 'string' ? value.slice(0, maxLength) : null
+
+const readReviewComment = (value: unknown): SellerSpriteReviewComment | undefined => {
+  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.asin !== 'string') return undefined
+  const date = normalizeNullableNumber(value.date)
+  const star = normalizeNullableNumber(value.star)
+  const likes = normalizeNullableNumber(value.likes)
+  if (date === null || star === null || likes === null || !Number.isInteger(star) || star < 1 || star > 5 || likes < 0) return undefined
+  const skus = value.skus === null || value.skus === undefined ? [] : Array.isArray(value.skus)
+    ? value.skus.filter((item): item is string => typeof item === 'string').slice(0, 100).map((item) => item.slice(0, 512)) : undefined
+  const images = value.images === null || value.images === undefined ? [] : Array.isArray(value.images)
+    ? value.images.filter((item): item is string => typeof item === 'string').slice(0, 50).map((item) => item.slice(0, 2048)) : undefined
+  if (skus === undefined || images === undefined || typeof value.verified !== 'boolean' || typeof value.vine !== 'boolean') return undefined
+  return {
+    id: value.id.slice(0, 128),
+    asin: value.asin.slice(0, 32),
+    parent: cleanReviewString(value.parent, 32),
+    date,
+    title: cleanReviewString(value.title, 1024) ?? '',
+    titleCn: cleanReviewString(value.titleCn, 1024),
+    content: cleanReviewString(value.content, 10_000) ?? '',
+    contentCn: cleanReviewString(value.contentCn, 10_000),
+    star,
+    skus,
+    likes,
+    images,
+    verified: value.verified,
+    vine: value.vine,
+  }
+}
+
+const readReviewCommentsResponse = async (response: Response): Promise<SellerSpriteReviewCommentsData> => {
+  const payload = await readSellerSpriteJson(response)
+  if (!isRecord(payload.data) || !Array.isArray(payload.data.items)) {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  }
+  const page = normalizeNullableNumber(payload.data.page)
+  const size = normalizeNullableNumber(payload.data.size)
+  const total = normalizeNullableNumber(payload.data.total)
+  const took = normalizeNullableNumber(payload.data.took)
+  if (page === null || size === null || total === null || took === null
+    || !Number.isInteger(page) || page < 1 || !Number.isInteger(size) || size < 1
+    || !Number.isInteger(total) || total < 0 || took < 0) {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  }
+  const items = payload.data.items.map(readReviewComment)
+  if (items.some((item) => item === undefined) || items.length > 50) {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  }
+  return { page, size, total, took, items: items as SellerSpriteReviewComment[] }
+}
+
+export const listSellerSpriteReviewComments = (
+  client: TargetClient,
+  input: SellerSpriteReviewCommentsInput,
+): Promise<SellerSpriteReviewCommentsData> => {
+  if (!isSellerSpriteReviewCommentsInput(input)) throw new TargetClientError('TARGET_API_ERROR')
+  return client.executeJsonPost(
+    'SELLERSPRITE_REVIEW_COMMENTS',
+    {},
+    input,
+    readReviewCommentsResponse,
+  )
+}
 
 export const executeSellerSpriteMarketSelection = async (
   client: TargetClient,

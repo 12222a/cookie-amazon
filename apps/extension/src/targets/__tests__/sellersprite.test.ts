@@ -15,13 +15,16 @@ import {
   researchSellerSpriteCompetitors,
   reverseSellerSpriteKeywords,
   selectSellerSpriteProducts,
+  listSellerSpriteCategoryNodes,
+  listSellerSpriteReviewComments,
 } from '../sellersprite'
 
 const productSelectionInput = {
   eligibility: [], filterSub: false, lowPrice: 'N' as const, market: 'US', monthName: 'bsr_sales_nearly',
-  nodeIdPaths: [], order: { desc: true, field: 'amz_unit' }, page: 1, pkgDimensionTypeList: [],
-  productTags: [], salesGrowthType: '30d' as const, selectType: 2 as const, sellerNationList: [],
-  sellerTypes: [], size: 20, symbolFlag: false, video: '' as const, weightUnit: 'g' as const,
+  nodeIdPaths: ['2619525011'], order: { desc: true, field: 'total_units' }, page: 1, pkgDimensionTypeList: [],
+  productTags: [], selectType: '2' as const, sellerNationList: [], sellerTypes: [], size: 60,
+  symbolFlag: false, weightUnit: 'g' as const, minRanking: '10000', maxRanking: '50000',
+  maxSales: '300', maxPrice: '30', maxSellers: '1',
 }
 
 const competitorInput = {
@@ -319,9 +322,83 @@ describe('SellerSprite session adapter', () => {
         items: [{
           asin: 'B000000000', title: 'Example', brand: null, imageUrl: null,
           price: 20, rating: null, reviews: 10, estimatedSales: 240,
-          availableDate: null, availableDays: null,
+          availableDate: null, availableDays: null, salesGrowth: null, salesGrowthYoy: null,
+          revenue: null, bsrRank: null, sellers: null, categoryName: null, nodeLabelPath: null,
         }],
       })
+  })
+
+  it('loads category nodes and review comments with verified contracts and safe fields only', async () => {
+    const categoryClient = new TargetClient(SELLERSPRITE_ADAPTER, vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('https://www.sellersprite.com/v2/competitor-lookup/nodes?marketld=1&table=bsr_sales_nearly')
+      expect(init).toMatchObject({ method: 'GET', credentials: 'include' })
+      return new Response(JSON.stringify({
+        parent: null, code: 'OK', size: 1,
+        items: [{
+          id: '2619525011', label: 'Appliances', nodeLabelLocale: '家电', products: 83290,
+          children: 7, alias: 'must-not-surface', nodeLabelPathLocale: 'must-not-surface',
+        }],
+      }), { status: 200, headers: { 'content-type': 'application/json;charset=UTF-8' } })
+    }))
+    await expect(listSellerSpriteCategoryNodes(categoryClient, { marketld: 1, table: 'bsr_sales_nearly' }))
+      .resolves.toEqual({
+        parent: null,
+        items: [{ id: '2619525011', label: 'Appliances', labelLocale: '家电', products: 83290, children: 7 }],
+      })
+
+    const childCategoryClient = new TargetClient(SELLERSPRITE_ADAPTER, async () => new Response(JSON.stringify({
+      parent: {
+        id: '468642', label: 'Video Games', nodeLabelLocale: '视频游戏', products: 94655, children: 15,
+      },
+      code: 'OK', size: 1,
+      items: [{
+        id: '468642:16227128011', label: 'Video Games:Nintendo Switch',
+        nodeLabelLocale: '任天堂开关', products: 10474, children: 4,
+      }],
+    }), { status: 200, headers: { 'content-type': 'application/json;charset=UTF-8' } }))
+    await expect(listSellerSpriteCategoryNodes(childCategoryClient, { marketld: 1, table: 'bsr_sales_nearly' }))
+      .resolves.toEqual({
+        parent: '468642',
+        items: [{
+          id: '468642:16227128011', label: 'Video Games:Nintendo Switch',
+          labelLocale: '任天堂开关', products: 10474, children: 4,
+        }],
+      })
+
+    const reviewInput = {
+      asin: 'B08H26Z7D9', keyword: '' as const, market: 'US', pageNum: 1, pageSize: 20,
+      reviewEndTime: null, reviewStartTime: null, order: { fieldName: 'date' as const, sort: 1 as const },
+      starList: [], typeList: [], variations: [],
+    }
+    const reviewClient = new TargetClient(SELLERSPRITE_ADAPTER, vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('https://www.sellersprite.com/v3/api/review-analysis/comment')
+      expect(init).toMatchObject({ method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' } })
+      expect(JSON.parse(String(init?.body))).toEqual(reviewInput)
+      return new Response(JSON.stringify({
+        code: 'OK', message: '成功', success: true,
+        data: {
+          page: 1, size: 20, total: 207, took: 0,
+          items: [{
+            id: 'USR1', asin: 'B08H26Z7D9', parent: 'B0FH9C8V7Y', date: 1782748800000,
+            title: 'Shape not as advertised', titleCn: '形状与宣传不符', content: 'No shape but durable',
+            contentCn: '虽然耐用但没有形状', star: 3, skus: ['Color: Ivory'], likes: 2,
+            images: null, verified: true, vine: false, author: 'must-not-surface', authorId: 'private',
+          }],
+        },
+      }), { status: 200, headers: { 'content-type': 'application/json;charset=UTF-8' } })
+    }))
+    const result = await listSellerSpriteReviewComments(reviewClient, reviewInput)
+    expect(result).toEqual({
+      page: 1, size: 20, total: 207, took: 0,
+      items: [{
+        id: 'USR1', asin: 'B08H26Z7D9', parent: 'B0FH9C8V7Y', date: 1782748800000,
+        title: 'Shape not as advertised', titleCn: '形状与宣传不符', content: 'No shape but durable',
+        contentCn: '虽然耐用但没有形状', star: 3, skus: ['Color: Ivory'], likes: 2,
+        images: [], verified: true, vine: false,
+      }],
+    })
+    expect(JSON.stringify(result)).not.toContain('must-not-surface')
+    expect(JSON.stringify(result)).not.toContain('authorId')
   })
 
   it('posts the verified market form and returns only whitelisted table values', async () => {
