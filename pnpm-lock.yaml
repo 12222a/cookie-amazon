@@ -45,6 +45,9 @@ importers:
       '@cookie-amazon/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      '@cookie-amazon/research-core':
+        specifier: workspace:*
+        version: link:../../packages/research-core
       '@cookie-amazon/web-sdk':
         specifier: workspace:*
         version: link:../../packages/web-sdk
@@ -102,6 +105,8 @@ importers:
   packages/protocol: {}
 
   packages/remote-config: {}
+
+  packages/research-core: {}
 
   packages/sellersprite: {}
 

@@ -25,7 +25,7 @@ import {
 import { buildOpportunityReport, opportunityProductsToCsv } from './opportunity'
 import { MarketResearchResults } from './MarketResearchResults'
 import { ProductResults } from './ProductResults'
-import { P0OpportunityPanel } from './P0OpportunityPanel'
+import { AutoResearchPanel } from './auto-research/AutoResearchPanel'
 import type { MonthlyFieldCoverage } from './monthly-lookup'
 import { useProductResearch } from './useProductResearch'
 
@@ -107,6 +107,7 @@ export function ProductResearchWorkbench({
   connecting?: boolean
 }): ReactElement {
   const [metric, setMetric] = useState<TrendMetric>('estimatedSales')
+  const [workspaceMode, setWorkspaceMode] = useState<'automatic' | 'professional'>('automatic')
   const [query, setQuery] = useState<ProductResearchQuery>(DEFAULT_QUERY)
   const [abaReverseType, setAbaReverseType] = useState<'W' | 'M'>('W')
   const [abaPeriods, setAbaPeriods] = useState<SellerSpriteAbaPeriodsData | null>(null)
@@ -127,7 +128,7 @@ export function ProductResearchWorkbench({
 
   useEffect(() => {
     let active = true
-    if (!targetReady || !abaSupported) {
+    if (workspaceMode !== 'professional' || !targetReady || !abaSupported) {
       setAbaPeriods(null)
       setAbaTable('')
       setAbaData(null)
@@ -155,7 +156,7 @@ export function ProductResearchWorkbench({
           : 'ABA_PERIODS_FAILED')
       })
     return () => { active = false }
-  }, [abaSupported, extensionVersion, targetReady])
+  }, [abaSupported, extensionVersion, targetReady, workspaceMode])
 
   const abaPeriodOptions = abaReverseType === 'W' ? abaPeriods?.weekTables ?? [] : abaPeriods?.monthTables ?? []
   const changeAbaReverseType = (reverseType: 'W' | 'M'): void => {
@@ -281,15 +282,44 @@ export function ProductResearchWorkbench({
     <section className="product-research" aria-label="亚马逊选品工作台">
       <header className="pr-workbench-header">
         <div>
-          <div className="pr-eyebrow"><span className="pr-eyebrow-dot" /> PRODUCT INTELLIGENCE · {query.market}</div>
-          <h2>发现下一款 <em>值得卖</em> 的产品</h2>
-          <p>以竞品样本、ASIN 反查关键词和真实关键词指标构建初步市场分析；未接入维度明确留空。</p>
+          <div className="pr-eyebrow"><span className="pr-eyebrow-dot" /> AUTOMATIC PRODUCT RESEARCH · US</div>
+          <h2>从类目出发，形成 <em>可追溯</em> 的选品结论</h2>
+          <p>自动完成候选发现、ASIN 反查、关键词验证、市场结构、差评分析与综合决策；每项证据和失败原因均可回看。</p>
         </div>
         <div className="pr-header-actions">
-          <span className={`pr-connection ${targetReady ? 'is-live' : 'is-demo'}`}><i />{targetReady ? '扩展已连接 · Live' : '演示数据 · Demo'}</span>
+          <span className={`pr-connection ${targetReady ? 'is-live' : 'is-demo'}`}><i />{targetReady ? 'SellerSprite 已连接 · Live' : 'SellerSprite 未连接'}</span>
           {!targetReady && onConnect ? <button type="button" className="pr-ghost-button" onClick={onConnect} disabled={connecting}>{connecting ? '连接中…' : '连接 SellerSprite'}</button> : null}
         </div>
       </header>
+
+      <nav className="pr-mode-tabs" aria-label="研究模式" role="tablist">
+        <button
+          aria-controls="auto-research-panel"
+          aria-selected={workspaceMode === 'automatic'}
+          className={workspaceMode === 'automatic' ? 'is-active' : ''}
+          id="pr-auto-mode-tab"
+          onClick={() => setWorkspaceMode('automatic')}
+          role="tab"
+          type="button"
+        >自动研究</button>
+        <button
+          aria-controls="professional-research-panel"
+          aria-selected={workspaceMode === 'professional'}
+          className={workspaceMode === 'professional' ? 'is-active' : ''}
+          id="pr-professional-mode-tab"
+          onClick={() => setWorkspaceMode('professional')}
+          role="tab"
+          type="button"
+        >专业工具</button>
+      </nav>
+
+      <AutoResearchPanel hidden={workspaceMode !== 'automatic'} targetReady={targetReady} />
+      <div className="pr-professional-workspace" hidden={workspaceMode !== 'professional'} id="professional-research-panel" role="tabpanel" aria-labelledby="pr-professional-mode-tab">
+          <header className="pr-professional-intro">
+            <span>PROFESSIONAL TOOLS</span>
+            <h3>手动查询与原始指标工具</h3>
+            <p>用于进一步验证自动研究结果。这里保留关键词挖掘、ABA、市场数据、商品筛选与导出能力。</p>
+          </header>
 
       <div className="pr-search-panel">
         <label className="pr-keyword-field">
@@ -336,8 +366,6 @@ export function ProductResearchWorkbench({
         <span><b className="lane-dom">live</b> US 市场总量 / FBA / 集中度 / 新品；关键词趋势；月度商品快照</span>
         <span className="pr-capability-note">使用当前已授权会话，敏感凭据不落盘</span>
       </div>
-
-      <P0OpportunityPanel targetReady={targetReady} />
 
       {connectionMessage ? <div className="pr-connection-feedback" role="status"><span>连接状态</span><strong>{connectionMessage}</strong></div> : null}
       {keywordLookupMessage ? <div className="pr-connection-feedback" role="status"><span>关键词数据</span><strong>{keywordLookupMessage}</strong></div> : null}
@@ -457,6 +485,7 @@ export function ProductResearchWorkbench({
       </div>
 
       <footer className="pr-workbench-footer"><span><i className="footer-dot" /> 数据通道：{source === 'demo' ? '本地演示' : marketResearch.status === 'complete' ? 'SellerSprite v3 API + v2 市场结果' : 'SellerSprite v3 API'} · 站点 {query.market}</span><span>最近更新：{new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span></footer>
+      </div>
     </section>
   )
 }
