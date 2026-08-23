@@ -166,6 +166,10 @@ describe('research pipeline', () => {
     expect(job.evidence.reverseKeywords[0]?.sourceCount).toBe(3)
     expect(job.evidence.aba[0]?.period.type).toBe('W')
     expect(job.stages.reverseKeywords).toMatchObject({ status: 'complete', calls: 3, completed: 3 })
+    expect(job.stages.reverseKeywords.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'request', operation: 'ASIN 反查', target: 'B000000001' }),
+      expect.objectContaining({ type: 'response', operation: 'ASIN 反查', target: 'B000000001' }),
+    ]))
     expect(job.stages.marketStructure.calls).toBeGreaterThan(0)
     expect(job.decision).toMatchObject({ verdict: 'CONTINUE', label: '继续验证' })
     expect(job.decision?.boundary).toContain('不代表可直接采购')
@@ -226,6 +230,28 @@ describe('research pipeline', () => {
     expect(job.stages.marketStructure.status).toBe('skipped')
     expect(job.stages.decision.status).toBe('complete')
     expect(job.decision?.verdict).toBe('WATCH')
+  })
+
+  it('safely returns a failed job when malformed evidence causes an unexpected transform error', async () => {
+    const ports = createPorts()
+    ports.reverseKeywords.reverse = async () => [{
+      keyword: null as unknown as string,
+      searchVolume: 100,
+      purchaseRate: 0.1,
+      supplyDemandRatio: 1,
+      relevancy: 0.5,
+      rank: 10,
+      products: 100,
+    }]
+
+    const job = await runResearchPipeline(input, ports, { jobId: 'job-unexpected' })
+
+    expect(job.status).toBe('failed')
+    expect(job.currentStage).toBeNull()
+    expect(job.completedAt).not.toBeNull()
+    expect(job.errors.some((message) => message.startsWith('reverseKeywords:'))).toBe(true)
+    expect(job.stages.keywordMining.status).toBe('skipped')
+    expect(job.stages.reverseKeywords.events.some((event) => event.operation === '未预期的流水线异常')).toBe(true)
   })
 
   it('can abandon a well-covered opportunity with weak demand and extreme barriers', async () => {

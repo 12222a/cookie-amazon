@@ -118,10 +118,9 @@ export const AutoResearchPanel = ({ targetReady, hidden = false }: AutoResearchP
 
       {running && job && <ResearchRunWorkspace job={job} progress={progress} onCancel={cancel} />}
       {running && !job && <ResearchEmptyState starting />}
-      {!running && job?.decision && <ResearchEvidenceReport job={job} onRestart={start} />}
-      {!running && !job && <ResearchEmptyState />}
+      {!running && job && job.status !== 'cancelled' && <ResearchEvidenceReport job={job} onRestart={start} />}
+      {!running && !job && <ResearchEmptyState errors={error ? [error] : []} />}
       {!running && job?.status === 'cancelled' && <ResearchEmptyState cancelled errors={job.errors} />}
-      {!running && job && job.status !== 'cancelled' && !job.decision && <ResearchEmptyState errors={job.errors.length > 0 ? job.errors : ['关键阶段未生成足够证据，请查看连接状态后重试。']} />}
     </main>
   )
 }

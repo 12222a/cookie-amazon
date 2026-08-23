@@ -37,6 +37,7 @@ const createStage = (id: ResearchStageId): ResearchStageState => ({
   input: null,
   output: null,
   errors: [],
+  events: [],
 })
 
 const createStages = (): Record<ResearchStageId, ResearchStageState> => Object.fromEntries(
@@ -140,7 +141,31 @@ export const runResearchPipeline = async (
     assertActive()
     job.status = 'running'
     job.currentStage = stage
-    job.stages[stage] = { ...createStage(stage), status: 'running', startedAt: now(), input: stageInput, total }
+    job.stages[stage] = {
+      ...createStage(stage),
+      status: 'running',
+      startedAt: now(),
+      input: stageInput,
+      total,
+      events: [{ at: now(), type: 'stage', operation: '阶段开始', target: null, message: `计划处理 ${total} 项` }],
+    }
+    emit()
+  }
+  const trace = (
+    stage: ResearchStageId,
+    type: 'request' | 'response' | 'error' | 'skip',
+    operation: string,
+    target: string | null,
+    message: string,
+    progress?: { calls?: number; completed?: number },
+  ) => {
+    const current = job.stages[stage]
+    job.stages[stage] = {
+      ...current,
+      calls: progress?.calls ?? current.calls,
+      completed: progress?.completed ?? current.completed,
+      events: [...current.events, { at: now(), type, operation, target, message }],
+    }
     emit()
   }
   const finish = (
@@ -151,12 +176,34 @@ export const runResearchPipeline = async (
     calls: number,
     completed: number,
   ) => {
-    job.stages[stage] = { ...job.stages[stage], status, completedAt: now(), output, errors, calls, completed }
+    const current = job.stages[stage]
+    const errorEvents = errors.map((error) => ({
+      at: now(),
+      type: 'error' as const,
+      operation: '阶段错误',
+      target: null,
+      message: `${error.message}（${error.retryable ? '可重试' : '不可重试'}）`,
+    }))
+    job.stages[stage] = {
+      ...current,
+      status,
+      completedAt: now(),
+      output,
+      errors,
+      calls,
+      completed,
+      events: [
+        ...current.events,
+        ...errorEvents,
+        { at: now(), type: status === 'skipped' ? 'skip' : 'stage', operation: '阶段结束', target: null, message: `状态：${status}；完成 ${completed}/${current.total}；调用 ${calls} 次` },
+      ],
+    }
     job.errors.push(...errors.map((error) => `${stage}: ${error.message}`))
     emit()
   }
   const skip = (stage: ResearchStageId, reason: string) => {
     start(stage, null, 0)
+    trace(stage, 'skip', '跳过阶段', null, reason)
     finish(stage, 'skipped', { reason }, [], 0, 0)
   }
   const consume = (key: ResearchBudgetKey) => budget.consume(key)
@@ -168,13 +215,16 @@ export const runResearchPipeline = async (
       finish('discovery', 'failed', null, [{ kind: 'unavailable', message: 'Discovery budget is exhausted', fatal: false, retryable: false }], 0, 0)
     } else {
       try {
+        trace('discovery', 'request', '候选发现', input.categoryLabel ?? input.categoryId, `请求 ${input.market} 站点一级类目候选`, { calls: 1 })
         const candidates = await ports.products.discover(input, portOptions)
         assertActive()
         job.evidence.candidates = prepareCandidates(candidates, policy.candidateLimits.comparison)
+        trace('discovery', 'response', '候选发现', input.categoryLabel ?? input.categoryId, `收到 ${candidates.length} 条，清洗后保留 ${job.evidence.candidates.length} 条`, { calls: 1, completed: 1 })
         finish('discovery', 'complete', { candidates: job.evidence.candidates }, [], 1, 1)
       } catch (error) {
         const normalized = normalizeError(error)
         remoteBlocked = normalized.fatal
+        trace('discovery', 'error', '候选发现', input.categoryLabel ?? input.categoryId, normalized.message, { calls: 1 })
         finish('discovery', 'failed', null, [normalized], 1, 0)
       }
     }
@@ -193,6 +243,7 @@ export const runResearchPipeline = async (
         assertActive()
         if (!consume('reverseKeywords')) { exhausted = true; break }
         calls += 1
+        trace('reverseKeywords', 'request', 'ASIN 反查', candidate.asin, `正在反查第 ${calls}/${deepCandidates.length} 个候选`, { calls, completed })
         try {
           const result = await ports.reverseKeywords.reverse(candidate.asin, input.market, portOptions)
           assertActive()
@@ -202,9 +253,11 @@ export const runResearchPipeline = async (
             sourceTiers: [...new Set([...(item.sourceTiers ?? []), candidate.tier ?? 'C'])] as CandidateTier[],
           })))
           completed += 1
+          trace('reverseKeywords', 'response', 'ASIN 反查', candidate.asin, `收到 ${result.length} 个关键词`, { calls, completed })
         } catch (error) {
           const normalized = normalizeError(error)
           errors.push(normalized)
+          trace('reverseKeywords', 'error', 'ASIN 反查', candidate.asin, normalized.message, { calls, completed })
           if (normalized.fatal) { remoteBlocked = true; break }
         }
       }
@@ -231,13 +284,17 @@ export const runResearchPipeline = async (
         assertActive()
         if (!consume('keywordMining')) { exhausted = true; break }
         calls += 1
+        trace('keywordMining', 'request', '关键词挖掘', seed.normalized, `正在扩展第 ${calls}/${seeds.length} 个种子词`, { calls, completed })
         try {
-          mined.push(...await ports.keywordMining.mine(seed.normalized, input.market, portOptions))
+          const result = await ports.keywordMining.mine(seed.normalized, input.market, portOptions)
+          mined.push(...result)
           assertActive()
           completed += 1
+          trace('keywordMining', 'response', '关键词挖掘', seed.normalized, `收到 ${result.length} 个扩展词`, { calls, completed })
         } catch (error) {
           const normalized = normalizeError(error)
           errors.push(normalized)
+          trace('keywordMining', 'error', '关键词挖掘', seed.normalized, normalized.message, { calls, completed })
           if (normalized.fatal) { remoteBlocked = true; break }
         }
       }
@@ -262,11 +319,15 @@ export const runResearchPipeline = async (
       let exhausted = false
       let period: AbaPeriod | null = null
       try {
-        period = chooseAbaPeriod(await ports.aba.listPeriods(input.market, portOptions))
+        trace('abaValidation', 'request', '读取 ABA 周期', input.market, '正在读取可用周/月周期')
+        const periods = await ports.aba.listPeriods(input.market, portOptions)
+        period = chooseAbaPeriod(periods)
         assertActive()
+        trace('abaValidation', 'response', '读取 ABA 周期', input.market, period ? `选择 ${period.type === 'W' ? '周' : '月'}周期 ${period.label}` : `收到 ${periods.length} 个周期，但没有可用项`)
       } catch (error) {
         const normalized = normalizeError(error)
         errors.push(normalized)
+        trace('abaValidation', 'error', '读取 ABA 周期', input.market, normalized.message)
         if (normalized.fatal) remoteBlocked = true
       }
       if (period && !remoteBlocked) {
@@ -274,14 +335,17 @@ export const runResearchPipeline = async (
           assertActive()
           if (!consume('aba')) { exhausted = true; break }
           calls += 1
+          trace('abaValidation', 'request', 'ABA 关键词验证', keyword.normalized, `正在验证第 ${calls}/${selected.length} 个关键词`, { calls, completed })
           try {
             const evidence = await ports.aba.research(keyword.normalized, input.market, period, portOptions)
             assertActive()
             if (evidence) job.evidence.aba.push(evidence)
             completed += 1
+            trace('abaValidation', 'response', 'ABA 关键词验证', keyword.normalized, evidence ? `搜索排名 ${evidence.searchRank ?? '—'}，搜索量 ${evidence.searches ?? '—'}` : '请求成功，但没有匹配记录', { calls, completed })
           } catch (error) {
             const normalized = normalizeError(error)
             errors.push(normalized)
+            trace('abaValidation', 'error', 'ABA 关键词验证', keyword.normalized, normalized.message, { calls, completed })
             if (normalized.fatal) { remoteBlocked = true; break }
           }
         }
@@ -306,14 +370,17 @@ export const runResearchPipeline = async (
           if (!consume('competitors')) exhausted = true
           else {
             calls += 1
+            trace('marketStructure', 'request', '竞品结构', keyword.normalized, `请求代表词竞品样本（调用 ${calls}/${total}）`, { calls, completed })
             try {
               const evidence = await ports.competitors.research(keyword.normalized, input.market, portOptions)
               assertActive()
               if (evidence) job.evidence.competitors.push(evidence)
               completed += 1
+              trace('marketStructure', 'response', '竞品结构', keyword.normalized, evidence ? `收到 ${evidence.productCount} 个竞品样本` : '请求成功，但没有竞品证据', { calls, completed })
             } catch (error) {
               const normalized = normalizeError(error)
               errors.push(normalized)
+              trace('marketStructure', 'error', '竞品结构', keyword.normalized, normalized.message, { calls, completed })
               if (normalized.fatal) { remoteBlocked = true; break }
             }
           }
@@ -323,14 +390,17 @@ export const runResearchPipeline = async (
           if (!consume('market')) exhausted = true
           else {
             calls += 1
+            trace('marketStructure', 'request', '市场结构', keyword.normalized, `请求代表词市场摘要（调用 ${calls}/${total}）`, { calls, completed })
             try {
               const evidence = await ports.market.research(keyword.normalized, input.market, portOptions)
               assertActive()
               if (evidence) job.evidence.markets.push(evidence)
               completed += 1
+              trace('marketStructure', 'response', '市场结构', keyword.normalized, evidence ? `总商品 ${evidence.totalProducts ?? '—'}，品牌集中度 ${evidence.brandConcentration ?? '—'}` : '请求成功，但没有市场证据', { calls, completed })
             } catch (error) {
               const normalized = normalizeError(error)
               errors.push(normalized)
+              trace('marketStructure', 'error', '市场结构', keyword.normalized, normalized.message, { calls, completed })
               if (normalized.fatal) { remoteBlocked = true; break }
             }
           }
@@ -355,22 +425,29 @@ export const runResearchPipeline = async (
         assertActive()
         if (!consume('reviews')) { exhausted = true; break }
         calls += 1
+        trace('reviewAnalysis', 'request', '近期评论', candidate.asin, `读取第 ${completed + 1}/${deepCandidates.length} 个候选的近期评论`, { calls, completed })
         try {
           const recent = await ports.reviews.list(candidate.asin, input.market, { page: 1, pageSize: 20 }, portOptions)
           assertActive()
           items.push(...recent)
+          trace('reviewAnalysis', 'response', '近期评论', candidate.asin, `收到 ${recent.length} 条评论`, { calls, completed })
           if (recent.filter((item) => item.star <= 3).length < 3 && budget.remaining('reviews') > 0) {
             consume('reviews')
             calls += 1
+            trace('reviewAnalysis', 'request', '低星评论补样', candidate.asin, '低星样本不足，补充读取 1–3 星评论', { calls, completed })
             const lowStars = await ports.reviews.list(candidate.asin, input.market, { page: 1, pageSize: 20, stars: [1, 2, 3] }, portOptions)
             assertActive()
             const seen = new Set(items.map((item) => `${item.asin}:${item.title}:${item.content}`))
-            items.push(...lowStars.filter((item) => !seen.has(`${item.asin}:${item.title}:${item.content}`)))
+            const uniqueLowStars = lowStars.filter((item) => !seen.has(`${item.asin}:${item.title}:${item.content}`))
+            items.push(...uniqueLowStars)
+            trace('reviewAnalysis', 'response', '低星评论补样', candidate.asin, `收到 ${lowStars.length} 条，去重后新增 ${uniqueLowStars.length} 条`, { calls, completed })
           }
           completed += 1
+          trace('reviewAnalysis', 'response', '评论采样完成', candidate.asin, `候选评论采样完成，累计 ${items.length} 条`, { calls, completed })
         } catch (error) {
           const normalized = normalizeError(error)
           errors.push(normalized)
+          trace('reviewAnalysis', 'error', '评论采样', candidate.asin, normalized.message, { calls, completed })
           if (normalized.fatal) { remoteBlocked = true; break }
         }
       }
@@ -386,7 +463,9 @@ export const runResearchPipeline = async (
       markets: job.evidence.markets.length,
       reviews: job.evidence.reviews.sampled,
     }, 1)
+    trace('decision', 'request', '综合评分', null, '汇总需求、进入条件、差异化和证据覆盖度')
     job.decision = createDecision(job)
+    trace('decision', 'response', '综合评分', null, `结论：${job.decision.label}；可信度 ${job.decision.scores.confidence}%`, { completed: 1 })
     finish('decision', 'complete', job.decision, [], 0, 1)
 
     const degraded = STAGES.filter((stage) => stage !== 'decision')
@@ -399,12 +478,43 @@ export const runResearchPipeline = async (
     emit()
     return job
   } catch (error) {
-    if (!(error instanceof CancelledError)) throw error
-    const cancelledStage = job.currentStage
-    if (cancelledStage) {
-      job.stages[cancelledStage] = { ...job.stages[cancelledStage], status: 'cancelled', completedAt: now() }
+    if (error instanceof CancelledError) {
+      const cancelledStage = job.currentStage
+      if (cancelledStage) {
+        const current = job.stages[cancelledStage]
+        job.stages[cancelledStage] = {
+          ...current,
+          status: 'cancelled',
+          completedAt: now(),
+          events: [...current.events, { at: now(), type: 'stage', operation: '任务取消', target: null, message: '用户已取消，后续远端调用不会继续' }],
+        }
+      }
+      job.status = 'cancelled'
+      job.currentStage = null
+      job.completedAt = now()
+      emit()
+      return job
     }
-    job.status = 'cancelled'
+
+    const normalized = normalizeError(error)
+    const failedStage = job.currentStage
+    if (failedStage) {
+      trace(failedStage, 'error', '未预期的流水线异常', null, normalized.message)
+      finish(failedStage, 'failed', job.stages[failedStage].output, [normalized], job.stages[failedStage].calls, job.stages[failedStage].completed)
+    } else {
+      job.errors.push(`pipeline: ${normalized.message}`)
+    }
+    for (const stage of STAGES) {
+      if (job.stages[stage].status !== 'idle') continue
+      job.stages[stage] = {
+        ...job.stages[stage],
+        status: 'skipped',
+        completedAt: now(),
+        output: { reason: 'pipeline-stopped-after-unexpected-error' },
+        events: [{ at: now(), type: 'skip', operation: '跳过阶段', target: null, message: '前序阶段发生未预期错误，流水线已安全停止' }],
+      }
+    }
+    job.status = 'failed'
     job.currentStage = null
     job.completedAt = now()
     emit()

@@ -3,6 +3,7 @@ import type { TargetAdapter } from './adapter'
 import {
   TARGET_OPERATIONS,
   resolveOperationPolicy,
+  type PublicTargetOperation,
   type TargetOperation,
   type TargetOperationOverrides,
 } from './policy'
@@ -11,7 +12,7 @@ export type RuntimeTargetPolicy = {
   enabled: boolean
   features: { profile: boolean }
   operationOverrides: TargetOperationOverrides
-  capabilities: readonly TargetOperation[]
+  capabilities: readonly PublicTargetOperation[]
 }
 
 const operationOverride = (

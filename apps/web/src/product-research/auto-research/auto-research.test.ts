@@ -57,7 +57,12 @@ describe('SellerSprite research ports', () => {
 
   it('maps SDK failures into classified, minimized domain errors', () => {
     expect(toResearchPortError(new WebSdkError('TARGET_NOT_LOGGED_IN'))).toMatchObject({ kind: 'authentication', fatal: true, message: 'TARGET_NOT_LOGGED_IN' })
-    expect(toResearchPortError(new WebSdkError('TARGET_RATE_LIMITED', { targetMessage: 'raw upstream details' }))).toMatchObject({ kind: 'rate-limit', fatal: false, message: 'TARGET_RATE_LIMITED' })
+    expect(toResearchPortError(new WebSdkError('TARGET_RATE_LIMITED', {
+      httpStatus: 429, targetCode: 'QUOTA_EXCEEDED', targetMessage: ' 查询次数\n已用完 ',
+    }))).toMatchObject({
+      kind: 'rate-limit', fatal: false,
+      message: 'TARGET_RATE_LIMITED · HTTP 429 · 上游码 QUOTA_EXCEEDED · 查询次数 已用完',
+    })
     expect(toResearchPortError(new WebSdkError('TARGET_RESPONSE_INVALID'))).toMatchObject({ kind: 'contract', fatal: true })
   })
 })
@@ -104,7 +109,7 @@ describe('auto research runner', () => {
 
     expect(secondResult?.input.categoryId).toBe('new')
     expect(firstResult).toBeNull()
-    expect(firstUpdates).toEqual(['discovery:running'])
+    expect(firstUpdates).toEqual(['discovery:running', 'discovery:running'])
     expect(secondUpdates.at(-1)).toBe('null:partial')
     runner.dispose()
   })

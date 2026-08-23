@@ -107,43 +107,47 @@ const readKeywordItem = (value: unknown): SellerSpriteKeywordItem | undefined =>
   }
 }
 
-const readKeywordReverseResponse = async (response: Response): Promise<SellerSpriteKeywordReverseData> => {
-  if (response.status === 401 || response.status === 403) {
-    throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status)
-  }
-  if (response.status === 429) throw new TargetClientError('TARGET_RATE_LIMITED', response.status)
-  if (!response.ok) throw new TargetClientError('TARGET_API_ERROR', response.status)
-  let payload: unknown
-  try {
-    payload = await response.json()
-  } catch {
-    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
-  }
-  if (!isRecord(payload)
-    || (payload.code !== 'OK' && payload.code !== 0 && payload.code !== 200)
-    || !isRecord(payload.data)) {
-    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+const keywordReverseInvalid = (
+  response: Response,
+  payload: Record<string, unknown>,
+  targetMessage: string,
+): TargetClientError => new TargetClientError('TARGET_RESPONSE_INVALID', response.status, {
+  ...(typeof payload.code === 'string' || typeof payload.code === 'number' ? { targetCode: payload.code } : {}),
+  targetMessage,
+})
+
+const readKeywordReverseResponse = async (
+  response: Response,
+  inputAsin: string,
+): Promise<SellerSpriteKeywordReverseData> => {
+  const payload = await readSellerSpriteJson(response)
+  if (!isRecord(payload.data)) {
+    throw keywordReverseInvalid(response, payload, '响应字段 data 不是对象')
   }
   const total = normalizeNullableNumber(payload.data.total)
   const rawItems = payload.data.items
-  if (typeof payload.data.asin !== 'string'
-    || total === null
-    || total < 0
-    || (rawItems !== null && rawItems !== undefined && !Array.isArray(rawItems))) {
-    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  if (total === null || total < 0) {
+    throw keywordReverseInvalid(response, payload, '响应字段 data.total 不是非负数')
+  }
+  if (rawItems !== null && rawItems !== undefined && !Array.isArray(rawItems)) {
+    throw keywordReverseInvalid(response, payload, '响应字段 data.items 不是数组或 null')
   }
   const items = (rawItems ?? []).map(readKeywordItem)
   if (items.some((item) => item === undefined)) {
-    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+    throw keywordReverseInvalid(response, payload, '响应字段 data.items 包含无法解析的关键词行')
   }
   return {
-    asin: payload.data.asin,
+    asin: typeof payload.data.asin === 'string' ? payload.data.asin : inputAsin,
     total,
     items: items as SellerSpriteKeywordItem[],
   }
 }
 
-export const reverseSellerSpriteKeywords = (
+const KEYWORD_REVERSE_MARKETS: Readonly<Record<number, string>> = {
+  1: 'COM',
+}
+
+export const reverseSellerSpriteKeywords = async (
   client: TargetClient,
   input: SellerSpriteKeywordReverseInput,
 ): Promise<SellerSpriteKeywordReverseData> => {
@@ -155,11 +159,35 @@ export const reverseSellerSpriteKeywords = (
     badges,
     limit,
   } = input
-  return client.executeJsonPost(
-    'SELLERSPRITE_KEYWORD_REVERSE',
+  const market = KEYWORD_REVERSE_MARKETS[marketId]
+  if (!market) throw new TargetClientError('TARGET_API_ERROR', undefined, { targetMessage: '不支持的关键词反查市场' })
+
+  await client.executeJsonPost(
+    'SELLERSPRITE_KEYWORD_REVERSE_PREPARE',
     {},
     { asin, marketId, month, forceReStat, badges, limit },
-    readKeywordReverseResponse,
+    readSellerSpriteJson,
+  )
+
+  return client.executeJsonPost(
+    'SELLERSPRITE_KEYWORD_REVERSE',
+    { market },
+    {
+      asin,
+      limit,
+      skip: 0,
+      month,
+      badges,
+      conversionKeywordTypes: [],
+      trafficKeywordTypes: [],
+      order: 12,
+      desc: true,
+      exactly: false,
+      ac: false,
+      filterDeletedKeywords: false,
+      keywordBidMatchType: 'exact',
+    },
+    (response) => readKeywordReverseResponse(response, asin),
   )
 }
 
@@ -788,7 +816,7 @@ const readSellerSpriteJson = async (response: Response): Promise<Record<string, 
     if (response.status === 401 || response.status === 403) throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status)
     if (response.status === 429) throw new TargetClientError('TARGET_RATE_LIMITED', response.status)
     if (!response.ok) throw new TargetClientError('TARGET_API_ERROR', response.status)
-    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status, { targetMessage: '响应正文不是有效 JSON' })
   }
   const details = isRecord(payload) ? {
     ...(typeof payload.code === 'string' || typeof payload.code === 'number' ? { targetCode: payload.code } : {}),
@@ -797,11 +825,14 @@ const readSellerSpriteJson = async (response: Response): Promise<Record<string, 
   if (response.status === 401 || response.status === 403) throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status, details)
   if (response.status === 429) throw new TargetClientError('TARGET_RATE_LIMITED', response.status, details)
   if (!response.ok) throw new TargetClientError('TARGET_API_ERROR', response.status, details)
-  if (!isRecord(payload)) throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
-  if (payload.code !== 'OK' && payload.code !== 0 && payload.code !== 200) {
-    throw new TargetClientError('TARGET_API_ERROR', response.status, details)
+  if (!isRecord(payload)) {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status, { targetMessage: '响应 envelope 不是对象' })
   }
-  return payload
+  if (payload.code === 'OK' || payload.code === 0 || payload.code === 200) return payload
+  if (typeof payload.code !== 'string' && typeof payload.code !== 'number') {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status, { targetMessage: '响应字段 code 缺失或类型无效' })
+  }
+  throw new TargetClientError('TARGET_API_ERROR', response.status, details)
 }
 
 const readCategoryNode = (value: unknown): SellerSpriteCategoryNode | undefined => {

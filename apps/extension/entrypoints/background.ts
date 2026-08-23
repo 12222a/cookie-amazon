@@ -77,12 +77,13 @@ const invalidMessage = (requestId = 'unknown'): ProtocolError => ({
 const targetError = (
   requestId: string,
   code: ProtocolError['error']['code'],
-  details: { targetCode?: string | number; targetMessage?: string } = {},
+  details: { httpStatus?: number; targetCode?: string | number; targetMessage?: string } = {},
 ): ProtocolError => ({
   namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION,
   requestId, ok: false,
   error: {
     code,
+    ...(details.httpStatus === undefined ? {} : { httpStatus: details.httpStatus }),
     ...(details.targetCode === undefined ? {} : { targetCode: details.targetCode }),
     ...(details.targetMessage === undefined ? {} : { targetMessage: details.targetMessage }),
   },
@@ -91,6 +92,7 @@ const targetError = (
 const targetClientError = (requestId: string, error: unknown): ProtocolError =>
   error instanceof TargetClientError
     ? targetError(requestId, error.code, {
+        ...(error.status === undefined ? {} : { httpStatus: error.status }),
         ...(error.targetCode === undefined ? {} : { targetCode: error.targetCode }),
         ...(error.targetMessage === undefined ? {} : { targetMessage: error.targetMessage }),
       })
@@ -485,8 +487,7 @@ const handleKeywordReverseMessage = async ({ data }: { data: unknown }): Promise
       data: result,
     } satisfies SellerSpriteKeywordReverseSuccess
   } catch (error: unknown) {
-    if (error instanceof TargetClientError) return targetError(requestId, error.code)
-    return targetError(requestId, 'TARGET_API_ERROR')
+    return targetClientError(requestId, error)
   }
 }
 

@@ -83,6 +83,7 @@ export type ProtocolError = {
   ok: false
   error: {
     code: ProtocolErrorCode
+    httpStatus?: number
     targetCode?: string | number
     targetMessage?: string
   }
@@ -124,6 +125,17 @@ export const isAllowedWebOrigin = (origin: string): boolean =>
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
+
+const isProtocolErrorDetails = (value: unknown): value is ProtocolError['error'] => {
+  if (!isRecord(value) || typeof value.code !== 'string') return false
+  if (value.httpStatus !== undefined
+    && (typeof value.httpStatus !== 'number' || !Number.isInteger(value.httpStatus) || value.httpStatus < 100 || value.httpStatus > 599)) return false
+  if (value.targetCode !== undefined
+    && !(typeof value.targetCode === 'string' && value.targetCode.length <= 128)
+    && !(typeof value.targetCode === 'number' && Number.isFinite(value.targetCode))) return false
+  return value.targetMessage === undefined
+    || (typeof value.targetMessage === 'string' && value.targetMessage.length <= 512)
+}
 
 export const isPingRequest = (value: unknown): value is PingRequest => {
   if (!isRecord(value)) return false
@@ -553,7 +565,7 @@ export const isSellerSpriteKeywordReverseResponse = (
 ): value is SellerSpriteKeywordReverseResponse => {
   if (!isRecord(value) || value.namespace !== MESSAGE_NAMESPACE || value.kind !== 'response') return false
   if (value.protocolVersion !== PROTOCOL_VERSION || typeof value.requestId !== 'string') return false
-  if (value.ok === false) return isRecord(value.error) && typeof value.error.code === 'string'
+  if (value.ok === false) return isProtocolErrorDetails(value.error)
   return value.ok === true
     && value.action === SELLERSPRITE_KEYWORD_REVERSE_ACTION
     && isRecord(value.data)

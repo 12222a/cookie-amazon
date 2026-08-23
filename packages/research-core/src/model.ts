@@ -20,6 +20,14 @@ export type ResearchStageError = {
   retryable: boolean
 }
 
+export type ResearchStageEvent = {
+  at: number
+  type: 'stage' | 'request' | 'response' | 'error' | 'skip'
+  operation: string
+  target: string | null
+  message: string
+}
+
 export type ResearchStageState = {
   id: ResearchStageId
   status: ResearchStageStatus
@@ -31,6 +39,7 @@ export type ResearchStageState = {
   input: unknown
   output: unknown
   errors: ResearchStageError[]
+  events: ResearchStageEvent[]
 }
 
 export type ResearchBudgetKey = 'discovery' | 'reverseKeywords' | 'keywordMining' | 'aba' | 'competitors' | 'market' | 'reviews'

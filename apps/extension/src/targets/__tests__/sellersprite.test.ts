@@ -113,21 +113,31 @@ describe('SellerSprite session adapter', () => {
     await expect(SELLERSPRITE_ADAPTER.getProfile(jsonResponse)).rejects.toMatchObject({ code: 'OPERATION_DISABLED' })
   })
 
-  it('posts the verified stat-keywords request and minimizes the response', async () => {
+  it('prepares reverse analysis and posts the verified reversing request', async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe('https://www.sellersprite.com/v3/api/relation/stat-keywords')
       expect(init).toMatchObject({
         method: 'POST',
         credentials: 'include',
         headers: { 'content-type': 'application/json' },
       })
+      if (fetcher.mock.calls.length === 1) {
+        expect(String(input)).toBe('https://www.sellersprite.com/v3/api/relation/stat-keywords')
+        expect(JSON.parse(String(init?.body))).toEqual({
+          asin: 'B000000000', marketId: 1, month: '', forceReStat: false, badges: [], limit: 20,
+        })
+        return new Response(JSON.stringify({
+          code: 'OK', data: { statDto: {}, status: null }, privateValue: 'must-not-leak',
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      expect(String(input)).toBe('https://www.sellersprite.com/v3/api/relation/reversing?market=COM')
       expect(JSON.parse(String(init?.body))).toEqual({
-        asin: 'B000000000', marketId: 1, month: '', forceReStat: false, badges: [], limit: 20,
+        asin: 'B000000000', limit: 20, skip: 0, month: '', badges: [],
+        conversionKeywordTypes: [], trafficKeywordTypes: [], order: 12, desc: true,
+        exactly: false, ac: false, filterDeletedKeywords: false, keywordBidMatchType: 'exact',
       })
       return new Response(JSON.stringify({
         code: 'OK',
         data: {
-          asin: 'B000000000',
           total: 1,
           items: [{
             keywords: 'example', searches: '100', products: null, supplyDemandRatio: 1,
@@ -136,7 +146,7 @@ describe('SellerSprite session adapter', () => {
             searchesTrend: [{ month: '2026-01', searchRank: null, searches: '100' }],
             privateValue: 'must-not-leak',
           }],
-          stats: { privateValue: 'must-not-leak' },
+          marketId: 1, website: 'https://www.amazon.com', stats: { privateValue: 'must-not-leak' },
         },
         privateValue: 'must-not-leak',
       }), { status: 200, headers: { 'content-type': 'application/json' } })
@@ -154,6 +164,21 @@ describe('SellerSprite session adapter', () => {
         searchesTrend: [{ month: '2026-01', searchRank: null, searches: 100 }],
       }],
     })
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
+  it('maps the US market id to SellerSprite COM and rejects unverified markets', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      code: 'OK', data: { statDto: {}, status: null },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    const client = new TargetClient(SELLERSPRITE_ADAPTER, fetcher)
+
+    await expect(reverseSellerSpriteKeywords(client, {
+      asin: 'B000000000', marketId: 2, month: '', forceReStat: false, badges: [], limit: 20,
+    })).rejects.toMatchObject({
+      code: 'TARGET_API_ERROR', targetMessage: '不支持的关键词反查市场',
+    })
+    expect(fetcher).not.toHaveBeenCalled()
   })
 
   it('normalizes null keyword items and rejects malformed keyword rows', async () => {
@@ -174,6 +199,18 @@ describe('SellerSprite session adapter', () => {
     }), { status: 200, headers: { 'content-type': 'application/json' } }))
     await expect(reverseSellerSpriteKeywords(malformedClient, input))
       .rejects.toMatchObject({ code: 'TARGET_RESPONSE_INVALID' })
+  })
+
+  it('preserves safe upstream details when reverse preparation fails', async () => {
+    const client = new TargetClient(SELLERSPRITE_ADAPTER, async () => new Response(JSON.stringify({
+      code: 'INVALID_ASIN', message: 'ASIN 参数无效', privateValue: 'must-not-leak',
+    }), { status: 400, headers: { 'content-type': 'application/json' } }))
+
+    await expect(reverseSellerSpriteKeywords(client, {
+      asin: 'B000000000', marketId: 1, month: '', forceReStat: false, badges: [], limit: 20,
+    })).rejects.toMatchObject({
+      code: 'TARGET_API_ERROR', status: 400, targetCode: 'INVALID_ASIN', targetMessage: 'ASIN 参数无效',
+    })
   })
 
   it('loads ABA periods and posts the verified monthly pagination body', async () => {

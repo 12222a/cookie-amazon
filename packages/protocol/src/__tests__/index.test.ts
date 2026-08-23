@@ -150,6 +150,22 @@ describe('protocol', () => {
         }],
       },
     })).toBe(true)
+
+    const errorResponse = {
+      namespace: 'cookie-amazon-platform', kind: 'response', protocolVersion: 1,
+      requestId: 'request-7', action: 'SELLERSPRITE_KEYWORD_REVERSE', ok: false,
+      error: {
+        code: 'TARGET_API_ERROR', httpStatus: 400,
+        targetCode: 'INVALID_ASIN', targetMessage: 'ASIN 参数无效',
+      },
+    }
+    expect(isSellerSpriteKeywordReverseResponse(errorResponse)).toBe(true)
+    expect(isSellerSpriteKeywordReverseResponse({
+      ...errorResponse, error: { ...errorResponse.error, httpStatus: 99 },
+    })).toBe(false)
+    expect(isSellerSpriteKeywordReverseResponse({
+      ...errorResponse, error: { ...errorResponse.error, targetMessage: 'x'.repeat(513) },
+    })).toBe(false)
   })
 
   it('validates monthly query inputs and minimized variation snapshots', () => {

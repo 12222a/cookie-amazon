@@ -60,6 +60,18 @@ describe('SellerSprite web SDK', () => {
     })
   })
 
+  it('preserves safe keyword reverse error details', async () => {
+    bridge.sendMessage.mockResolvedValue({
+      namespace: 'cookie-amazon-platform', kind: 'response', protocolVersion: 1,
+      requestId: 'response-id', action: 'SELLERSPRITE_KEYWORD_REVERSE', ok: false,
+      error: { code: 'TARGET_API_ERROR', httpStatus: 400, targetCode: 'INVALID_ASIN', targetMessage: 'ASIN 参数无效' },
+    })
+
+    await expect(reverseSellerSpriteKeywords(input)).rejects.toMatchObject({
+      code: 'TARGET_API_ERROR', httpStatus: 400, targetCode: 'INVALID_ASIN', targetMessage: 'ASIN 参数无效',
+    })
+  })
+
   it('sends monthly ASIN requests through the strict bridge contract', async () => {
     const data = { historyStatus: 'not-verified', variations: [] }
     bridge.sendMessage.mockResolvedValue({

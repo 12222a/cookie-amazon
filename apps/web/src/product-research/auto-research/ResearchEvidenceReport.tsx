@@ -7,6 +7,11 @@ import {
   type EvidenceTab,
   formatResearchNumber,
   formatResearchRatio,
+  executionEventLabel,
+  explainExecutionMessage,
+  formatEventTime,
+  primaryResearchError,
+  researchErrorExplanation,
   stageDescription,
 } from './research-view-model'
 
@@ -169,14 +174,32 @@ const ExecutionPanel = ({ job }: { job: ResearchJob }) => (
     {(Object.keys(job.stages) as Array<keyof typeof job.stages>).map((stageId) => {
       const stage = job.stages[stageId]
       const duration = stage.startedAt != null && stage.completedAt != null ? `${Math.max(0, stage.completedAt - stage.startedAt)} ms` : '—'
+      const skipReason = stage.status === 'skipped' && stage.output && typeof stage.output === 'object' && 'reason' in stage.output
+        ? explainExecutionMessage(String((stage.output as { reason: unknown }).reason))
+        : null
       return (
-        <article className="pr-auto-execution-row" key={stageId}>
-          <strong>{STAGE_LABELS[stageId]}</strong>
-          <span className={`is-${stage.status}`}>{STATUS_LABELS[stage.status]}</span>
-          <p>{stageDescription(job, stageId)}{stage.errors.map((error) => ` ${error.message}`).join('')}</p>
-          <b>{stage.calls} 次</b>
-          <small>{duration}</small>
-        </article>
+        <details className="pr-auto-execution-stage" key={stageId} open={stage.status === 'failed' || stage.status === 'partial'}>
+          <summary className="pr-auto-execution-row">
+            <strong>{STAGE_LABELS[stageId]}</strong>
+            <span className={`is-${stage.status}`}>{STATUS_LABELS[stage.status]}</span>
+            <p>{skipReason ?? stageDescription(job, stageId)}</p>
+            <b>{stage.calls} 次</b>
+            <small>{duration}</small>
+          </summary>
+          <div className="pr-auto-execution-events">
+            {stage.events.length > 0 ? stage.events.map((event, index) => (
+              <div className={`pr-auto-log-row is-${event.type}`} key={`${event.at}-${event.operation}-${index}`}>
+                <time>{formatEventTime(event.at)}</time>
+                <b>{executionEventLabel(event)}</b>
+                <span><strong>{event.operation}{event.target ? ` · ${event.target}` : ''}</strong><small>{explainExecutionMessage(event.message)}</small></span>
+              </div>
+            )) : <p className="pr-auto-log-empty">该阶段没有执行记录。</p>}
+            {stage.errors.map((error, index) => {
+              const explanation = researchErrorExplanation(error)
+              return <div className="pr-auto-error-detail" key={`${error.kind}-${index}`}><code>{error.message}</code><p>{explanation.reason}</p><small>建议：{explanation.action}</small></div>
+            })}
+          </div>
+        </details>
       )
     })}
     {job.errors.length > 0 && <div className="pr-auto-job-errors" role="alert"><strong>任务错误</strong>{job.errors.map((error) => <p key={error}>{error}</p>)}</div>}
@@ -187,7 +210,15 @@ export const ResearchEvidenceReport = ({ job, onRestart }: ResearchEvidenceRepor
   const [activeTab, setActiveTab] = useState<EvidenceTab>('overview')
   const tabIdPrefix = useId()
   const decision = job.decision
-  const title = decision?.reasons[0] ?? (decision ? `本次研究建议“${decision.label}”` : '本次任务未生成可用结论')
+  const degradedStages = (Object.keys(job.stages) as Array<keyof typeof job.stages>)
+    .filter((stageId) => ['partial', 'failed', 'skipped'].includes(job.stages[stageId].status))
+  const primaryError = primaryResearchError(job)
+  const primaryExplanation = primaryError ? researchErrorExplanation(primaryError.error) : null
+  const title = primaryError && primaryExplanation
+    ? `${STAGE_LABELS[primaryError.stageId]}失败：${primaryExplanation.reason}`
+    : degradedStages.length > 0
+      ? `${degradedStages.length} 个阶段存在执行缺口，当前结论仅供参考`
+      : decision?.reasons[0] ?? (decision ? `本次研究建议“${decision.label}”` : '本次任务未生成可用结论')
 
   return (
     <section className="pr-auto-report-grid" aria-live="polite">
@@ -202,6 +233,13 @@ export const ResearchEvidenceReport = ({ job, onRestart }: ResearchEvidenceRepor
           <span>{job.input.market} · {job.input.categoryLabel ?? job.input.categoryId}</span>
           <span>{job.completedAt == null ? '完成时间 —' : `完成于 ${new Date(job.completedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`}</span>
         </div>
+        {degradedStages.length > 0 && <div className="pr-auto-result-warning" role="alert">
+          <strong>{primaryError ? `首个根因：${STAGE_LABELS[primaryError.stageId]}` : '这不是一次完整成功的研究'}</strong>
+          {primaryError && primaryExplanation
+            ? <><code>{primaryError.error.message}</code><p>{primaryExplanation.reason} 建议：{primaryExplanation.action}</p></>
+            : <p>{degradedStages.map((stageId) => `${STAGE_LABELS[stageId]}：${STATUS_LABELS[job.stages[stageId].status]}`).join('；')}</p>}
+          <button type="button" onClick={() => setActiveTab('execution')}>查看请求记录、错误原因和建议 →</button>
+        </div>}
         <button className="pr-auto-secondary" type="button" onClick={onRestart}>重新运行研究</button>
       </article>
       <aside className="pr-auto-card pr-auto-score-card" aria-label="四维研究评分">

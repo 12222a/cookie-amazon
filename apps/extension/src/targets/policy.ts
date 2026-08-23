@@ -5,7 +5,9 @@ export const TARGET_OPERATIONS = [
   'PRODUCT_SELECTION', 'MARKET_SELECTION', 'KEYWORD_PRODUCT_RESEARCH', 'KEYWORD_MINING',
   'SELLERSPRITE_CATEGORY_NODES', 'SELLERSPRITE_REVIEW_COMMENTS',
 ] as const
-export type TargetOperation = (typeof TARGET_OPERATIONS)[number]
+const INTERNAL_TARGET_OPERATIONS = ['SELLERSPRITE_KEYWORD_REVERSE_PREPARE'] as const
+export type PublicTargetOperation = (typeof TARGET_OPERATIONS)[number]
+export type TargetOperation = PublicTargetOperation | (typeof INTERNAL_TARGET_OPERATIONS)[number]
 
 export type TargetOperationPolicy = {
   enabled: boolean
@@ -24,7 +26,8 @@ export type TargetOperationOverrides = Readonly<Record<string, {
 }>>
 
 export const isTargetOperation = (value: string): value is TargetOperation =>
-  TARGET_OPERATIONS.includes(value as TargetOperation)
+  TARGET_OPERATIONS.includes(value as (typeof TARGET_OPERATIONS)[number])
+  || INTERNAL_TARGET_OPERATIONS.includes(value as (typeof INTERNAL_TARGET_OPERATIONS)[number])
 
 export const isSafeEndpointPath = (value: unknown): value is `/${string}` => {
   if (typeof value !== 'string' || !value.startsWith('/') || value.length > 512) return false
@@ -69,9 +72,16 @@ export const createExampleOperationPolicy = (): Readonly<Record<TargetOperation,
     timeoutMs: 10_000,
     response: 'profile',
   }),
-  SELLERSPRITE_KEYWORD_REVERSE: Object.freeze({
+  SELLERSPRITE_KEYWORD_REVERSE_PREPARE: Object.freeze({
     enabled: false,
     path: '/v3/api/relation/stat-keywords',
+    method: 'POST',
+    timeoutMs: 15_000,
+    response: 'keyword-reverse',
+  }),
+  SELLERSPRITE_KEYWORD_REVERSE: Object.freeze({
+    enabled: false,
+    path: '/v3/api/relation/reversing',
     method: 'POST',
     timeoutMs: 15_000,
     response: 'keyword-reverse',
@@ -170,9 +180,16 @@ export const createSellerSpriteOperationPolicy = (): Readonly<Record<TargetOpera
     timeoutMs: 8_000,
     response: 'profile',
   }),
-  SELLERSPRITE_KEYWORD_REVERSE: Object.freeze({
+  SELLERSPRITE_KEYWORD_REVERSE_PREPARE: Object.freeze({
     enabled: true,
     path: '/v3/api/relation/stat-keywords',
+    method: 'POST',
+    timeoutMs: 15_000,
+    response: 'keyword-reverse',
+  }),
+  SELLERSPRITE_KEYWORD_REVERSE: Object.freeze({
+    enabled: true,
+    path: '/v3/api/relation/reversing',
     method: 'POST',
     timeoutMs: 15_000,
     response: 'keyword-reverse',

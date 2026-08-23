@@ -210,7 +210,7 @@ export const reverseSellerSpriteKeywords = async (
       options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     )
     if (!isSellerSpriteKeywordReverseResponse(response)) throw new WebSdkError('INVALID_MESSAGE')
-    if (!response.ok) throw new WebSdkError(response.error.code)
+    if (!response.ok) throw protocolError(response.error)
     return response.data
   } catch (error: unknown) {
     if (error instanceof WebSdkError) throw error
@@ -326,11 +326,13 @@ export const researchSellerSpriteMarket = async (
   }
 }
 
-const abaProtocolError = (error: {
+const protocolError = (error: {
   code: import('@cookie-amazon/protocol').ProtocolErrorCode
+  httpStatus?: number
   targetCode?: string | number
   targetMessage?: string
 }): WebSdkError => new WebSdkError(error.code, {
+  ...(error.httpStatus === undefined ? {} : { httpStatus: error.httpStatus }),
   ...(error.targetCode === undefined ? {} : { targetCode: error.targetCode }),
   ...(error.targetMessage === undefined ? {} : { targetMessage: error.targetMessage }),
 })
@@ -344,7 +346,7 @@ export const listSellerSpriteAbaPeriods = async (
   try {
     const response = await requestWithTimeout(SELLERSPRITE_ABA_PERIODS_ACTION, request, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
     if (!isSellerSpriteAbaPeriodsResponse(response)) throw new WebSdkError('INVALID_MESSAGE')
-    if (!response.ok) throw abaProtocolError(response.error)
+    if (!response.ok) throw protocolError(response.error)
     return response.data
   } catch (error: unknown) {
     if (error instanceof WebSdkError) throw error
@@ -363,7 +365,7 @@ export const researchSellerSpriteAba = async (
   try {
     const response = await requestWithTimeout(SELLERSPRITE_ABA_RESEARCH_ACTION, request, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
     if (!isSellerSpriteAbaResearchResponse(response)) throw new WebSdkError('INVALID_MESSAGE')
-    if (!response.ok) throw abaProtocolError(response.error)
+    if (!response.ok) throw protocolError(response.error)
     return response.data
   } catch (error: unknown) {
     if (error instanceof WebSdkError) throw error

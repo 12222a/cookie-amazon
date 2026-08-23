@@ -88,7 +88,7 @@ success
 ### 3.3 反查结果
 
 - `POST /v3/api/relation/reversing`
-- Query：`market`
+- Query：`market=COM`（美国站 `marketId=1` 的真实网页请求值；不是内部站点代码 `US`）
 - Body：`ac`, `asin`, `badges`, `conversionKeywordTypes`, `desc`, `exactly`, `filterDeletedKeywords`, `keywordBidMatchType`, `limit`, `month`, `order`, `skip`, `trafficKeywordTypes`
 - Status：`200`
 - Response keys：`code`, `data`, `message`, `success`

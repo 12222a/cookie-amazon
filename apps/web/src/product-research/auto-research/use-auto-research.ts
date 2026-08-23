@@ -23,15 +23,18 @@ export const createAutoResearchRunner = (ports: ResearchPorts): AutoResearchRunn
       generation = currentGeneration
       const controller = new AbortController()
       activeController = controller
-      const job = await runResearchPipeline(input, ports, {
-        signal: controller.signal,
-        onUpdate(update) {
-          if (generation === currentGeneration) onUpdate(update)
-        },
-      })
-      if (generation !== currentGeneration) return null
-      if (activeController === controller) activeController = null
-      return job
+      try {
+        const job = await runResearchPipeline(input, ports, {
+          signal: controller.signal,
+          onUpdate(update) {
+            if (generation === currentGeneration) onUpdate(update)
+          },
+        })
+        if (generation !== currentGeneration) return null
+        return job
+      } finally {
+        if (activeController === controller) activeController = null
+      }
     },
     cancel() {
       activeController?.abort()
@@ -52,7 +55,13 @@ export type AutoResearchState = {
   cancel: () => void
 }
 
-const snapshotJob = (job: ResearchJob): ResearchJob => structuredClone(job)
+const snapshotJob = (job: ResearchJob): ResearchJob => {
+  try {
+    return structuredClone(job)
+  } catch {
+    return JSON.parse(JSON.stringify(job)) as ResearchJob
+  }
+}
 
 export const useAutoResearch = (
   portsFactory: () => ResearchPorts = createSellerSpriteResearchPorts,

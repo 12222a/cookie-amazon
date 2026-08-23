@@ -75,11 +75,24 @@ const failureKind = (code: string): ResearchFailureKind => {
   return 'unknown'
 }
 
+const safeErrorText = (value: string, maxLength: number): string =>
+  value.replace(/[\u0000-\u001F\u007F]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, maxLength)
+
+const webSdkErrorMessage = (error: WebSdkError): string => {
+  const details = [
+    error.code,
+    error.httpStatus === undefined ? null : `HTTP ${error.httpStatus}`,
+    error.targetCode === undefined ? null : `上游码 ${safeErrorText(String(error.targetCode), 80)}`,
+    error.targetMessage ? safeErrorText(error.targetMessage, 240) : null,
+  ].filter((item): item is string => Boolean(item))
+  return details.join(' · ')
+}
+
 export const toResearchPortError = (reason: unknown): ResearchPortError => {
   if (reason instanceof ResearchPortError) return reason
   if (reason instanceof WebSdkError) {
     const kind = failureKind(reason.code)
-    return new ResearchPortError(kind, reason.code)
+    return new ResearchPortError(kind, webSdkErrorMessage(reason))
   }
   if (reason instanceof DOMException && reason.name === 'AbortError') {
     return new ResearchPortError('network', 'REQUEST_ABORTED', false)

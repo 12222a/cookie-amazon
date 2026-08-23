@@ -4,6 +4,10 @@ import {
   STAGE_LABELS,
   STATUS_LABELS,
   STATUS_SYMBOLS,
+  executionEventLabel,
+  explainExecutionMessage,
+  formatEventTime,
+  researchErrorExplanation,
   stageDescription,
   stageImpact,
   sumBudget,
@@ -39,6 +43,10 @@ export const ResearchRunWorkspace = ({ job, progress, onCancel }: ResearchRunWor
   const overallPercent = Math.round((completeStages / RESEARCH_STAGE_IDS.length) * 100)
   const stagePercent = current.total > 0 ? Math.round((current.completed / current.total) * 100) : current.status === 'complete' ? 100 : 0
   const currentImpact = stageImpact(job, selectedStage)
+  const recentEvents = current.events.slice(-10).reverse()
+  const skipReason = current.status === 'skipped' && current.output && typeof current.output === 'object' && 'reason' in current.output
+    ? explainExecutionMessage(String((current.output as { reason: unknown }).reason))
+    : null
   const evidenceCount = useMemo(() => (
     job.evidence.candidates.length
       + job.evidence.reverseKeywords.length
@@ -85,13 +93,27 @@ export const ResearchRunWorkspace = ({ job, progress, onCancel }: ResearchRunWor
           <div><dt>证据累计</dt><dd>{evidenceCount} 条</dd></div>
         </dl>
         {currentImpact && <div className={`pr-auto-signal is-${current.status}`}><strong>对最终结论的影响</strong><p>{currentImpact}</p></div>}
+        {skipReason && <div className="pr-auto-stage-skip"><strong>为什么跳过</strong><p>{skipReason}</p></div>}
         {current.errors.length > 0 && (
           <div className="pr-auto-stage-errors" role="alert">
             <strong>阶段错误</strong>
-            {current.errors.map((error, index) => <p key={`${error.kind}-${index}`}>{error.message} · {error.retryable ? '可重试' : '不可重试'}</p>)}
+            {current.errors.map((error, index) => {
+              const explanation = researchErrorExplanation(error)
+              return <div className="pr-auto-error-detail" key={`${error.kind}-${index}`}><code>{error.message}</code><p>{explanation.reason}</p><small>建议：{explanation.action}</small></div>
+            })}
           </div>
         )}
-        {current.status === 'running' && <p className="pr-auto-running-note">任务会保留每个阶段已经获得的证据。单项失败不会清空其他结果。</p>}
+        <section className="pr-auto-live-log" aria-label="实时执行记录">
+          <header><strong>实时执行记录</strong><small>展示业务请求目标和白名单响应摘要，不展示 Cookie 或授权信息</small></header>
+          {recentEvents.length > 0 ? recentEvents.map((event, index) => (
+            <div className={`pr-auto-log-row is-${event.type}`} key={`${event.at}-${event.operation}-${index}`}>
+              <time>{formatEventTime(event.at)}</time>
+              <b>{executionEventLabel(event)}</b>
+              <span><strong>{event.operation}{event.target ? ` · ${event.target}` : ''}</strong><small>{explainExecutionMessage(event.message)}</small></span>
+            </div>
+          )) : <p className="pr-auto-log-empty">该阶段尚未开始远端调用。</p>}
+        </section>
+        {current.status === 'running' && <p className="pr-auto-running-note">上方记录会在每次请求发出和响应返回时更新。单项失败不会清空其他结果。</p>}
       </article>
 
       <aside className="pr-auto-card pr-auto-run-summary">
