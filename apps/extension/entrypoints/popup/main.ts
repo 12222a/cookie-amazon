@@ -14,6 +14,7 @@ const pageElement = document.querySelector<HTMLParagraphElement>('#page')
 const bridgeElement = document.querySelector<HTMLParagraphElement>('#bridge-status')
 const repairBridgeButton = document.querySelector<HTMLButtonElement>('#repair-bridge')
 const grantButton = document.querySelector<HTMLButtonElement>('#grant')
+const openPanelButton = document.querySelector<HTMLButtonElement>('#open-panel')
 const permissionManager = new TargetPermissionManager(TARGET_REGISTRY, browser.permissions)
 
 const renderStatus = (granted: boolean, message?: string): void => {
@@ -95,6 +96,19 @@ grantButton?.addEventListener('click', () => {
   void permissionManager.requestPermission(targetId)
     .then((granted) => renderStatus(granted))
     .catch(() => renderStatus(false, '授权失败，请重试'))
+})
+
+// 侧边栏必须由用户手势触发，popup 里的点击正好满足；
+// 若当前窗口已有侧边栏设置，open 会沿用该窗口的设置。
+openPanelButton?.addEventListener('click', () => {
+  void (async () => {
+    const [activeTab] = await browser.tabs.query({ active: true, currentWindow: true })
+    if (typeof activeTab?.windowId !== 'number') throw new Error('NO_WINDOW')
+    await browser.sidePanel.open({ windowId: activeTab.windowId })
+    window.close()
+  })().catch(() => {
+    if (openPanelButton) openPanelButton.textContent = '无法打开面板，请重试'
+  })
 })
 
 void refresh()

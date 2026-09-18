@@ -1,0 +1,97 @@
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  font: 13px/1.55 system-ui, sans-serif;
+  background: #0b1015;
+  color: #cdd5d4;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+}
+
+.panel-head h1 {
+  margin: 0;
+  color: #f2f5f3;
+  font-size: 14px;
+}
+
+.panel-source {
+  margin: 4px 0 0;
+  color: #8b9794;
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.panel-empty,
+.panel-error {
+  color: #c99b8d;
+  font-size: 12px;
+}
+
+.panel-empty > p {
+  margin: 4px 0;
+  color: #cdd5d4;
+}
+
+.panel-hint {
+  color: #8b9794 !important;
+}
+
+.panel-fields {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 10px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #29343d;
+  background: #111920;
+}
+
+.panel-fields dt {
+  color: #8b9794;
+}
+
+.panel-fields dd {
+  margin: 0;
+  color: #f2f5f3;
+  word-break: break-word;
+}
+
+.panel-manual {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 12px;
+  border-top: 1px solid #29343d;
+}
+
+.panel-manual label {
+  color: #8b9794;
+  font-size: 11px;
+}
+
+.panel-manual input {
+  padding: 7px 8px;
+  border: 1px solid #35414a;
+  background: #131c23;
+  color: #f2f5f3;
+  font: inherit;
+}
+
+.panel-manual button {
+  padding: 7px 10px;
+  border: 1px solid #44515a;
+  background: transparent;
+  color: #f2f5f3;
+  font: inherit;
+  cursor: pointer;
+}
+
