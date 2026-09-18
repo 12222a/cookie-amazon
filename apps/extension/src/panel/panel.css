@@ -100,3 +100,87 @@ body {
   outline: 2px solid #6ea8a0;
   outline-offset: 1px;
 }
+.panel-positions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid #29343d;
+}
+
+.panel-positions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.panel-positions-head h2 {
+  margin: 0;
+  color: #f2f5f3;
+  font-size: 13px;
+}
+
+.panel-positions .panel-hint {
+  margin: 0;
+  color: #8b9794;
+  font-size: 11px;
+}
+
+.panel-positions-head button {
+  padding: 6px 9px;
+  border: 1px solid #44515a;
+  background: transparent;
+  color: #f2f5f3;
+  font: inherit;
+  cursor: pointer;
+}
+
+.panel-positions-head button:disabled {
+  cursor: default;
+  opacity: .55;
+}
+
+.panel-positions-status {
+  margin: 0;
+  color: #cdd5d4;
+  font-size: 11px;
+}
+
+/* 窄栏里表格必须能横向滚动，否则关键词列会把数字列挤没。 */
+.panel-table-wrap {
+  overflow-x: auto;
+  border: 1px solid #29343d;
+}
+
+.panel-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.panel-table th,
+.panel-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #202b33;
+  text-align: left;
+}
+
+.panel-table th {
+  color: #8b9794;
+  font-weight: 500;
+}
+
+.panel-table td {
+  color: #cdd5d4;
+}
+
+.panel-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.panel-positions-head button:focus-visible {
+  outline: 2px solid #6ea8a0;
+  outline-offset: 1px;
+}

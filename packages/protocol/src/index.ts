@@ -422,6 +422,15 @@ export type SellerSpriteKeywordTrend = {
   searches: number | null
 }
 
+/**
+ * 某个 ASIN 在一个关键词的搜索结果里的名次。page 与 rank 都可能缺——
+ * 上游没给就不猜，交由展示层显示未知。
+ */
+export type SellerSpriteKeywordPosition = {
+  page: number | null
+  rank: number | null
+}
+
 export type SellerSpriteKeywordItem = {
   keywords: string
   searches: number | null
@@ -436,6 +445,16 @@ export type SellerSpriteKeywordItem = {
   avgRating: number | null
   avgReviews: number | null
   searchesTrend: SellerSpriteKeywordTrend[] | null
+  /** 自然位。null 表示这个 ASIN 在该词上没有自然排名。 */
+  natural: SellerSpriteKeywordPosition | null
+  /** 广告位。null 表示没有广告曝光。 */
+  ad: SellerSpriteKeywordPosition | null
+  /** 自然流量占比，0..1。 */
+  naturalRatio: number | null
+  /** 广告流量占比，0..1。 */
+  adRatio: number | null
+  /** 该词对这个 ASIN 的来源类型码，如 NT / SPONSOR_BRAND / ADS。 */
+  positionTypes: string[] | null
 }
 
 export type SellerSpriteKeywordReverseData = {
@@ -544,7 +563,7 @@ const isKeywordTrend = (value: unknown): value is SellerSpriteKeywordTrend =>
 
 const isKeywordItem = (value: unknown): value is SellerSpriteKeywordItem =>
   isRecord(value)
-  && Object.keys(value).length === 13
+  && Object.keys(value).length === 18
   && typeof value.keywords === 'string'
   && isNullableFiniteNumber(value.searches)
   && isNullableFiniteNumber(value.products)
@@ -558,7 +577,29 @@ const isKeywordItem = (value: unknown): value is SellerSpriteKeywordItem =>
   && isNullableFiniteNumber(value.avgRating)
   && isNullableFiniteNumber(value.avgReviews)
   && (value.searchesTrend === null
-    || (Array.isArray(value.searchesTrend) && value.searchesTrend.every(isKeywordTrend)))
+    || (Array.isArray(value.searchesTrend) && value.searchesTrend.every(isKeywordTrend)))  && (value.natural === null || isKeywordPosition(value.natural))
+  && (value.ad === null || isKeywordPosition(value.ad))
+  && isNullableFiniteNumber(value.naturalRatio)
+  && isNullableFiniteNumber(value.adRatio)
+  && (value.positionTypes === null || isPositionTypes(value.positionTypes))
+
+const isKeywordPosition = (value: unknown): value is SellerSpriteKeywordPosition =>
+  isRecord(value)
+  && Object.keys(value).length === 2
+  && isNullableFiniteNumber(value.page)
+  && isNullableFiniteNumber(value.rank)
+
+const isKeywordPosition = (value: unknown): value is SellerSpriteKeywordPosition =>
+  isRecord(value)
+  && Object.keys(value).length === 2
+  && isNullableFiniteNumber(value.page)
+  && isNullableFiniteNumber(value.rank)
+
+/** 来源类型码用宽上限：新增平台词不该让解析失败，只拒绝越界长度。 */
+const isPositionTypes = (value: unknown): value is string[] =>
+  Array.isArray(value)
+  && value.length <= 20
+  && value.every((item) => typeof item === 'string' && item.length > 0 && item.length <= 64)
 
 export const isSellerSpriteKeywordReverseResponse = (
   value: unknown,

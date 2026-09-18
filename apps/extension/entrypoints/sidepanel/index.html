@@ -20,6 +20,30 @@
 
       <section id="object" class="panel-object" hidden>
         <dl id="fields" class="panel-fields"></dl>
+
+        <section class="panel-positions">
+          <div class="panel-positions-head">
+            <h2>词位情报</h2>
+            <button id="load-positions" type="button">读取词位</button>
+          </div>
+          <p class="panel-hint">看它在每个关键词上的自然位与广告位，判断是靠自然出单还是靠广告撑着。</p>
+          <p id="positions-status" class="panel-positions-status" role="status" hidden></p>
+          <div id="positions-table-wrap" class="panel-table-wrap" hidden>
+            <table class="panel-table">
+              <thead>
+                <tr>
+                  <th scope="col">关键词</th>
+                  <th scope="col">自然位</th>
+                  <th scope="col">广告位</th>
+                  <th scope="col">自然流量</th>
+                  <th scope="col">广告流量</th>
+                  <th scope="col">位置类型</th>
+                </tr>
+              </thead>
+              <tbody id="positions-rows"></tbody>
+            </table>
+          </div>
+        </section>
       </section>
 
       <form id="manual" class="panel-manual">
@@ -31,4 +55,3 @@
     </main>
   </body>
 </html>
-

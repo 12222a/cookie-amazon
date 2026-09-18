@@ -12,6 +12,7 @@ import {
 import type {
   SellerSpriteKeywordItem,
   SellerSpriteKeywordReverseData,
+  SellerSpriteKeywordPosition,
   SellerSpriteKeywordReverseInput,
   SellerSpriteMonthlyData,
   SellerSpriteMonthlyInput,
@@ -68,8 +69,82 @@ const readKeywordTrend = (value: unknown): SellerSpriteKeywordTrend | undefined 
     : { month, searchRank, searches }
 }
 
+/**
+ * 上游把名次放在一个对象里，字段命名不统一（page/pageNum、position/rank）。
+ *
+ * position/rank 是跨页的总名次，而 index 是页内位次（如第 2 页第 32 位、总名次 118）。
+ * 把 index 当名次读会把一个页内序号冒充全局排名，所以不作回退——宁可报未知。
+ *
+ * 字段形状不对时返回 null（当作没读到）而不是报契约错误：位置是辅助字段，
+ * 一行读不好不应把整个响应扔掉。
+ */
+const readKeywordPosition = (value: unknown): SellerSpriteKeywordPosition | null => {
+  if (!isRecord(value)) return null
+  const page = readNullableNumber(value.page ?? value.pageNum)
+  const rank = readNullableNumber(value.position ?? value.rank)
+  if (page === undefined || rank === undefined) return null
+  return { page, rank }
+}
+
+/** 来源类型码列表。缺失或形状不合预期都记 null（显示为未知），不因为一个辅助字段报契约错误。 */
+const readPositionTypes = (value: unknown): string[] | null => {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 20) return null
+  const types: string[] = []
+  for (const item of value) {
+    if (typeof item !== 'string') return null
+    const trimmed = item.trim()
+    if (trimmed.length === 0 || trimmed.length > 64) return null
+    types.push(trimmed)
+  }
+  return types
+}
+
 const readKeywordItem = (value: unknown): SellerSpriteKeywordItem | undefined => {
   if (!isRecord(value)) return undefined
+  const month = typeof value.month === 'string' ? value.month : typeof value.dk === 'string' ? value.dk : undefined
+  if (month === undefined) return undefined
+  const searchRank = readNullableNumber(value.searchRank ?? value.rank)
+  const searches = readNullableNumber(value.searches ?? value.sales)
+  return searchRank === undefined || searches === undefined
+    ? undefined
+    : { month, searchRank, searches }
+}
+
+/**
+ * 上游把名次放在一个对象里，字段命名不统一（page/pageNum、position/rank）。
+ *
+ * position/rank 是跨页的总名次，而 index 是页内位次（如第 2 页第 32 位、总名次 118）。
+ * 把 index 当名次读会把一个页内序号冒充全局排名，所以不作回退——宁可报未知。
+ *
+ * 字段形状不对时返回 null（当作没读到）而不是报契约错误：位置是辅助字段，
+ * 一行读不好不应把整个响应扔掉。
+ */
+const readKeywordPosition = (value: unknown): SellerSpriteKeywordPosition | null => {
+  if (!isRecord(value)) return null
+  const page = readNullableNumber(value.page ?? value.pageNum)
+  const rank = readNullableNumber(value.position ?? value.rank)
+  if (page === undefined || rank === undefined) return null
+  return { page, rank }
+}
+
+/** 来源类型码列表。缺失或形状不合预期都记 null（显示为未知），不因为一个辅助字段报契约错误。 */
+const readPositionTypes = (value: unknown): string[] | null => {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 20) return null
+  const types: string[] = []
+  for (const item of value) {
+    if (typeof item !== 'string') return null
+    const trimmed = item.trim()
+    if (trimmed.length === 0 || trimmed.length > 64) return null
+    types.push(trimmed)
+  }
+  return types
+}
+
+const readKeywordItem = (value: unknown): SellerSpriteKeywordItem | undefined => {
+  if (!isRecord(value)) return undefined
+  const natural = readKeywordPosition(value.rankPosition)
+  const ad = readKeywordPosition(value.adPosition)
+  const positionTypes = readPositionTypes(value.positions)
   const keywords = typeof value.keywords === 'string'
     ? value.keywords
     : typeof value.keyword === 'string' ? value.keyword : undefined
@@ -104,6 +179,11 @@ const readKeywordItem = (value: unknown): SellerSpriteKeywordItem | undefined =>
     avgRating: numbers.avgRating!,
     avgReviews: numbers.avgReviews!,
     searchesTrend,
+    natural,
+    ad,
+    naturalRatio: readNullableNumber(value.naturalRatio) ?? null,
+    adRatio: readNullableNumber(value.adRatio) ?? null,
+    positionTypes,
   }
 }
 

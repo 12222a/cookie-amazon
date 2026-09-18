@@ -147,6 +147,11 @@ describe('protocol', () => {
           trafficPercentage: 0.5, purchaseRate: null, bid: 1.2, bidMin: null,
           bidMax: 2, avgPrice: 20, avgRating: null, avgReviews: 10,
           searchesTrend: [{ month: '2026-01', searchRank: null, searches: 100 }],
+          natural: { page: 1, rank: 6 },
+          ad: null,
+          naturalRatio: 0.76,
+          adRatio: null,
+          positionTypes: ['NT'],
         }],
       },
     })).toBe(true)

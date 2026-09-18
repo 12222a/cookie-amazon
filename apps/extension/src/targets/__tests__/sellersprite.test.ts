@@ -144,6 +144,11 @@ describe('SellerSprite session adapter', () => {
             trafficPercentage: 0.5, purchaseRate: null, bid: 1.2, bidMin: null,
             bidMax: 2, avgPrice: 20, avgRating: null, avgReviews: '10',
             searchesTrend: [{ month: '2026-01', searchRank: null, searches: '100' }],
+            rankPosition: { page: 1, pageSize: 25, index: 6, position: 6 },
+            adPosition: { page: 2, pageSize: 27, index: 11, position: 118 },
+            naturalRatio: '0.76',
+            adRatio: 0.24,
+            positions: ['NT', 'SPONSOR_BRAND'],
             privateValue: 'must-not-leak',
           }],
           marketId: 1, website: 'https://www.amazon.com', stats: { privateValue: 'must-not-leak' },
@@ -162,6 +167,11 @@ describe('SellerSprite session adapter', () => {
         trafficPercentage: 0.5, purchaseRate: null, bid: 1.2, bidMin: null,
         bidMax: 2, avgPrice: 20, avgRating: null, avgReviews: 10,
         searchesTrend: [{ month: '2026-01', searchRank: null, searches: 100 }],
+        natural: { page: 1, rank: 6 },
+        ad: { page: 2, rank: 118 },
+        naturalRatio: 0.76,
+        adRatio: 0.24,
+        positionTypes: ['NT', 'SPONSOR_BRAND'],
       }],
     })
     expect(fetcher).toHaveBeenCalledTimes(2)
