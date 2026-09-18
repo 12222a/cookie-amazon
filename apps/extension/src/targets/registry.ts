@@ -1,4 +1,5 @@
 import { createTargetAdapter, type TargetAdapter } from './adapter'
+import { AMAZON_ADAPTER } from './amazon'
 import { SELLERSPRITE_ADAPTER } from './sellersprite'
 
 export type TargetConfigOverride = { enabled?: boolean }
@@ -57,5 +58,6 @@ export const TARGET_REGISTRY = new TargetRegistry([
     displayName: 'Example Target',
     origin: 'https://example.com',
   }),
+  AMAZON_ADAPTER,
   SELLERSPRITE_ADAPTER,
 ])

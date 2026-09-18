@@ -165,6 +165,23 @@ export const createExampleOperationPolicy = (): Readonly<Record<TargetOperation,
   }),
 })
 
+/**
+ * The amazon target reads nothing over HTTP in this step, so every operation is
+ * disabled. The route fields are inert placeholders the type requires:
+ * TargetClient refuses a disabled policy before it ever builds a URL.
+ */
+export const createAmazonOperationPolicy = (): Readonly<Record<TargetOperation, TargetOperationPolicy>> => {
+  const disabled = (): TargetOperationPolicy => Object.freeze({
+    enabled: false,
+    path: '/',
+    method: 'GET' as const,
+    timeoutMs: 15_000,
+    response: 'login-status' as const,
+  })
+  const operations: readonly TargetOperation[] = [...TARGET_OPERATIONS, ...INTERNAL_TARGET_OPERATIONS]
+  return Object.fromEntries(operations.map((operation) => [operation, disabled()])) as Readonly<Record<TargetOperation, TargetOperationPolicy>>
+}
+
 export const createSellerSpriteOperationPolicy = (): Readonly<Record<TargetOperation, TargetOperationPolicy>> => Object.freeze({
   CHECK_LOGIN: Object.freeze({
     enabled: true,
