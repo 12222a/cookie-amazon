@@ -1,16 +1,16 @@
 import { defineContentScript } from 'wxt/utils/define-content-script'
 import { AnalysisObjectStore } from '../src/analysis-object-store'
-import { mountOverlay, type OverlayHandle } from '../src/panel/overlay'
+import { mountOverlay } from '../src/panel/overlay'
+import { OverlayController } from '../src/panel/overlay-controller'
 import { initialOverlayPosition } from '../src/panel/overlay-placement'
 import { OverlayPreferenceStore } from '../src/panel/overlay-preference-store'
-import { overlayMode } from '../src/panel/overlay-state'
+import { OPEN_SIDE_PANEL_ACTION } from '../src/panel/open-side-panel'
 
 /**
  * 页面内浮层。
  *
  * 与入口注入脚本（amazon.content.ts）分开：那个只做识别与上报，本脚本只做展示。
- * issue #5 要求浮层渲染失败时静默消失，所以所有 DOM 操作都包在 try 里，
- * 且不注册任何会抛错到页面的事件监听。
+ * issue #5 要求浮层渲染失败时静默消失，所以 DOM 操作都在 mountOverlay 与控制器内部被兜住。
  */
 export default defineContentScript({
   matches: ['https://www.amazon.com/*'],
@@ -18,66 +18,37 @@ export default defineContentScript({
   main() {
     const objectStore = new AnalysisObjectStore(browser.storage.local)
     const preferenceStore = new OverlayPreferenceStore(browser.storage.local)
-    let handle: OverlayHandle | null = null
-    let preference = { collapsed: true, position: null } as Awaited<ReturnType<OverlayPreferenceStore['read']>>
-    let current: Awaited<ReturnType<AnalysisObjectStore['read']>> = null
 
-    const paint = (): void => {
-      if (handle === null) return
-      try {
-        handle.render(current, overlayMode(current, preference.collapsed))
-      } catch {
-        // 渲染失败留原样；侧边栏不受影响。
-      }
-    }
-
-    const remember = (next: { collapsed: boolean; position?: typeof preference.position }): void => {
-      // 收起 / 展开只改 collapsed，保留用户已经拖到的位置——位置与开合是两件事。
-      preference = { collapsed: next.collapsed, position: next.position ?? preference.position }
-      void preferenceStore.write(preference)
-      paint()
-    }
-
-    const mount = async (): Promise<void> => {
-      preference = await preferenceStore.read()
-      current = await objectStore.read()
-      if (current === null) return
-      handle = mountOverlay(document, {
-        onPin: () => {
-          // 打开侧边栏必须由 content script 里的用户手势触发（Chrome 116+），
-          // 所以同步返回 open() 的 promise，不在它之前插入任何 await。
+    // 先声明再赋值：createView 里的回调要引用 controller 自身（收起与拖动），
+    // 直接 const 会让类型推断绕回自己（TS7022）。
+    let controller: OverlayController
+    controller = new OverlayController({
+      createView: () => mountOverlay(document, {
+        onPin: async () => {
+          // sidePanel 与 windows 在 content script 里不可用（Chromium feature 表里是
+          // privileged_extension），必须由 background 用发送者的 tabId 代开。
           try {
-            return browser.sidePanel.open({ windowId: browser.windows.WINDOW_ID_CURRENT })
-              .then(() => true)
-              .catch(() => false)
+            const response = await browser.runtime.sendMessage({ action: OPEN_SIDE_PANEL_ACTION })
+            return (response as { ok?: unknown } | null)?.ok === true
           } catch {
-            return Promise.resolve(false)
+            return false
           }
         },
-        onToggleCollapsed: () => remember({ collapsed: !preference.collapsed }),
-        onMove: (position) => remember({ collapsed: preference.collapsed, position }),
-      }, preference.position ?? initialOverlayPosition({
-        width: window.innerWidth,
-        height: window.innerHeight,
-      }))
-      paint()
-    }
+        onToggleCollapsed: () => { void controller.toggleCollapsed() },
+        onMove: (position) => { void controller.move(position) },
+      }, controller.currentPosition()),
+      readObject: () => objectStore.read(),
+      readPreference: () => preferenceStore.read(),
+      writePreference: (preference) => preferenceStore.write(preference),
+      initialPosition: () => initialOverlayPosition({ width: window.innerWidth, height: window.innerHeight }),
+    })
 
     // 面板与浮层读同一份存储；任一处写入后另一处据此更新（AC 的「两处同步」）。
     browser.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName !== 'local') return
-      try {
-        if (Object.keys(changes).length === 0) return
-        void (async () => {
-          current = await objectStore.read()
-          if (handle === null) { if (current !== null) await mount(); return }
-          paint()
-        })()
-      } catch {
-        // 存储事件处理失败不影响页面。
-      }
+      if (areaName !== 'local' || Object.keys(changes).length === 0) return
+      void controller.sync()
     })
 
-    void mount().catch(() => { /* 挂载失败即无浮层，页面照常 */ })
+    void controller.sync()
   },
 })

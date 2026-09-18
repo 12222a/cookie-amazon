@@ -151,23 +151,26 @@ export const mountOverlay = (
     document.documentElement?.append(host)
 
     return {
+      // 这里不吞异常：渲染失败要能被控制器看见，由它决定移除浮层（AC：静默消失），
+      // 否则失败会留下一份与当前对象不符的旧内容。
       render: (object, mode) => {
-        try {
-          if (mode === 'hidden' || object === null) { host.style.display = 'none'; return }
-          const state = describeAnalysisObject(object)
-          if (state.kind === 'empty') { host.style.display = 'none'; return }
-          host.style.display = ''
-          const isPill = mode === 'pill'
-          root.className = isPill ? 'ca-root ca-pill' : 'ca-root ca-card'
-          fields.hidden = isPill
-          actions.hidden = isPill
-          asin.textContent = state.asin
-          meta.textContent = isPill ? '' : `${state.market} · ${state.sourceLabel}`
-          if (!isPill) fields.replaceChildren(renderFields(document, state.fields))
-          clampInView()
-        } catch {
-          // 单次渲染失败只让浮层保持原样，不影响页面。
+        if (mode === 'hidden' || object === null) {
+          host.style.display = 'none'
+          return
         }
+        const state = describeAnalysisObject(object)
+        // 正常情况下 describeAnalysisObject 对非 null 对象都返回 ready；
+        // 若哪天不成立，隐藏而不是显示半截内容。
+        if (state.kind === 'empty') { host.style.display = 'none'; return }
+        host.style.display = ''
+        const isPill = mode === 'pill'
+        root.className = isPill ? 'ca-root ca-pill' : 'ca-root ca-card'
+        fields.hidden = isPill
+        actions.hidden = isPill
+        asin.textContent = state.asin
+        meta.textContent = isPill ? '' : `${state.market} · ${state.sourceLabel}`
+        if (!isPill) fields.replaceChildren(renderFields(document, state.fields))
+        clampInView()
       },
       remove: () => { host.remove() },
     }
