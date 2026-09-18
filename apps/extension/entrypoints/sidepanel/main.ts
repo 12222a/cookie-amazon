@@ -1,9 +1,9 @@
 import '../../src/panel/panel.css'
-import { AnalysisObjectStore, type StorageArea } from '../../src/analysis-object-store'
-import { createAnalysisObject } from '../../src/analysis-object'
+import { AnalysisObjectStore } from '../../src/analysis-object-store'
+import { createAnalysisObject, DEFAULT_MARKET } from '../../src/analysis-object'
 import { describeAnalysisObject } from '../../src/panel/panel-state'
 
-const objectStore = new AnalysisObjectStore(browser.storage.local as StorageArea)
+const objectStore = new AnalysisObjectStore(browser.storage.local)
 
 const sourceElement = document.querySelector<HTMLParagraphElement>('#source')
 const emptyElement = document.querySelector<HTMLElement>('#empty')
@@ -46,23 +46,24 @@ const render = async (): Promise<void> => {
 
 formElement?.addEventListener('submit', (event) => {
   event.preventDefault()
-  const created = createAnalysisObject({
-    asin: inputElement?.value ?? '',
-    market: 'US',
-    source: 'manual',
-  })
+  const created = createAnalysisObject({ asin: inputElement?.value ?? '', market: DEFAULT_MARKET, source: 'manual' })
   if (created === null) {
     setError('ASIN 应为 10 位字母或数字，例如 B07Z82895W。')
     return
   }
   setError(null)
-  void objectStore.write(created).then(render)
+  void objectStore.write(created).then((ok) => {
+    if (!ok) {
+      setError('无法保存到扩展存储，请检查浏览器存储权限后重试。')
+      return
+    }
+    return render()
+  })
 })
 
 inputElement?.addEventListener('input', () => setError(null))
 
-// 面板可能同时被多个入口写入（亚马逊侧选中、本面板手动输入），
-// 因此订阅存储变更而不是只在打开时读一次。
+// 面板同时被两处写入（亚马逊侧选中、本面板手动输入），因此订阅存储变更而不是只在打开时读一次。
 browser.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === 'local' && Object.keys(changes).length > 0) void render()
 })

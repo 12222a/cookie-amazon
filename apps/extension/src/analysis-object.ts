@@ -7,6 +7,12 @@
 
 export type AnalysisSource = 'manual' | 'storefront'
 
+/**
+ * 目前只做美国站（B9 决定）。写成常量而不是散落在调用处的字面量，
+ * 是为了让将来扩站点时只有一处需要改。
+ */
+export const DEFAULT_MARKET = 'US'
+
 /** 前台页面上可见的字段。缺失一律为 null，不用 0 或空串替代。 */
 export type StorefrontFields = {
   title: string | null
@@ -88,4 +94,3 @@ export const isAnalysisObject = (value: unknown): value is AnalysisObject => {
   if (value.group !== null && typeof value.group !== 'string') return false
   return typeof value.createdAt === 'number' && Number.isFinite(value.createdAt)
 }
-

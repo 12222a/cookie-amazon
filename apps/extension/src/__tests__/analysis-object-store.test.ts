@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { AnalysisObjectStore, type StorageArea } from '../analysis-object-store'
+import { AnalysisObjectStore } from '../analysis-object-store'
+import type { StorageArea } from '../remote-config'
 import { createAnalysisObject } from '../analysis-object'
 
 const memoryStorage = (initial: Record<string, unknown> = {}) => {
@@ -48,12 +49,16 @@ describe('AnalysisObjectStore', () => {
     expect(await new AnalysisObjectStore(area).read()).toBeNull()
   })
 
-  it('does not reject when the write fails', async () => {
+  it('reports a failed write so the panel can tell the user', async () => {
     const area: StorageArea = {
       async get() { return {} },
       async set() { throw new Error('quota exceeded') },
     }
-    await expect(new AnalysisObjectStore(area).write(object('B07Z82895W')!)).resolves.toBeUndefined()
+    await expect(new AnalysisObjectStore(area).write(object('B07Z82895W')!)).resolves.toBe(false)
+  })
+
+  it('reports a successful write', async () => {
+    const { area } = memoryStorage()
+    await expect(new AnalysisObjectStore(area).write(object('B07Z82895W')!)).resolves.toBe(true)
   })
 })
-
