@@ -107,6 +107,9 @@ importers:
       '@cookie-amazon/image-generation':
         specifier: workspace:*
         version: link:../../packages/image-generation
+      '@cookie-amazon/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
       '@cookie-amazon/remote-config':
         specifier: workspace:*
         version: link:../../packages/remote-config

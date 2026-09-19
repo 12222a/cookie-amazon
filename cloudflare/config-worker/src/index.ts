@@ -8,8 +8,9 @@ import {
 } from '@cookie-amazon/remote-config'
 
 import { handleFashionApi, isFashionApiPath, runScheduledGeneration, type FashionEnv } from './fashion-api'
+import { handleAnalysisApi, isAnalysisApiPath, type AnalysisEnv } from './analysis-api'
 
-interface Env extends FashionEnv {
+interface Env extends FashionEnv, AnalysisEnv {
   ASSETS: Fetcher
   EXTENSION_CONFIG: KVNamespace
   CONFIG_ENVIRONMENT?: string
@@ -84,6 +85,7 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
     if (url.pathname === '/api/health') return json({ ok: true, service: 'cookie-amazon-business-api', sharedLibrary: true, collaboration: true })
+    if (isAnalysisApiPath(url.pathname)) return handleAnalysisApi(request, env)
     if (url.pathname === CONFIG_PATH) {
       if (request.method !== 'GET') return json({ ok: false, error: 'METHOD_NOT_ALLOWED' }, 405)
       if (hasForbiddenCredentialHeaders(request)) return json({ ok: false, error: 'CREDENTIAL_HEADERS_FORBIDDEN' }, 400)

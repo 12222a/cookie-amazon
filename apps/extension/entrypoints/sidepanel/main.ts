@@ -1,6 +1,9 @@
 import '../../src/panel/panel.css'
-import { AnalysisObjectStore } from '../../src/analysis-object-store'
+import { AnalysisObjectStore, ANALYSIS_OBJECT_STORAGE_KEY } from '../../src/analysis-object-store'
 import { createAnalysisObject, DEFAULT_MARKET, type AnalysisObject } from '../../src/analysis-object'
+import { askAnalysis, type AnalysisResult } from '../../src/panel/analysis-client'
+import { buildAnalysisEvidence } from '../../src/panel/analysis-evidence'
+import { renderAnalysisViews, renderReviewPainPointItems } from '../../src/panel/analysis-view'
 import { describeAnalysisObject } from '../../src/panel/panel-state'
 import { describeColleagueRecord, describeRecordForOwner, RESEARCH_STATUS_LABELS } from '../../src/panel/research-panel-state'
 import { requestKeywordPositionsCached, type CachedKeywordPositionResult } from '../../src/panel/keyword-position-cache-client'
@@ -13,8 +16,9 @@ import { renderKeywordTrend } from '../../src/panel/keyword-trend-view'
 import { fetchSellerSpriteReviews, type ReviewCommentsResult } from '../../src/panel/review-comments-client'
 import { analyzeSellerSpriteReviews, type ReviewPanelData } from '../../src/panel/review-analysis'
 import { createResearchRecord, canEditRecord, isResearchStatus, updateResearchRecord, type ResearchRecord, type ResearchStatus } from '../../src/research-record'
-import { ResearchRecordStore } from '../../src/research-record-store'
-import { createViewerIdentity, describeViewer, ViewerIdentityStore, type ViewerIdentity } from '../../src/viewer-identity'
+import { ResearchRecordStore, RESEARCH_RECORDS_STORAGE_KEY } from '../../src/research-record-store'
+import { createViewerIdentity, describeViewer, ViewerIdentityStore, VIEWER_IDENTITY_STORAGE_KEY, type ViewerIdentity } from '../../src/viewer-identity'
+import type { AnalysisAskSuccess } from '@cookie-amazon/protocol'
 
 const objectStore = new AnalysisObjectStore(browser.storage.local)
 const recordStore = new ResearchRecordStore(browser.storage.local)
@@ -56,12 +60,32 @@ const recordForm = document.querySelector<HTMLFormElement>('#record-form')
 const recordSummaryInput = document.querySelector<HTMLTextAreaElement>('#record-summary')
 const recordStatusSelect = document.querySelector<HTMLSelectElement>('#record-status')
 const recordError = document.querySelector<HTMLParagraphElement>('#record-error')
+const analysisSection = document.querySelector<HTMLElement>('#analysis')
+const analysisForm = document.querySelector<HTMLFormElement>('#analysis-form')
+const analysisQuestionInput = document.querySelector<HTMLTextAreaElement>('#analysis-question')
+const analysisAskButton = document.querySelector<HTMLButtonElement>('#analysis-ask')
+const analysisRetryButton = document.querySelector<HTMLButtonElement>('#analysis-retry')
+const analysisStatusElement = document.querySelector<HTMLParagraphElement>('#analysis-status')
+const analysisAnswerElement = document.querySelector<HTMLElement>('#analysis-answer')
+const analysisAnswerQuestionElement = document.querySelector<HTMLParagraphElement>('#analysis-answer-question')
+const analysisFactsElement = document.querySelector<HTMLUListElement>('#analysis-facts')
+const analysisInferencesElement = document.querySelector<HTMLUListElement>('#analysis-inferences')
+const analysisCitationsElement = document.querySelector<HTMLUListElement>('#analysis-citations')
+const analysisViewsElement = document.querySelector<HTMLElement>('#analysis-views')
 let current: AnalysisObject | null = null
 let viewer: ViewerIdentity | null = null
 let loading = false
 let positionsTarget: string | null = null
 let reviewsLoading = false
 let reviewsTarget: string | null = null
+let keywordRows: KeywordPositionRow[] = []
+let keywordSummary: KeywordPositionSummary | null = null
+let reviewData: ReviewPanelData | null = null
+let analysisLoading = false
+let analysisRequestId = 0
+let lastAnalysis: Extract<AnalysisResult, { kind: 'answer' }> | null = null
+let lastAnalysisEvidence: Parameters<typeof renderAnalysisViews>[3] | null = null
+let lastAnalysisQuestion = ''
 
 const positionTargetKey = (target: AnalysisObject): string => target.asin + ':' + target.market
 
@@ -87,6 +111,62 @@ const setStatus = (message: string | null): void => {
   if (!statusElement) return
   statusElement.hidden = message === null
   statusElement.textContent = message ?? ''
+}
+
+const setAnalysisStatus = (message: string | null, error = false): void => {
+  if (!analysisStatusElement) return
+  analysisStatusElement.hidden = message === null
+  analysisStatusElement.textContent = message ?? ''
+  analysisStatusElement.dataset.kind = error ? 'error' : 'info'
+}
+
+const renderAnalysisList = (element: HTMLUListElement | null, values: readonly string[]): void => {
+  element?.replaceChildren(...values.map((value) => {
+    const item = document.createElement('li')
+    item.textContent = value
+    return item
+  }))
+}
+
+const ANALYSIS_SOURCE_LABELS: Record<string, string> = {
+  storefront: '亚马逊前台',
+  sellersprite: 'SellerSprite',
+  derived: '计算结果',
+  'research-record': '小组研究记录',
+}
+
+const renderAnalysisAnswer = (): void => {
+  const response: AnalysisAskSuccess | null = lastAnalysis?.response ?? null
+  if (analysisAnswerElement) analysisAnswerElement.hidden = response === null
+  if (analysisAnswerQuestionElement) analysisAnswerQuestionElement.textContent = response === null ? '' : '问题：' + lastAnalysisQuestion
+  renderAnalysisList(analysisFactsElement, response?.answer.facts ?? [])
+  renderAnalysisList(analysisInferencesElement, response?.answer.inferences ?? [])
+  analysisCitationsElement?.replaceChildren(...(response?.answer.citations ?? []).map((citation) => {
+    const item = document.createElement('li')
+    item.textContent = citation.label + '：' + citation.value + '（' + (ANALYSIS_SOURCE_LABELS[citation.source] ?? citation.source) + '）'
+    return item
+  }))
+  if (response && lastAnalysisEvidence && analysisViewsElement) {
+    renderAnalysisViews(document, analysisViewsElement, response.view, lastAnalysisEvidence)
+  } else {
+    analysisViewsElement?.replaceChildren()
+  }
+}
+
+const clearAnalysisAnswer = (message: string | null = null): void => {
+  lastAnalysis = null
+  lastAnalysisEvidence = null
+  lastAnalysisQuestion = ''
+  renderAnalysisAnswer()
+  setAnalysisStatus(message)
+  if (analysisRetryButton) analysisRetryButton.hidden = true
+}
+
+const resetAnalysisForTarget = (message: string | null = null): void => {
+  analysisRequestId += 1
+  analysisLoading = false
+  if (analysisAskButton) analysisAskButton.disabled = false
+  clearAnalysisAnswer(message)
 }
 
 const renderFields = (fields: readonly { label: string; value: string }[]): void => {
@@ -138,26 +218,7 @@ const renderReviewData = (data: ReviewPanelData | null): void => {
       : 'SellerSprite 未返回评论总数，当前只展示已取到的样本。'
   }
   if (!reviewPainPointsElement) return
-  for (const pain of data.painPoints) {
-    const details = document.createElement('details')
-    details.className = 'panel-pain-point'
-    const summary = document.createElement('summary')
-    summary.textContent = pain.label + ' · ' + pain.count + ' 次 · 低星 ' + (pain.lowStarShare * 100).toFixed(0) + '%'
-    details.append(summary)
-    const meta = document.createElement('p')
-    meta.className = 'panel-pain-point-meta'
-    meta.textContent = '涉及 ' + pain.asinCount + ' 个 ASIN · 平均 ' + pain.averageStar.toFixed(1) + ' 星'
-    details.append(meta)
-    const excerpts = document.createElement('ul')
-    excerpts.className = 'panel-pain-point-excerpts'
-    for (const excerpt of pain.excerpts) {
-      const item = document.createElement('li')
-      item.textContent = excerpt
-      excerpts.append(item)
-    }
-    if (pain.excerpts.length > 0) details.append(excerpts)
-    reviewPainPointsElement.append(details)
-  }
+  renderReviewPainPointItems(document, reviewPainPointsElement, data)
 }
 
 const describeReviewResult = (result: ReviewCommentsResult): string | null => {
@@ -265,9 +326,12 @@ const describeResult = (result: CachedKeywordPositionResult): string | null => {
  */
 const renderRecord = async (): Promise<void> => {
   if (recordSection === null || current === null) return
+  const target = current
+  const targetKey = positionTargetKey(target)
   recordSection.hidden = false
   // 只有组内记录可见：组外记录既不该显示，也不该泄漏出「有人研究过」这件事。
-  const visible = await recordStore.find(current.asin, viewer?.group ?? null)
+  const visible = await recordStore.find(target.asin, viewer?.group ?? null)
+  if (current === null || positionTargetKey(current) !== targetKey) return
   const colleague = describeColleagueRecord(visible)
   if (recordOwnerElement) recordOwnerElement.textContent = colleague.kind === 'colleague' ? colleague.owner : ''
   if (recordNoteElement) {
@@ -303,6 +367,14 @@ const loadPositions = async (): Promise<void> => {
       target.asin, target.market, { cache: positionCache },
     )
     if (positionsTarget !== targetKey) return
+    resetAnalysisForTarget('词位数据已更新，请重新提问。')
+    if (result.kind === 'rows') {
+      keywordRows = result.rows
+      keywordSummary = result.summary
+    } else {
+      keywordRows = []
+      keywordSummary = null
+    }
     const message = describeResult(result)
     setStatus(result.cached ? `${message}（${describeCacheAge(result.ageMs)}）` : message)
   } finally {
@@ -323,6 +395,12 @@ const loadReviews = async (): Promise<void> => {
   try {
     const result = await fetchSellerSpriteReviews(target.asin, target.market)
     if (reviewsTarget !== targetKey) return
+    resetAnalysisForTarget('评论数据已更新，请重新提问。')
+    if (result.kind === 'data') {
+      reviewData = analyzeSellerSpriteReviews(result.data)
+    } else {
+      reviewData = null
+    }
     setReviewsStatus(describeReviewResult(result))
   } finally {
     reviewsLoading = false
@@ -330,8 +408,59 @@ const loadReviews = async (): Promise<void> => {
   }
 }
 
+const askCurrentAnalysis = async (): Promise<void> => {
+  const target = current
+  if (target === null || analysisLoading) return
+  const question = (analysisQuestionInput?.value ?? '').trim()
+  if (question.length === 0) {
+    setAnalysisStatus('先写下你想了解的问题。', true)
+    if (analysisRetryButton) analysisRetryButton.hidden = true
+    return
+  }
+
+  const targetKey = positionTargetKey(target)
+  const requestId = ++analysisRequestId
+  analysisLoading = true
+  if (analysisAskButton) analysisAskButton.disabled = true
+  if (analysisRetryButton) analysisRetryButton.hidden = true
+  setAnalysisStatus('正在根据当前已读取的数据分析…')
+
+  try {
+    // 记录可能刚刚被同事或当前用户更新，提问时再读一次，避免把旧记录送给模型。
+    const record = await recordStore.find(target.asin, viewer?.group ?? null)
+    if (requestId !== analysisRequestId || current === null || positionTargetKey(current) !== targetKey) return
+    const evidence = buildAnalysisEvidence({
+      object: target,
+      keywordRows,
+      keywordSummary,
+      reviewData,
+      record,
+    })
+    const result = await askAnalysis(question, evidence)
+    if (requestId !== analysisRequestId || current === null || positionTargetKey(current) !== targetKey) return
+    if (result.kind === 'answer') {
+      lastAnalysis = result
+      lastAnalysisEvidence = evidence
+      lastAnalysisQuestion = question
+      renderAnalysisAnswer()
+      setAnalysisStatus('已生成回答，引用了 ' + result.response.answer.citations.length + ' 条证据。')
+      if (analysisRetryButton) analysisRetryButton.hidden = true
+    } else {
+      setAnalysisStatus(result.kind === 'unsupported-scope' ? result.message : result.reason, true)
+      if (analysisRetryButton) analysisRetryButton.hidden = result.kind !== 'failed'
+    }
+  } finally {
+    if (requestId === analysisRequestId) {
+      analysisLoading = false
+      if (analysisAskButton) analysisAskButton.disabled = false
+    }
+  }
+}
+
 const renderIdentity = async (): Promise<void> => {
-  viewer = await identityStore.read()
+  const nextViewer = await identityStore.read()
+  if (viewer?.name !== nextViewer?.name || viewer?.group !== nextViewer?.group) resetAnalysisForTarget()
+  viewer = nextViewer
   if (viewerElement) viewerElement.textContent = describeViewer(viewer)
   if (identitySection) identitySection.hidden = viewer !== null
   if (nameInput && viewer) nameInput.value = viewer.name
@@ -344,14 +473,19 @@ const render = async (): Promise<void> => {
   const state = describeAnalysisObject(current)
   if (state.kind === 'empty') {
     positionsTarget = null
+    keywordRows = []
+    keywordSummary = null
     if (emptyElement) emptyElement.hidden = false
     if (objectElement) objectElement.hidden = true
+    if (analysisSection) analysisSection.hidden = true
     if (recordSection) recordSection.hidden = true
     if (sourceElement) sourceElement.textContent = ''
     setStatus(null)
     reviewsTarget = null
+    reviewData = null
     setReviewsStatus(null)
     renderReviewData(null)
+    resetAnalysisForTarget()
     renderSummary(null)
     if (detailsElement) {
       detailsElement.hidden = true
@@ -363,14 +497,18 @@ const render = async (): Promise<void> => {
   }
   if (emptyElement) emptyElement.hidden = true
   if (objectElement) objectElement.hidden = false
+  if (analysisSection) analysisSection.hidden = false
   if (sourceElement) sourceElement.textContent = `${state.asin} · ${state.market} · ${state.sourceLabel}`
   renderFields(state.fields)
   const nextPositionsTarget = state.asin + ':' + state.market
   const shouldLoadPositions = positionsTarget !== nextPositionsTarget
   const shouldResetReviews = reviewsTarget !== nextPositionsTarget
+  const shouldResetAnalysis = positionsTarget !== nextPositionsTarget
   if (shouldLoadPositions) {
     // 换了对象就清掉上一个对象的词位，避免把别人的数据留在屏幕上。
     positionsTarget = nextPositionsTarget
+    keywordRows = []
+    keywordSummary = null
     setStatus(null)
     renderSummary(null)
     if (detailsElement) {
@@ -382,9 +520,11 @@ const render = async (): Promise<void> => {
   }
   if (shouldResetReviews) {
     reviewsTarget = nextPositionsTarget
+    reviewData = null
     setReviewsStatus(null)
     renderReviewData(null)
   }
+  if (shouldResetAnalysis) resetAnalysisForTarget()
   await renderRecord()
   if (shouldLoadPositions) void loadPositions()
 }
@@ -429,12 +569,18 @@ recordForm?.addEventListener('submit', (event) => {
     if (next === null) { setRecordError('无法保存这条记录，请检查填写内容。'); return }
     if (!(await recordStore.save(next))) { setRecordError('无法保存到扩展存储，请稍后重试。'); return }
     setRecordError(null)
+    resetAnalysisForTarget('研究记录已更新，请重新提问。')
     await renderRecord()
   })()
 })
 
 loadButton?.addEventListener('click', () => { void loadPositions() })
 loadReviewsButton?.addEventListener('click', () => { void loadReviews() })
+analysisForm?.addEventListener('submit', (event) => {
+  event.preventDefault()
+  void askCurrentAnalysis()
+})
+analysisRetryButton?.addEventListener('click', () => { void askCurrentAnalysis() })
 
 formElement?.addEventListener('submit', (event) => {
   event.preventDefault()
@@ -463,6 +609,9 @@ inputElement?.addEventListener('input', () => setError(null))
 
 // 面板同时被两处写入（亚马逊侧选中、本面板手动输入），因此订阅存储变更而不是只在打开时读一次。
 browser.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === 'local' && [ANALYSIS_OBJECT_STORAGE_KEY, RESEARCH_RECORDS_STORAGE_KEY, VIEWER_IDENTITY_STORAGE_KEY].some((key) => key in changes)) {
+    resetAnalysisForTarget()
+  }
   if (areaName === 'local' && Object.keys(changes).length > 0) void render()
 })
 

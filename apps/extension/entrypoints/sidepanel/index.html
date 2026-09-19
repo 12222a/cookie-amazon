@@ -103,6 +103,38 @@
           </section>
           <section id="review-pain-points" class="panel-pain-points" hidden></section>
         </section>
+
+        <section id="analysis" class="panel-analysis" hidden>
+          <div class="panel-analysis-head">
+            <div>
+              <h2>AI 选品问答</h2>
+              <p class="panel-hint">只根据当前 ASIN 的前台信息、已读取的 SellerSprite 数据和本小组研究记录回答。</p>
+            </div>
+            <button id="analysis-retry" type="button" hidden>重试</button>
+          </div>
+          <form id="analysis-form" class="panel-analysis-form">
+            <label for="analysis-question">你想了解什么</label>
+            <textarea id="analysis-question" name="question" rows="3" maxlength="1000" placeholder="例如：这个 ASIN 当前最需要关注哪些问题？"></textarea>
+            <button id="analysis-ask" type="submit">让 AI 分析</button>
+          </form>
+          <p id="analysis-status" class="panel-analysis-status" role="status" hidden></p>
+          <section id="analysis-answer" class="panel-analysis-answer" hidden>
+            <p id="analysis-answer-question" class="panel-analysis-question"></p>
+            <section class="panel-analysis-block">
+              <h3>事实</h3>
+              <ul id="analysis-facts" class="panel-analysis-list"></ul>
+            </section>
+            <section class="panel-analysis-block">
+              <h3>结论与判断</h3>
+              <ul id="analysis-inferences" class="panel-analysis-list"></ul>
+            </section>
+            <section class="panel-analysis-block">
+              <h3>引用证据</h3>
+              <ul id="analysis-citations" class="panel-analysis-list panel-analysis-citations"></ul>
+            </section>
+            <section id="analysis-views" class="panel-analysis-views"></section>
+          </section>
+        </section>
       </section>
 
       <form id="manual" class="panel-manual">
