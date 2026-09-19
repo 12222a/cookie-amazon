@@ -2,6 +2,8 @@ import { describeAnalysisObject, type PanelField } from './panel-state'
 import type { AnalysisObject } from '../analysis-object'
 import type { OverlayMode, OverlayPosition } from './overlay-state'
 import { clampOverlayPosition } from './overlay-state'
+import type { KeywordPositionRow } from './keyword-positions'
+import { renderKeywordTrend } from './keyword-trend-view'
 
 export const OVERLAY_HOST_ID = 'cookie-amazon-overlay-host'
 
@@ -12,6 +14,8 @@ export type OverlayHandlers = {
   onToggleCollapsed: () => void
   /** 位置变化后持久化。 */
   onMove: (position: OverlayPosition) => void
+  /** 读取与侧边栏相同的关键词证据；浮层只展示前几行。 */
+  readKeywordRows?: () => readonly KeywordPositionRow[]
 }
 
 export type OverlayHandle = {
@@ -33,6 +37,16 @@ const STYLE = `
 .ca-fields { display: grid; grid-template-columns: auto 1fr; gap: 3px 8px; margin: 8px 0 0; }
 .ca-fields dt { color: #8b9794; font-size: 10px; }
 .ca-fields dd { margin: 0; color: #f2f5f3; word-break: break-word; }
+.ca-trends { margin-top: 10px; padding-top: 8px; border-top: 1px solid #29343d; }
+.ca-trends-title { margin: 0 0 5px; color: #8b9794; font-size: 10px; font-weight: 500; }
+.ca-trend-list { display: flex; flex-direction: column; gap: 5px; }
+.ca-trend-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; }
+.ca-trend-keyword { min-width: 0; overflow: hidden; color: #cdd5d4; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.ca-keyword-trend { display: inline-flex; min-height: 22px; align-items: center; color: #8b9794; font-size: 9px; white-space: nowrap; }
+.ca-keyword-trend svg { display: block; width: 82px; height: 22px; overflow: visible; }
+.ca-keyword-trend polyline { fill: none; stroke: #6ea8a0; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.75; vector-effect: non-scaling-stroke; }
+.ca-keyword-trend circle { fill: #6ea8a0; }
+.ca-keyword-trend.keyword-trend--insufficient { color: #8b9794; }
 .ca-actions { display: flex; gap: 6px; margin-top: 10px; }
 .ca-actions button { flex: 1; padding: 5px 8px; border: 1px solid #44515a; background: transparent;
   color: #f2f5f3; font: inherit; cursor: pointer; }
@@ -88,6 +102,10 @@ export const mountOverlay = (
     head.append(asin, meta)
 
     const fields = element(document, 'dl', 'ca-fields')
+    const trends = element(document, 'section', 'ca-trends')
+    const trendsTitle = element(document, 'h2', 'ca-trends-title', '关键词搜索量趋势')
+    const trendList = element(document, 'div', 'ca-trend-list')
+    trends.append(trendsTitle, trendList)
     const actions = element(document, 'div', 'ca-actions')
     const pin = element(document, 'button', undefined, '固定到侧边栏')
     const collapse = element(document, 'button', undefined, '收起')
@@ -145,7 +163,7 @@ export const mountOverlay = (
       window.addEventListener('pointerup', up)
     })
 
-    root.append(head, fields, actions)
+    root.append(head, fields, trends, actions)
     shadow.append(style, root)
     place()
     document.documentElement?.append(host)
@@ -166,10 +184,25 @@ export const mountOverlay = (
         const isPill = mode === 'pill'
         root.className = isPill ? 'ca-root ca-pill' : 'ca-root ca-card'
         fields.hidden = isPill
+        trends.hidden = isPill
         actions.hidden = isPill
         asin.textContent = state.asin
-        meta.textContent = isPill ? '' : `${state.market} · ${state.sourceLabel}`
-        if (!isPill) fields.replaceChildren(renderFields(document, state.fields))
+        meta.textContent = isPill ? '' : state.market + ' · ' + state.sourceLabel
+        if (!isPill) {
+          fields.replaceChildren(renderFields(document, state.fields))
+          const rows = handlers.readKeywordRows?.() ?? []
+          const visibleRows = rows.slice(0, 3)
+          trends.hidden = visibleRows.length === 0
+          trendList.replaceChildren(...visibleRows.map((row) => {
+            const item = element(document, 'div', 'ca-trend-row')
+            const keyword = element(document, 'span', 'ca-trend-keyword', row.keyword)
+            keyword.title = row.keyword
+            item.append(keyword, renderKeywordTrend(document, row.trend, 'ca-keyword-trend'))
+            return item
+          }))
+        } else {
+          trendList.replaceChildren()
+        }
         clampInView()
       },
       remove: () => { host.remove() },

@@ -264,6 +264,44 @@ body {
   color: #cdd5d4;
 }
 
+.panel-trend-cell {
+  min-width: 126px;
+  vertical-align: middle;
+}
+
+.keyword-trend {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  color: #8b9794;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.keyword-trend svg {
+  display: block;
+  width: 120px;
+  height: 28px;
+  overflow: visible;
+}
+
+.keyword-trend polyline {
+  fill: none;
+  stroke: #6ea8a0;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.75;
+  vector-effect: non-scaling-stroke;
+}
+
+.keyword-trend circle {
+  fill: #6ea8a0;
+}
+
+.keyword-trend--insufficient {
+  color: #8b9794;
+}
+
 .panel-table tbody tr:last-child td {
   border-bottom: 0;
 }

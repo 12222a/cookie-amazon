@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { describeKeywordPositionSummary, describeKeywordPositions, POSITION_TYPE_LABELS } from '../keyword-positions'
+import {
+  describeKeywordPositionSummary,
+  describeKeywordPositions,
+  describeKeywordTrend,
+  POSITION_TYPE_LABELS,
+} from '../keyword-positions'
 import type { SellerSpriteKeywordReverseData } from '@cookie-amazon/protocol'
 const item = (over: Partial<SellerSpriteKeywordReverseData['items'][number]> = {}) => ({
   keywords: 'phone stand',
@@ -45,6 +50,7 @@ describe('keyword position rows', () => {
       naturalShare: '—',
       adShare: '—',
       types: '—',
+      trend: { kind: 'unavailable' },
     })
   })
   it('renders ratios as percentages', () => {
@@ -95,6 +101,102 @@ describe('keyword position rows', () => {
     expect(describeKeywordPositions(data([]))).toEqual([])
   })
 })
+
+describe('keyword search volume trend', () => {
+  it('draws a line only after six usable monthly samples', () => {
+    const result = describeKeywordTrend([
+      { month: '2026-01', searchRank: null, searches: 100 },
+      { month: '2026-02', searchRank: null, searches: 120 },
+      { month: '2026-03', searchRank: null, searches: 110 },
+      { month: '2026-04', searchRank: null, searches: 140 },
+      { month: '2026-05', searchRank: null, searches: 160 },
+      { month: '2026-06', searchRank: null, searches: 180 },
+    ])
+    expect(result.kind).toBe('line')
+    if (result.kind !== 'line') return
+    expect(result.pointCount).toBe(6)
+    expect(result.sampleCount).toBe(6)
+    expect(result.segments).toHaveLength(1)
+    expect(result.segments[0]).toHaveLength(6)
+    expect(result.segments[0]?.[0]).toEqual({ month: '2026-01', searches: 100, index: 0 })
+    expect(result.segments[0]?.[5]).toEqual({ month: '2026-06', searches: 180, index: 5 })
+  })
+
+  it('marks fewer than six usable samples as insufficient', () => {
+    expect(describeKeywordTrend([
+      { month: '2026-01', searchRank: null, searches: 100 },
+      { month: '2026-02', searchRank: null, searches: null },
+      { month: '2026-03', searchRank: null, searches: 110 },
+      { month: '2026-04', searchRank: null, searches: 140 },
+      { month: '2026-05', searchRank: null, searches: 160 },
+      { month: '2026-06', searchRank: null, searches: 180 },
+    ])).toEqual({ kind: 'insufficient', sampleCount: 5 })
+  })
+
+  it('leaves a gap instead of connecting across a missing month', () => {
+    const result = describeKeywordTrend([
+      { month: '2026-01', searchRank: null, searches: 100 },
+      { month: '2026-02', searchRank: null, searches: 120 },
+      { month: '2026-04', searchRank: null, searches: 140 },
+      { month: '2026-05', searchRank: null, searches: 160 },
+      { month: '2026-06', searchRank: null, searches: 180 },
+      { month: '2026-07', searchRank: null, searches: 200 },
+    ])
+    expect(result.kind).toBe('line')
+    if (result.kind !== 'line') return
+    expect(result.sampleCount).toBe(6)
+    expect(result.pointCount).toBe(7)
+    expect(result.segments.map((segment) => segment.length)).toEqual([2, 4])
+    expect(result.segments[0]?.[1]).toEqual({ month: '2026-02', searches: 120, index: 1 })
+    expect(result.segments[1]?.[0]).toEqual({ month: '2026-04', searches: 140, index: 3 })
+  })
+
+  it('sorts months, filters invalid months, and keeps only the latest twelve months', () => {
+    const result = describeKeywordTrend([
+      { month: '2025-12', searchRank: null, searches: 1 },
+      { month: '2026-12', searchRank: null, searches: 13 },
+      { month: 'not-a-month', searchRank: null, searches: 999 },
+      { month: '2026-03', searchRank: null, searches: 4 },
+      { month: '2026-13', searchRank: null, searches: 999 },
+      { month: '2026-01', searchRank: null, searches: 2 },
+      { month: '2026-02', searchRank: null, searches: 3 },
+      { month: '2026-04', searchRank: null, searches: 5 },
+      { month: '2026-05', searchRank: null, searches: 6 },
+      { month: '2026-06', searchRank: null, searches: 7 },
+      { month: '2026-07', searchRank: null, searches: 8 },
+      { month: '2026-08', searchRank: null, searches: 9 },
+      { month: '2026-09', searchRank: null, searches: 10 },
+      { month: '2026-10', searchRank: null, searches: 11 },
+      { month: '2026-11', searchRank: null, searches: 12 },
+    ])
+    expect(result.kind).toBe('line')
+    if (result.kind !== 'line') return
+    expect(result.sampleCount).toBe(12)
+    expect(result.pointCount).toBe(12)
+    expect(result.segments[0]?.map((point) => point.month)).toEqual([
+      '2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06',
+      '2026-07', '2026-08', '2026-09', '2026-10', '2026-11', '2026-12',
+    ])
+  })
+
+  it('does not count duplicate months as separate samples', () => {
+    const result = describeKeywordTrend([
+      { month: '2026-01', searchRank: null, searches: 100 },
+      { month: '2026-01', searchRank: null, searches: 101 },
+      { month: '2026-02', searchRank: null, searches: 110 },
+      { month: '2026-03', searchRank: null, searches: 120 },
+      { month: '2026-04', searchRank: null, searches: 130 },
+      { month: '2026-05', searchRank: null, searches: 140 },
+    ])
+    expect(result).toEqual({ kind: 'insufficient', sampleCount: 5 })
+  })
+
+  it('returns unavailable when no trend is supplied', () => {
+    expect(describeKeywordTrend(null)).toEqual({ kind: 'unavailable' })
+    expect(describeKeywordTrend([])).toEqual({ kind: 'unavailable' })
+  })
+})
+
 describe('keyword position summary', () => {
   it('counts the same item for natural and ad rankings when both exist', () => {
     expect(describeKeywordPositionSummary(data([

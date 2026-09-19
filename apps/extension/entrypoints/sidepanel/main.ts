@@ -5,7 +5,11 @@ import { describeAnalysisObject } from '../../src/panel/panel-state'
 import { describeColleagueRecord, describeRecordForOwner, RESEARCH_STATUS_LABELS } from '../../src/panel/research-panel-state'
 import { requestKeywordPositionsCached, type CachedKeywordPositionResult } from '../../src/panel/keyword-position-cache-client'
 import { KeywordPositionCache } from '../../src/panel/keyword-position-cache'
-import type { KeywordPositionRow, KeywordPositionSummary } from '../../src/panel/keyword-positions'
+import type {
+  KeywordPositionRow,
+  KeywordPositionSummary,
+} from '../../src/panel/keyword-positions'
+import { renderKeywordTrend } from '../../src/panel/keyword-trend-view'
 import { createResearchRecord, canEditRecord, isResearchStatus, updateResearchRecord, type ResearchRecord, type ResearchStatus } from '../../src/research-record'
 import { ResearchRecordStore } from '../../src/research-record-store'
 import { createViewerIdentity, describeViewer, ViewerIdentityStore, type ViewerIdentity } from '../../src/viewer-identity'
@@ -44,7 +48,6 @@ const recordForm = document.querySelector<HTMLFormElement>('#record-form')
 const recordSummaryInput = document.querySelector<HTMLTextAreaElement>('#record-summary')
 const recordStatusSelect = document.querySelector<HTMLSelectElement>('#record-status')
 const recordError = document.querySelector<HTMLParagraphElement>('#record-error')
-
 let current: AnalysisObject | null = null
 let viewer: ViewerIdentity | null = null
 let loading = false
@@ -100,6 +103,10 @@ const renderRows = (rows: readonly KeywordPositionRow[]): void => {
       td.textContent = text
       tr.append(td)
     }
+    const trendCell = document.createElement('td')
+    trendCell.className = 'panel-trend-cell'
+    trendCell.append(renderKeywordTrend(document, row.trend))
+    tr.append(trendCell)
     return tr
   }))
 }
