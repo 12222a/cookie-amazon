@@ -90,16 +90,7 @@ export const updateResearchRecord = (
 export const canEditRecord = (record: ResearchRecord, viewer: ResearchViewer | null): boolean =>
   viewer !== null && text(viewer.name) === record.owner
 
-/**
- * 记录只对本小组可见。
- *
- * 注意：这是决定「渲染不渲染」的判断，不是访问控制。
- * 真正的隔离必须落在服务端——见 issue #7 的说明。
- */
-export const visibleToGroup = (record: ResearchRecord, group: string | null): boolean => {
-  const viewerGroup = text(group)
-  return viewerGroup.length > 0 && viewerGroup === record.group
-}
+
 
 /** 存储里的记录可能是旧版本或被改过，读之前一律校验。 */
 export const isResearchRecord = (value: unknown): value is ResearchRecord => {

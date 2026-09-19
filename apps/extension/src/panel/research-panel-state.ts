@@ -8,46 +8,66 @@ import type { ResearchRecord, ResearchStatus } from '../research-record'
  */
 export type ColleagueRecordState =
   | { kind: 'none'; note: string }
-  | { kind: 'colleague'; owner: string; note: string }
+  | { kind: 'colleague'; owner: string; ageLabel: string; note: string }
 
+/**
+ * 作者自己写这条记录时，表单要预填已有内容。
+ *
+ * 不含「能不能写」的判断：那条规则只有 `canEditRecord` 一个来源，
+ * 在界面层再放一个恒真的 editable 只会让两处说法有机会不一致。
+ */
 export type OwnerRecordState = {
-  editable: boolean
   summary: string
   status: ResearchStatus
 }
 
-const STATUS_LABELS: Record<ResearchStatus, string> = {
+export const RESEARCH_STATUS_LABELS: Record<ResearchStatus, string> = {
   researching: '研究中',
   verified: '已验证',
   rejected: '已否决',
 }
 
 /**
+ * 把时间戳说成「多久以前」。
+ *
+ * 同事的研究记录只有在标了时间之后才有判断价值——三天前的结论和三个月前的结论
+ * 对同一个 ASIN 意味着完全不同的可信度。
+ *
+ * 接受 now 参数是为了可测；默认取当前时间。
+ */
+export const describeRecordAge = (updatedAt: number, now: number = Date.now()): string => {
+  const elapsed = now - updatedAt
+  if (!Number.isFinite(elapsed) || elapsed < 0) return '时间未知'
+  const minutes = Math.floor(elapsed / 60_000)
+  if (minutes < 1) return '刚刚'
+  if (minutes < 60) return `${minutes} 分钟前`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} 小时前`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days} 天前`
+  return `${Math.floor(days / 30)} 个月前`
+}
+
+/**
  * 把同组的既有记录翻译成一句人话。
  *
- * 目标是让用户立刻知道：有没有人做过、是谁、结论是什么。
+ * 目标是让用户立刻知道：有没有人做过、是谁、多久以前、结论是什么。
  * 摘要为空时不省略——「同事看了但没写结论」本身也是信息。
  */
 export const describeColleagueRecord = (record: ResearchRecord | null): ColleagueRecordState => {
   if (record === null) return { kind: 'none', note: '本小组还没有人研究过这个 ASIN。' }
-  const status = STATUS_LABELS[record.status]
+  const status = RESEARCH_STATUS_LABELS[record.status]
   const summary = record.summary.length > 0 ? record.summary : '（未填写结论摘要）'
+  const ageLabel = describeRecordAge(record.updatedAt)
   return {
     kind: 'colleague',
     owner: record.owner,
-    note: `${record.owner} · ${status}：${summary}`,
+    ageLabel,
+    note: `${record.owner} · ${status} · ${ageLabel}：${summary}`,
   }
 }
 
-/**
- * 作者自己写这条记录时，表单要预填已有内容，而不是让他重打一遍。
- * 没有记录时给一个空表单——第一次写与修订走同一条路径。
- *
- * editable 只是给界面用的提示；能不能写最终由 canEditRecord 判定，
- * 那样「只有作者能改」这条规则只有一个来源。
- */
 export const describeRecordForOwner = (record: ResearchRecord | null): OwnerRecordState => ({
-  editable: true,
   summary: record?.summary ?? '',
   status: record?.status ?? 'researching',
 })

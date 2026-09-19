@@ -48,6 +48,36 @@ describe('ResearchRecordStore', () => {
     expect(records[0]?.summary).toBe('second')
   })
 
+  it('keeps another group\'s record for the same ASIN instead of overwriting it', async () => {
+    const { area } = memoryStorage()
+    const store = new ResearchRecordStore(area)
+    await store.save(record('B07Z82895W', 'amy', 'team-a', 'team a verdict'))
+    await store.save(record('B07Z82895W', 'ben', 'team-b', 'team b verdict'))
+    const records = await store.read()
+    expect(records).toHaveLength(2)
+    expect(records.map((item) => item.summary).sort()).toEqual(['team a verdict', 'team b verdict'])
+  })
+
+  describe('readForGroup', () => {
+    it('hands back only the caller group\'s records', async () => {
+      const { area } = memoryStorage()
+      const store = new ResearchRecordStore(area)
+      await store.save(record('B07Z82895W', 'amy', 'team-a'))
+      await store.save(record('B000000000', 'ben', 'team-b'))
+      const mine = await store.readForGroup('team-a')
+      expect(mine).toHaveLength(1)
+      expect(mine[0]?.owner).toBe('amy')
+    })
+
+    it('hands back nothing when the caller has no group', async () => {
+      const { area } = memoryStorage()
+      const store = new ResearchRecordStore(area)
+      await store.save(record('B07Z82895W', 'amy', 'team-a'))
+      expect(await store.readForGroup(null)).toEqual([])
+      expect(await store.readForGroup('   ')).toEqual([])
+    })
+  })
+
   it('survives a new instance reading the same area, so records outlive the panel', async () => {
     const { area } = memoryStorage()
     await new ResearchRecordStore(area).save(record('B07Z82895W', 'amy', 'team-a'))
@@ -79,4 +109,3 @@ describe('ResearchRecordStore', () => {
     await expect(new ResearchRecordStore(area).save(record('B07Z82895W', 'amy', 'team-a'))).resolves.toBe(false)
   })
 })
-

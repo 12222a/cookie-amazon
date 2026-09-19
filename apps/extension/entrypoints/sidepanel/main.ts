@@ -2,7 +2,7 @@ import '../../src/panel/panel.css'
 import { AnalysisObjectStore } from '../../src/analysis-object-store'
 import { createAnalysisObject, DEFAULT_MARKET, type AnalysisObject } from '../../src/analysis-object'
 import { describeAnalysisObject } from '../../src/panel/panel-state'
-import { describeColleagueRecord, describeRecordForOwner } from '../../src/panel/research-panel-state'
+import { describeColleagueRecord, describeRecordForOwner, RESEARCH_STATUS_LABELS } from '../../src/panel/research-panel-state'
 import { requestKeywordPositions, type KeywordPositionResult } from '../../src/panel/keyword-positions-client'
 import type { KeywordPositionRow } from '../../src/panel/keyword-positions'
 import { createResearchRecord, canEditRecord, isResearchStatus, updateResearchRecord, type ResearchRecord, type ResearchStatus } from '../../src/research-record'
@@ -121,9 +121,7 @@ const renderRecord = async (): Promise<void> => {
   if (recordSection === null || current === null) return
   recordSection.hidden = false
   // 只有组内记录可见：组外记录既不该显示，也不该泄漏出「有人研究过」这件事。
-  const visible = ResearchRecordStore.find(
-    await recordStore.read(), current.asin, viewer?.group ?? null,
-  )
+  const visible = await recordStore.find(current.asin, viewer?.group ?? null)
   const colleague = describeColleagueRecord(visible)
   if (recordOwnerElement) recordOwnerElement.textContent = colleague.kind === 'colleague' ? colleague.owner : ''
   if (recordNoteElement) {
@@ -197,17 +195,27 @@ identityForm?.addEventListener('submit', (event) => {
 
 recordForm?.addEventListener('submit', (event) => {
   event.preventDefault()
-  if (current === null || viewer === null) return
-  const status: ResearchStatus = isResearchStatus(recordStatusSelect?.value) ? recordStatusSelect.value : 'researching'
+  const target = current
+  const self = viewer
+  if (target === null || self === null) return
+  // 状态只在这里归一：非法值不猜，落到默认的「研究中」。
+  // 真正能否写下去由 updateResearchRecord / createResearchRecord 判定。
+  const raw = recordStatusSelect?.value
+  const status: ResearchStatus = isResearchStatus(raw) ? raw : 'researching'
   void (async () => {
-    const existing = ResearchRecordStore.find(await recordStore.read(), current!.asin, viewer!.group)
+    const existing = await recordStore.find(target.asin, self.group)
+    // 编辑权在提交路径上再复核一次：界面隐藏表单是提示，不是许可。
+    if (existing !== null && !canEditRecord(existing, self)) {
+      setRecordError('这条记录由 ' + existing.owner + ' 维护，只有作者本人能改。')
+      return
+    }
+    const summary = recordSummaryInput?.value ?? ''
     const next: ResearchRecord | null = existing === null
       ? createResearchRecord({
-          asin: current!.asin, market: current!.market,
-          owner: viewer!.name, group: viewer!.group,
-          summary: recordSummaryInput?.value ?? '', status,
+          asin: target.asin, market: target.market,
+          owner: self.name, group: self.group, summary, status,
         })
-      : updateResearchRecord(existing, { summary: recordSummaryInput?.value ?? '', status })
+      : updateResearchRecord(existing, { summary, status })
     if (next === null) { setRecordError('无法保存这条记录，请检查填写内容。'); return }
     if (!(await recordStore.save(next))) { setRecordError('无法保存到扩展存储，请稍后重试。'); return }
     setRecordError(null)

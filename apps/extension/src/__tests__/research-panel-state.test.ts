@@ -1,12 +1,31 @@
 import { describe, expect, it } from 'vitest'
-import { describeColleagueRecord, describeRecordForOwner } from '../panel/research-panel-state'
+import { describeColleagueRecord, describeRecordAge, describeRecordForOwner } from '../panel/research-panel-state'
 import { createResearchRecord } from '../research-record'
 
+const updatedAt = 1_700_000_000_000
 const record = (overrides: Partial<Parameters<typeof createResearchRecord>[0]> = {}) =>
   createResearchRecord({
     asin: 'B07Z82895W', market: 'US', owner: 'amy', group: 'team-a', summary: '',
-    now: 1_700_000_000_000, ...overrides,
+    now: updatedAt, ...overrides,
   })!
+
+describe('describeRecordAge', () => {
+  it('says just now for a fresh record', () => {
+    expect(describeRecordAge(updatedAt, updatedAt)).toBe('刚刚')
+  })
+
+  it('counts minutes, hours, days and months', () => {
+    expect(describeRecordAge(updatedAt, updatedAt + 5 * 60_000)).toBe('5 分钟前')
+    expect(describeRecordAge(updatedAt, updatedAt + 3 * 3_600_000)).toBe('3 小时前')
+    expect(describeRecordAge(updatedAt, updatedAt + 2 * 86_400_000)).toBe('2 天前')
+    expect(describeRecordAge(updatedAt, updatedAt + 70 * 86_400_000)).toBe('2 个月前')
+  })
+
+  it('admits when the clock is unusable rather than inventing an age', () => {
+    expect(describeRecordAge(Number.NaN, updatedAt)).toBe('时间未知')
+    expect(describeRecordAge(updatedAt + 1000, updatedAt)).toBe('时间未知')
+  })
+})
 
 describe('describeColleagueRecord', () => {
   it('says nobody has looked when there is no record', () => {
@@ -33,14 +52,15 @@ describe('describeColleagueRecord', () => {
     expect(describeColleagueRecord(record({ status: 'rejected' })).note).toContain('已否决')
     expect(describeColleagueRecord(record({ status: 'researching' })).note).toContain('研究中')
   })
+
+  it('states when the colleague last touched it, because a stale verdict reads differently', () => {
+    const state = describeColleagueRecord(record({ owner: 'ben', now: Date.now() - 3 * 86_400_000 }))
+    expect(state.kind === 'colleague' ? state.ageLabel : '').toBe('3 天前')
+    expect(state.note).toContain('3 天前')
+  })
 })
 
 describe('describeRecordForOwner', () => {
-  it('tells the author they can edit their own record', () => {
-    const state = describeRecordForOwner(record({ summary: 'x' }))
-    expect(state.editable).toBe(true)
-  })
-
   it('hands back the fields the form should be pre-filled with', () => {
     const state = describeRecordForOwner(record({ summary: 'first pass', status: 'verified' }))
     expect(state.summary).toBe('first pass')

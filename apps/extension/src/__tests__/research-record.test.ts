@@ -4,7 +4,6 @@ import {
   createResearchRecord,
   isResearchRecord,
   updateResearchRecord,
-  visibleToGroup,
 } from '../research-record'
 
 const base = {
@@ -89,21 +88,6 @@ describe('canEditRecord', () => {
   })
 })
 
-describe('visibleToGroup', () => {
-  const record = createResearchRecord({ ...base, summary: '' })!
-
-  it('shows the record to its own group', () => {
-    expect(visibleToGroup(record, 'team-a')).toBe(true)
-  })
-
-  it('hides the record from another group', () => {
-    expect(visibleToGroup(record, 'team-b')).toBe(false)
-  })
-
-  it('hides the record from a viewer whose group is unknown', () => {
-    expect(visibleToGroup(record, null)).toBe(false)
-  })
-})
 
 describe('isResearchRecord', () => {
   it('accepts a complete record', () => {
