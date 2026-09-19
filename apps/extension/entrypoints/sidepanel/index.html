@@ -12,16 +12,15 @@
         <h1>选品面板</h1>
         <p id="source" class="panel-source"></p>
         <p id="viewer" class="panel-viewer"></p>
+        <button id="viewer-clear" type="button" hidden>更换密钥</button>
       </header>
 
       <section id="identity" class="panel-identity" hidden>
-        <p class="panel-hint">先设置你是谁、属于哪个小组，研究记录才能归属到人、按小组隔离。</p>
+        <p class="panel-hint">填入管理员发给你的访问密钥：研究记录的归属与小组由服务端按密钥确定，客户端说了不算。</p>
         <form id="identity-form" class="panel-identity-form">
-          <label for="viewer-name">名字</label>
-          <input id="viewer-name" name="name" type="text" maxlength="64" autocomplete="off" placeholder="例如 amy" />
-          <label for="viewer-group">小组</label>
-          <input id="viewer-group" name="group" type="text" maxlength="64" autocomplete="off" placeholder="例如 team-a" />
-          <button id="identity-submit" type="submit">保存身份</button>
+          <label for="viewer-name">访问密钥</label>
+          <input id="viewer-name" name="token" type="password" maxlength="512" autocomplete="off" placeholder="粘贴访问密钥" />
+          <button id="identity-submit" type="submit">保存密钥</button>
           <p id="identity-error" class="panel-error" role="alert" hidden></p>
         </form>
       </section>

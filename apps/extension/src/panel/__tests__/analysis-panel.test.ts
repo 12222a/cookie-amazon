@@ -2,15 +2,26 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createAnalysisObject } from '../../analysis-object'
 import { ANALYSIS_OBJECT_STORAGE_KEY } from '../../analysis-object-store'
 import { VIEWER_IDENTITY_STORAGE_KEY } from '../../viewer-identity'
-import { RESEARCH_RECORDS_STORAGE_KEY } from '../../research-record-store'
 import type { AnalysisResult } from '../analysis-client'
 import { renderAnalysisViews } from '../analysis-view'
 import { buildAnalysisEvidence } from '../analysis-evidence'
 
-const mocks = vi.hoisted(() => ({ ask: vi.fn(), positions: vi.fn(), reviews: vi.fn() }))
+const mocks = vi.hoisted(() => ({ ask: vi.fn(), positions: vi.fn(), reviews: vi.fn(), find: vi.fn(), save: vi.fn() }))
 vi.mock('../analysis-client', () => ({ askAnalysis: mocks.ask }))
 vi.mock('../keyword-position-cache-client', () => ({ requestKeywordPositionsCached: mocks.positions }))
 vi.mock('../review-comments-client', () => ({ fetchSellerSpriteReviews: mocks.reviews }))
+// 研究记录现在走服务端，面板只依赖这个客户端的判定结果。
+vi.mock('../research-record-client', () => ({
+  ResearchRecordClient: class {
+    public find(...args: unknown[]) { return mocks.find(...args) }
+    public save(...args: unknown[]) { return mocks.save(...args) }
+  },
+  describeRecordResult: (result: { kind: string; message?: string }) =>
+    result.kind === 'unauthenticated' ? '需要访问密钥'
+      : result.kind === 'unavailable' ? '暂时无法连接研究记录服务'
+        : result.kind === 'forbidden' ? (result.message ?? '只有作者本人能改')
+          : null,
+}))
 
 // A small DOM double keeps this test at the panel's event/storage boundary.
 class Node {
@@ -39,10 +50,16 @@ beforeEach(async () => {
   mocks.ask.mockReset()
   mocks.positions.mockReset().mockResolvedValue({ kind: 'rows', rows: [], summary: { totalKeywords: 0, rankedKeywords: 0, adKeywords: 0, sourceTypeCounts: [] }, cached: false, ageMs: 0 })
   mocks.reviews.mockReset().mockResolvedValue({ kind: 'data', data: { items: [], total: 0 } })
+  mocks.find.mockReset().mockResolvedValue({ kind: 'none' })
+  // 保存成功返回 found（服务端返回写入后的记录），none 不是写入结果。
+  mocks.save.mockReset().mockResolvedValue({
+    kind: 'found',
+    record: { asin: 'B0ABCDEFGH', market: 'US', owner: 'Alice', group: 'A', status: 'verified', summary: '', updatedAt: 1_700_000_000_000 },
+  })
   nodes = new Map()
   stored = {
     [ANALYSIS_OBJECT_STORAGE_KEY]: createAnalysisObject({ asin: 'B0ABCDEFGH', market: 'US', source: 'manual', owner: null, group: null }),
-    [VIEWER_IDENTITY_STORAGE_KEY]: { name: 'Alice', group: 'A' },
+    [VIEWER_IDENTITY_STORAGE_KEY]: { token: 'Alice-token' },
   }
   vi.stubGlobal('document', {
     querySelector(id: string) { const value = new Node(); nodes.set(id, value); return value },
@@ -89,28 +106,76 @@ describe('analysis panel lifecycle', () => {
     mocks.ask.mockResolvedValue(answer)
     node('#analysis-form').dispatch('submit')
     await settle()
-    stored[VIEWER_IDENTITY_STORAGE_KEY] = { name: 'Bob', group: 'B' }
+    stored[VIEWER_IDENTITY_STORAGE_KEY] = { token: 'Bob-token' }
     changed({ [VIEWER_IDENTITY_STORAGE_KEY]: {} }, 'local')
     expect(node('#analysis-answer').hidden).toBe(true)
     expect(node('#analysis-facts').children).toHaveLength(0)
     await settle()
   })
 
-  it.each(['identity', 'record', 'positions', 'reviews'])('discards an outstanding answer after %s changes', async (kind) => {
+  it.each(['identity', 'positions', 'reviews'])('discards an outstanding answer after %s changes', async (kind) => {
     let finish!: (result: AnalysisResult) => void
     mocks.ask.mockImplementation(() => new Promise<AnalysisResult>((resolve) => { finish = resolve }))
     node('#analysis-form').dispatch('submit')
     await settle()
     expect(mocks.ask).toHaveBeenCalledOnce()
     if (kind === 'identity') {
-      stored[VIEWER_IDENTITY_STORAGE_KEY] = { name: 'Bob', group: 'B' }
+      stored[VIEWER_IDENTITY_STORAGE_KEY] = { token: 'Bob-token' }
       changed({ [VIEWER_IDENTITY_STORAGE_KEY]: {} }, 'local')
-    } else if (kind === 'record') changed({ [RESEARCH_RECORDS_STORAGE_KEY]: {} }, 'local')
-    else node(kind === 'positions' ? '#load-positions' : '#load-reviews').dispatch('click')
+    } else node(kind === 'positions' ? '#load-positions' : '#load-reviews').dispatch('click')
     await settle()
     finish(answer)
     await settle()
     expect(node('#analysis-answer').hidden).toBe(true)
     expect(node('#analysis-ask').disabled).toBe(false)
+  })
+
+  it('discards an outstanding answer when the saved record changes', async () => {
+    let finish!: (result: AnalysisResult) => void
+    mocks.ask.mockImplementation(() => new Promise<AnalysisResult>((resolve) => { finish = resolve }))
+    node('#analysis-form').dispatch('submit')
+    await settle()
+    expect(mocks.ask).toHaveBeenCalledOnce()
+    // 保存研究记录与提问走同一条作废路径：结论变了，旧回答就不再对应当前证据。
+    node('#record-status').value = 'verified'
+    node('#record-form').dispatch('submit')
+    await settle()
+    finish(answer)
+    await settle()
+    expect(node('#analysis-answer').hidden).toBe(true)
+    expect(node('#analysis-ask').disabled).toBe(false)
+  })
+
+  it('reloads the record for the new identity instead of leaving the previous one on screen', async () => {
+    mocks.find.mockResolvedValue({ kind: 'found', record: { asin: 'B0ABCDEFGH', market: 'US', owner: 'Alice', group: 'A', status: 'verified', summary: 'A 的结论', updatedAt: 1_700_000_000_000 } })
+    changed({ [ANALYSIS_OBJECT_STORAGE_KEY]: {} }, 'local')
+    await settle()
+    expect(node('#record-owner').textContent).toBe('Alice')
+    // 换人：服务端会按新密钥返回另一条（或没有）记录。
+    mocks.find.mockResolvedValue({ kind: 'none' })
+    stored[VIEWER_IDENTITY_STORAGE_KEY] = { token: 'Bob-token' }
+    changed({ [VIEWER_IDENTITY_STORAGE_KEY]: {} }, 'local')
+    await settle()
+    expect(node('#record-owner').textContent).toBe('')
+    expect(node('#record-note').textContent).toContain('还没有人研究过')
+  })
+
+  it('clears the record and the answer when the key is removed', async () => {
+    mocks.ask.mockResolvedValue(answer)
+    mocks.find.mockResolvedValue({ kind: 'found', record: { asin: 'B0ABCDEFGH', market: 'US', owner: 'Alice', group: 'A', status: 'verified', summary: 'A 的结论', updatedAt: 1_700_000_000_000 } })
+    changed({ [ANALYSIS_OBJECT_STORAGE_KEY]: {} }, 'local')
+    await settle()
+    expect(node('#record-owner').textContent).toBe('Alice')
+    node('#analysis-form').dispatch('submit')
+    await settle()
+    expect(node('#analysis-answer').hidden).toBe(false)
+    // 退出：密钥被清掉后，屏幕上不能再留着上一身份的记录与回答。
+    stored[VIEWER_IDENTITY_STORAGE_KEY] = null
+    changed({ [VIEWER_IDENTITY_STORAGE_KEY]: {} }, 'local')
+    await settle()
+    expect(node('#analysis-answer').hidden).toBe(true)
+    expect(node('#record-owner').textContent).toBe('')
+    expect(node('#record-note').textContent).toContain('需要访问密钥')
+    expect(node('#identity').hidden).toBe(false)
   })
 })

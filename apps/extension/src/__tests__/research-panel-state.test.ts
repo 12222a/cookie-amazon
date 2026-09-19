@@ -1,13 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { describeColleagueRecord, describeRecordAge, describeRecordForOwner } from '../panel/research-panel-state'
-import { createResearchRecord } from '../research-record'
+import type { DisplayableRecord } from '../panel/research-panel-state'
 
 const updatedAt = 1_700_000_000_000
-const record = (overrides: Partial<Parameters<typeof createResearchRecord>[0]> = {}) =>
-  createResearchRecord({
-    asin: 'B07Z82895W', market: 'US', owner: 'amy', group: 'team-a', summary: '',
-    now: updatedAt, ...overrides,
-  })!
+/** 展示层只要这几个字段；老测试用完整记录构造，现在直接给形状即可。 */
+const record = (overrides: Partial<DisplayableRecord> = {}): DisplayableRecord => ({
+  owner: 'amy', status: 'researching', summary: '', updatedAt, ...overrides,
+})
 
 describe('describeRecordAge', () => {
   it('says just now for a fresh record', () => {
@@ -54,7 +53,7 @@ describe('describeColleagueRecord', () => {
   })
 
   it('states when the colleague last touched it, because a stale verdict reads differently', () => {
-    const state = describeColleagueRecord(record({ owner: 'ben', now: Date.now() - 3 * 86_400_000 }))
+    const state = describeColleagueRecord(record({ owner: 'ben', updatedAt: Date.now() - 3 * 86_400_000 }))
     expect(state.kind === 'colleague' ? state.ageLabel : '').toBe('3 天前')
     expect(state.note).toContain('3 天前')
   })

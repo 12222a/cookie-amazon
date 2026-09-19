@@ -12,40 +12,48 @@ const memoryStorage = (initial: Record<string, unknown> = {}) => {
 }
 
 describe('createViewerIdentity', () => {
-  it('keeps a name and a group', () => {
-    expect(createViewerIdentity({ name: ' amy ', group: ' team-a ' })).toEqual({ name: 'amy', group: 'team-a' })
+  it('keeps a token, trimmed', () => {
+    expect(createViewerIdentity({ token: '  sekrit  ' })).toEqual({ token: 'sekrit' })
   })
 
-  it('refuses an identity missing either half, because归组 is the point', () => {
-    expect(createViewerIdentity({ name: '', group: 'team-a' })).toBeNull()
-    expect(createViewerIdentity({ name: 'amy', group: '   ' })).toBeNull()
+  it('refuses an empty or non-string token', () => {
+    expect(createViewerIdentity({ token: '' })).toBeNull()
+    expect(createViewerIdentity({ token: '   ' })).toBeNull()
+    expect(createViewerIdentity({ token: undefined })).toBeNull()
+    expect(createViewerIdentity({ token: 42 })).toBeNull()
   })
 
   it('caps absurd lengths rather than storing them', () => {
-    expect(createViewerIdentity({ name: 'x'.repeat(200), group: 'team-a' })?.name).toHaveLength(64)
-    expect(createViewerIdentity({ name: 'amy', group: 'y'.repeat(200) })?.group).toHaveLength(64)
+    expect(createViewerIdentity({ token: 'x'.repeat(2_000) })?.token).toHaveLength(512)
   })
 })
 
 describe('describeViewer', () => {
-  it('names the identity for the panel header', () => {
-    expect(describeViewer({ name: 'amy', group: 'team-a' })).toBe('amy · team-a')
+  it('never renders the token itself', () => {
+    const label = describeViewer({ token: 'sekrit' })
+    expect(label).not.toContain('sekrit')
+    expect(label).toContain('已设置')
   })
 
-  it('says plainly when nobody has identified themselves yet', () => {
-    expect(describeViewer(null)).toBe('未设置身份')
+  it('does not show a self-declared name, because the server owns identity', () => {
+    expect(describeViewer({ token: 'sekrit' })).toBe('访问密钥已设置')
+  })
+
+  it('says plainly when no key is set', () => {
+    expect(describeViewer(null)).toBe('未设置访问密钥')
   })
 })
 
 describe('isViewerIdentity', () => {
-  it('accepts a complete identity', () => {
-    expect(isViewerIdentity({ name: 'amy', group: 'team-a' })).toBe(true)
+  it('accepts a token and rejects partial storage', () => {
+    expect(isViewerIdentity({ token: 'sekrit' })).toBe(true)
+    expect(isViewerIdentity(null)).toBe(false)
+    expect(isViewerIdentity({})).toBe(false)
+    expect(isViewerIdentity({ token: '' })).toBe(false)
   })
 
-  it('rejects partial storage', () => {
-    expect(isViewerIdentity(null)).toBe(false)
-    expect(isViewerIdentity({ name: 'amy' })).toBe(false)
-    expect(isViewerIdentity({ name: '', group: 'team-a' })).toBe(false)
+  it('rejects the old name/group shape, which could claim any identity', () => {
+    expect(isViewerIdentity({ name: 'amy', group: 'team-a' })).toBe(false)
   })
 })
 
@@ -55,21 +63,29 @@ describe('ViewerIdentityStore', () => {
     expect(await new ViewerIdentityStore(area).read()).toBeNull()
   })
 
-  it('round-trips the identity', async () => {
+  it('round-trips the token', async () => {
     const { area } = memoryStorage()
     const store = new ViewerIdentityStore(area)
-    await store.write({ name: 'amy', group: 'team-a' })
-    expect(await store.read()).toEqual({ name: 'amy', group: 'team-a' })
+    await store.write({ token: 'sekrit' })
+    expect(await store.read()).toEqual({ token: 'sekrit' })
   })
 
-  it('survives a new instance, so identity is set once and not per session', async () => {
+  it('survives a new instance, so the key is entered once and not per session', async () => {
     const { area } = memoryStorage()
-    await new ViewerIdentityStore(area).write({ name: 'amy', group: 'team-a' })
-    expect((await new ViewerIdentityStore(area).read())?.name).toBe('amy')
+    await new ViewerIdentityStore(area).write({ token: 'sekrit' })
+    expect((await new ViewerIdentityStore(area).read())?.token).toBe('sekrit')
+  })
+
+  it('clears the token on logout', async () => {
+    const { area } = memoryStorage()
+    const store = new ViewerIdentityStore(area)
+    await store.write({ token: 'sekrit' })
+    expect(await store.clear()).toBe(true)
+    expect(await store.read()).toBeNull()
   })
 
   it('treats malformed storage as unset', async () => {
-    const { area } = memoryStorage({ 'viewer-identity:v1': { name: 'amy' } })
+    const { area } = memoryStorage({ 'viewer-identity:v2': { token: '' } })
     expect(await new ViewerIdentityStore(area).read()).toBeNull()
   })
 
@@ -86,7 +102,6 @@ describe('ViewerIdentityStore', () => {
       async get() { return {} },
       async set() { throw new Error('quota exceeded') },
     }
-    await expect(new ViewerIdentityStore(area).write({ name: 'amy', group: 'team-a' })).resolves.toBe(false)
+    await expect(new ViewerIdentityStore(area).write({ token: 'sekrit' })).resolves.toBe(false)
   })
 })
-

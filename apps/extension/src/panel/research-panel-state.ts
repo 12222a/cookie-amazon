@@ -1,4 +1,17 @@
-import type { ResearchRecord, ResearchStatus } from '../research-record'
+import type { ResearchStatus } from '../research-record'
+
+/**
+ * 展示层只关心这几个字段。
+ *
+ * 服务器返回的记录还带着 asin/market/group，这里刻意不要求它们：
+ * 界面不按组过滤（过滤是服务端的事），拿到什么就显示什么。
+ */
+export type DisplayableRecord = {
+  owner: string
+  status: ResearchStatus
+  summary: string
+  updatedAt: number
+}
 
 /**
  * 别人（同组同事）留下的记录怎么展示。
@@ -13,8 +26,8 @@ export type ColleagueRecordState =
 /**
  * 作者自己写这条记录时，表单要预填已有内容。
  *
- * 不含「能不能写」的判断：那条规则只有 `canEditRecord` 一个来源，
- * 在界面层再放一个恒真的 editable 只会让两处说法有机会不一致。
+ * 不含「能不能写」的判断：那条规则只在服务端（research-api 的 ON CONFLICT WHERE owner），
+ * 客户端说了不算，所以在界面层也不该再放一个可能与之不符的判断。
  */
 export type OwnerRecordState = {
   summary: string
@@ -54,7 +67,7 @@ export const describeRecordAge = (updatedAt: number, now: number = Date.now()): 
  * 目标是让用户立刻知道：有没有人做过、是谁、多久以前、结论是什么。
  * 摘要为空时不省略——「同事看了但没写结论」本身也是信息。
  */
-export const describeColleagueRecord = (record: ResearchRecord | null): ColleagueRecordState => {
+export const describeColleagueRecord = (record: DisplayableRecord | null): ColleagueRecordState => {
   if (record === null) return { kind: 'none', note: '本小组还没有人研究过这个 ASIN。' }
   const status = RESEARCH_STATUS_LABELS[record.status]
   const summary = record.summary.length > 0 ? record.summary : '（未填写结论摘要）'
@@ -67,7 +80,7 @@ export const describeColleagueRecord = (record: ResearchRecord | null): Colleagu
   }
 }
 
-export const describeRecordForOwner = (record: ResearchRecord | null): OwnerRecordState => ({
+export const describeRecordForOwner = (record: DisplayableRecord | null): OwnerRecordState => ({
   summary: record?.summary ?? '',
   status: record?.status ?? 'researching',
 })

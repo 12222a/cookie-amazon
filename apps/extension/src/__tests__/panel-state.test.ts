@@ -27,7 +27,7 @@ describe('describeAnalysisObject', () => {
       { label: '价格', value: '—' },
       { label: '评分', value: '—' },
       { label: '评论数', value: '—' },
-      { label: '广告位', value: '—' },
+      { label: 'Sponsored 标记', value: '—' },
       { label: '归属人', value: '—' },
       { label: '小组', value: '—' },
     ])
@@ -46,7 +46,7 @@ describe('describeAnalysisObject', () => {
       { label: '价格', value: '$9.99' },
       { label: '评分', value: '4.7' },
       { label: '评论数', value: '1,234' },
-      { label: '广告位', value: '是' },
+      { label: 'Sponsored 标记', value: '是' },
       { label: '归属人', value: 'amy' },
       { label: '小组', value: 'team-a' },
     ])
@@ -57,7 +57,7 @@ describe('describeAnalysisObject', () => {
       asin: 'B07Z82895W', source: 'storefront',
       storefront: { title: null, price: null, rating: null, reviews: null, sponsored: false },
     })!)
-    const sponsored = state.kind === 'ready' ? state.fields.find((field) => field.label === '广告位') : null
+    const sponsored = state.kind === 'ready' ? state.fields.find((field) => field.label === 'Sponsored 标记') : null
     expect(sponsored?.value).toBe('否')
   })
 })

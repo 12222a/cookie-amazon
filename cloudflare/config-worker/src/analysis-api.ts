@@ -84,7 +84,7 @@ export const buildFacts = (evidence: AnalysisEvidence): AnalysisFact[] => {
     fact('object.market', '站点', evidence.market, 'storefront'),
   ]
   const objectFields: Array<[keyof AnalysisEvidence['object'], string]> = [
-    ['title', '前台标题'], ['price', '前台价格'], ['rating', '前台评分'], ['reviews', '前台评论数'], ['sponsored', '前台是否广告位'],
+    ['title', '前台标题'], ['price', '前台价格'], ['rating', '前台评分'], ['reviews', '前台评论数'], ['sponsored', '前台 Sponsored 标记'],
   ]
   for (const [key, label] of objectFields) {
     const value = evidence.object[key]
@@ -131,13 +131,49 @@ export const buildFacts = (evidence: AnalysisEvidence): AnalysisFact[] => {
   return facts
 }
 
-export const forbiddenQuestion = (question: string): boolean =>
-  /利润|毛利|净利|成本|费用|运费|税费|合规|侵权|profit|margin|cost|fee|compliance|legal/i.test(question)
+/**
+ * 越界判断必须抗住模型的「花样写法」，否则过滤只是摆设：
+ * 全角字母（ＰＲＯＦＩＴ）、词中间塞零宽字符、用换行或 Markdown 加粗把一个词拆开
+ * （利\n润、利**润**）都能绕过朴素的子串匹配，因此先归一化再匹配。
+ *
+ * 中文用去掉所有空白后的紧凑串（利 润 → 利润）；英文用词边界——
+ * 证据里天然有 Costco 这类含 cost 的词，子串匹配会把合法回答一起毙掉。
+ */
+const ZERO_WIDTH = /[\u200B-\u200D\uFEFF\uFE0E\uFE0F]/g
+
+const compactOf = (value: string): string =>
+  value.normalize('NFKC').replace(ZERO_WIDTH, '').replace(/[*_`~]/g, '').replace(/\s+/g, '')
+
+const spacedOf = (value: string): string =>
+  value.normalize('NFKC').replace(ZERO_WIDTH, '').replace(/[*_`~]/g, ' ').replace(/\s+/g, ' ')
+
+const OUT_OF_SCOPE_CJK = /利润|毛利|净利|成本|费用|运费|税费|合规|侵权|法律|合法|违法|稳赚|上架|值得投入|值得入场|值得做|能不能做|能不能卖|能做|不能做|能不能赚/
+const OUT_OF_SCOPE_EN = /\b(?:profit|profits|profitability|margin|margins|cost|costs|fees?|compliance|compliant|legal|legally|illegal|viable|launch|launching)\b/i
+
+/**
+ * 范围声明本身必然包含「成本、利润、合规」，所以它要被允许——
+ * 但只允许它原样独立出现：前面加「并非」或后面接「不过这个品能做」，
+ * 含义就翻转成了判断，必须连同它一起拒绝。
+ */
+const SCOPE_BOUNDARY_STATEMENT =
+  '当前证据仅支持前台、词位、评论和研究记录分析，无法判断成本、利润、法律合规或这个品能不能做。'
+
+const boundaryCompact = compactOf(SCOPE_BOUNDARY_STATEMENT).replace(/[。.]$/, '')
+
+/** 这句文字能进 prompt 与回答吗：只有「原样复述范围声明」或「不含越界用语」才放行。 */
+export const isInScopeText = (value: string): boolean => {
+  const compact = compactOf(value)
+  if (compact.replace(/[。.]$/, '') === boundaryCompact) return true
+  return !OUT_OF_SCOPE_CJK.test(compact) && !OUT_OF_SCOPE_EN.test(spacedOf(value))
+}
+
+export const forbiddenQuestion = (question: string): boolean => !isInScopeText(question)
 
 const SYSTEM_PROMPT = '你是亚马逊美国站单个 ASIN 的研究助手。你只能根据用户提供的证据回答，不得补造数据。\n'
   + '把可直接从证据读出的内容放进 facts，把带有比较、原因、风险或下一步判断的内容放进 inferences。\n'
   + '每条回答至少引用一个真实的 citation ID；citation ID 必须逐字取自证据列表。数据缺失或冲突时，要在 facts 中明确写出“数据不足”或“字段冲突”，不要给确定结论。\n'
-  + '不要回答利润、成本、费用、税费、合规、侵权或法律判断。只输出 JSON，不要 Markdown。\n'
+  + '不要回答利润、成本、费用、税费、合规、侵权或法律判断。若证据不足以判断这一点，直接复述这句：' + SCOPE_BOUNDARY_STATEMENT + '\n'
+  + '只输出 JSON，不要 Markdown。\n'
   + 'JSON 格式：{"facts":["..."],"inferences":["..."],"citations":["object.asin"],"views":["object-summary","keyword-table"]}。\n'
   + 'views 只能从 object-summary、keyword-summary、keyword-table、keyword-trend、review-summary、review-pain-points、research-record 中选择；它们只是固定组件的选择，不是代码。'
 
@@ -170,8 +206,22 @@ const parseModelJson = (content: string): Record<string, unknown> | null => {
 export const parseModelAnswer = (payload: unknown, evidence: AnalysisEvidence): { answer: AnalysisAnswer; views: unknown } | null => {
   const parsed = parseModelJson(modelContent(payload))
   if (!parsed || !Array.isArray(parsed.facts) || !Array.isArray(parsed.inferences) || !Array.isArray(parsed.citations)) return null
-  const facts = parsed.facts.filter((item): item is string => typeof item === 'string' && item.trim().length > 0 && item.length <= 1_000).map((item) => item.trim()).slice(0, 8)
-  const inferences = parsed.inferences.filter((item): item is string => typeof item === 'string' && item.trim().length > 0 && item.length <= 1_000).map((item) => item.trim()).slice(0, 8)
+  /**
+   * 输出侧与输入侧用同一套越界判断：提示词只是请求，模型可能不照做，
+   * 因此越界内容必须在解析处被丢弃——两种写法都要过滤，
+   * 而且整体作废而不是剔除那一条：部分接受会让回答读起来像是「有边界」，
+   * 实际上已经在给越界结论了。
+   */
+  const strings = (value: unknown[]): string[] | null => {
+    const items = value
+      .filter((item): item is string => typeof item === 'string' && item.trim().length > 0 && item.length <= 1_000)
+      .map((item) => item.trim())
+      .slice(0, 8)
+    return items.every((item) => isInScopeText(item)) ? items : null
+  }
+  const facts = strings(parsed.facts)
+  const inferences = strings(parsed.inferences)
+  if (facts === null || inferences === null) return null
   const ids = parsed.citations.filter((item): item is string => typeof item === 'string' && item.length > 0 && item.length <= 128)
   const available = new Map(buildFacts(evidence).map((item) => [item.id, item]))
   const citations: AnalysisCitation[] = []

@@ -472,7 +472,7 @@ export type SellerSpriteKeywordItem = {
   searchesTrend: SellerSpriteKeywordTrend[] | null
   /** 自然位。null 表示这个 ASIN 在该词上没有自然排名。 */
   natural: SellerSpriteKeywordPosition | null
-  /** 广告位。null 表示没有广告曝光。 */
+  /** 广告位。null 表示没有广告曝光；区别于前台卡片上的 Sponsored 标记。 */
   ad: SellerSpriteKeywordPosition | null
   /** 自然流量占比，0..1。 */
   naturalRatio: number | null

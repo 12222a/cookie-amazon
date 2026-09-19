@@ -21,6 +21,22 @@ const SPARSE_CARD = card({
   asin: 'B0IJKLMNOP',
   body: '<h2><span>Generic Holder</span></h2><span class="a-price"><span class="a-offscreen">$9.99</span></span>',
 })
+const NESTED_CARD_BODY = `
+  <div class="a-section s-card-container">
+    <div class="a-section s-product-image-container">
+      <a href="/dp/B0ABCDEFGH"><div class="a-section"><img alt="Phone stand"></div></a>
+    </div>
+    <div class="a-section s-title-instructions-style">
+      <div class="a-row"><a href="/dp/B0ABCDEFGH"><h2><span>Phone Stand Aluminum</span></h2></a></div>
+      <div class="a-row"><i><span class="a-icon-alt">4.5 out of 5 stars</span></i></div>
+      <div class="a-row"><a href="/product-reviews/B0ABCDEFGH" aria-label="4,236 ratings"><span>4,236</span></a></div>
+    </div>
+    <div class="a-section"><div class="a-row">
+      <span class="a-price"><span class="a-offscreen">$24.99</span></span>
+    </div></div>
+    <div class="a-section"><span class="a-color-secondary">Sponsored</span></div>
+  </div>
+`
 describe('search result card parsing', () => {
   it('extracts every field the panel shows', () => {
     const [first] = parseSearchResultCards(FULL_CARD)
@@ -32,6 +48,16 @@ describe('search result card parsing', () => {
       reviews: 4236,
       sponsored: true,
     })
+  })
+  it('reads the entire nested storefront card including a Sponsored label at the end', () => {
+    expect(parseSearchResultCards(card({ asin: 'B0ABCDEFGH', body: NESTED_CARD_BODY }))).toEqual([{
+      asin: 'B0ABCDEFGH',
+      title: 'Phone Stand Aluminum',
+      price: 24.99,
+      rating: 4.5,
+      reviews: 4236,
+      sponsored: true,
+    }])
   })
   it('keeps missing fields null instead of inventing values', () => {
     const [sparse] = parseSearchResultCards(SPARSE_CARD)

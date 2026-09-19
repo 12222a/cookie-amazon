@@ -5,7 +5,7 @@ import type {
   AnalysisTrend,
 } from '@cookie-amazon/protocol'
 import type { AnalysisObject } from '../analysis-object'
-import type { ResearchRecord } from '../research-record'
+import type { ServerResearchRecord } from './research-record-client'
 import type { KeywordPositionRow, KeywordPositionSummary } from './keyword-positions'
 import type { ReviewPanelData } from './review-analysis'
 
@@ -14,7 +14,7 @@ type EvidenceInput = {
   keywordRows?: readonly KeywordPositionRow[]
   keywordSummary?: KeywordPositionSummary | null
   reviewData?: ReviewPanelData | null
-  record?: ResearchRecord | null
+  record?: ServerResearchRecord | null
 }
 
 const finiteOrNull = (value: number | null): number | null => value !== null && Number.isFinite(value) ? value : null

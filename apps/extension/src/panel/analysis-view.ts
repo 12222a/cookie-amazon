@@ -51,7 +51,8 @@ const renderObjectSummary = (document: Document, evidence: AnalysisEvidence): HT
   if (object.price !== null) cards.append(card(document, '价格', object.price))
   if (object.rating !== null) cards.append(card(document, '评分', object.rating))
   if (object.reviews !== null) cards.append(card(document, '评论数', object.reviews))
-  if (object.sponsored !== null) cards.append(card(document, '广告位', object.sponsored ? '是' : '否'))
+  // 与下方关键词表的「广告位」区分：那是排名，这是「是不是广告位商品」的标记。
+  if (object.sponsored !== null) cards.append(card(document, 'Sponsored 标记', object.sponsored ? '是' : '否'))
   node.append(cards)
   return node
 }

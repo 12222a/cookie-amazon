@@ -51,7 +51,8 @@ export const describeAnalysisObject = (object: AnalysisObject | null): PanelStat
       { label: '价格', value: money(storefront?.price ?? null) },
       { label: '评分', value: rating(storefront?.rating ?? null) },
       { label: '评论数', value: number(storefront?.reviews ?? null) },
-      { label: '广告位', value: sponsored(storefront?.sponsored ?? null) },
+      // 与「广告位」（关键词排在第几位）区分：这里是前台卡片上的 Sponsored 标记。
+      { label: 'Sponsored 标记', value: sponsored(storefront?.sponsored ?? null) },
       { label: '归属人', value: text(object.owner) },
       { label: '小组', value: text(object.group) },
     ],

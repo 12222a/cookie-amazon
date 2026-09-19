@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { buildFacts, handleAnalysisApi, type AnalysisEnv } from '../analysis-api'
+import { buildFacts, handleAnalysisApi, parseModelAnswer, type AnalysisEnv } from '../analysis-api'
 import type { AnalysisEvidence } from '@cookie-amazon/protocol'
 
 const evidence: AnalysisEvidence = {
@@ -46,7 +46,100 @@ const modelResponse = (overrides: Record<string, unknown> = {}): Response => new
   }) } }],
 }))
 
+const boundaryStatement = '当前证据仅支持前台、词位、评论和研究记录分析，无法判断成本、利润、法律合规或这个品能不能做。'
+
+describe.each(['facts', 'inferences'] as const)('model %s scope boundary', (field) => {
+  it.each([
+    '预计利润率为 30%。',
+    '采购成本为 5 美元。',
+    '这款商品在法律上合法，可以放心销售。',
+    '这个品能做。',
+    '这个品不能做。',
+    '这个品值得投入。',
+    '建议直接上架销售。',
+    '预计稳赚，值得入场。',
+    'Expected net margin is 30%.',
+    'Shipping fees are $5 per unit.',
+    'This product is legally compliant.',
+    'This product is illegal.',
+    'This is a viable product to sell.',
+    'You should launch this product.',
+    '预计利 \n润率为 30%。',
+    '预计利\u200b润率为 30%。',
+    'ＰＲＯＦＩＴ is guaranteed.',
+    '预计**利**润为 30%。',
+    '没有成本数据，但这个品能做。',
+    '无法判断是否合规，但可以确定没有侵权风险。',
+    boundaryStatement + '不过这个品能做。',
+    '并非' + boundaryStatement,
+  ])('rejects out-of-scope text at the parser: %s', async (text) => {
+    const payload = await modelResponse({ [field]: ['ASIN 是 B0ABCDEFGH', text] }).json()
+    expect(parseModelAnswer(payload, evidence)).toBeNull()
+  })
+
+  it.each(['预计利润率为 30%。', '采购成本为 5 美元。', '这款商品合法。', '这个品能做。'])('rejects unsafe model output for an ordinary question: %s', async (text) => {
+    const fetcher = vi.fn(async () => modelResponse({ [field]: [boundaryStatement, text] }))
+    const response = await handleAnalysisApi(request(), env, fetcher as typeof fetch)
+    expect(fetcher).toHaveBeenCalledOnce()
+    expect(response.status).toBe(502)
+    const body = await response.json()
+    expect(body).toEqual({ ok: false, error: 'AI_RESPONSE_INVALID', message: 'AI 返回内容无法校验' })
+    expect(JSON.stringify(body)).not.toContain(text)
+  })
+
+  it('preserves a standalone scope disclaimer without making a product decision', async () => {
+    const payload = await modelResponse({ [field]: [boundaryStatement] }).json()
+    expect(parseModelAnswer(payload, evidence)?.answer[field]).toEqual([boundaryStatement])
+  })
+})
+
 describe('analysis worker api', () => {
+  it.each(['法律风险如何？', '这个品能不能做？', '是否值得入场？'])('refuses out-of-scope questions before calling the model: %s', async (question) => {
+    const fetcher = vi.fn()
+    const response = await handleAnalysisApi(request({ question }), env, fetcher as typeof fetch)
+    expect(response.status).toBe(422)
+    expect(await response.json()).toMatchObject({ ok: false, error: 'UNSUPPORTED_SCOPE' })
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  it('preserves supported facts, qualified inferences, and evidence citations', async () => {
+    const supportedEvidence: AnalysisEvidence = {
+      ...evidence,
+      object: { ...evidence.object, title: 'Coffee Maker by Costco', price: 19.99, rating: 4.5, reviews: 120, sponsored: true },
+      keyword: {
+        summary: { totalKeywords: 1, rankedKeywords: 1, adKeywords: 1, sourceTypeCounts: [] },
+        rows: [{ keyword: 'coffee maker', natural: '3', ad: '2', naturalShare: '80%', adShare: '20%', types: '自然、广告', trend: { kind: 'unavailable' } }],
+      },
+    }
+    const facts = [
+      '前台标题是 Coffee Maker by Costco，价格为 19.99 美元。',
+      '前台评分为 4.5，评论数为 120。',
+      '前台 Sponsored 标记为是。',
+      '关键词 coffee maker 自然位为 3，广告位为 2，自然流量占比为 80%。',
+    ]
+    const inferences = ['数据不足，评论样本缺失，建议补充评论后再分析痛点。', '词位存在字段冲突，不能据此确定流量结构。', boundaryStatement]
+    const ids = ['object.title', 'object.price', 'object.rating', 'object.reviews', 'object.sponsored', 'keyword.row.0.natural', 'keyword.row.0.ad', 'keyword.row.0.naturalShare']
+    const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const sent = JSON.parse(String(init?.body))
+      const sentFacts = JSON.parse(sent.messages[1].content).facts
+      expect(sentFacts).toContainEqual({ id: 'object.sponsored', label: '前台 Sponsored 标记', value: '是', source: 'storefront' })
+      return modelResponse({ facts, inferences, citations: ids })
+    })
+    const response = await handleAnalysisApi(request({ question: 'Coffee Maker 的前台与词位信息是什么？', evidence: supportedEvidence }), env, fetcher as typeof fetch)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      answer: { facts, inferences, citations: buildFacts(supportedEvidence).filter((item) => ids.includes(item.id)) },
+    })
+  })
+
+  it.each([true, false, null])('describes sponsored=%s as a storefront marker', (sponsored) => {
+    const facts = buildFacts({ ...evidence, object: { ...evidence.object, sponsored } })
+    expect(facts.find((item) => item.id === 'object.sponsored')).toEqual(sponsored === null ? undefined : {
+      id: 'object.sponsored', label: '前台 Sponsored 标记', value: sponsored ? '是' : '否', source: 'storefront',
+    })
+  })
+
   it('passes monthly search volumes to the model and rejects more than 16 citations', async () => {
     const richEvidence: AnalysisEvidence = { ...evidence, keyword: {
       summary: { totalKeywords: 1, rankedKeywords: 1, adKeywords: 1, sourceTypeCounts: [] },

@@ -9,8 +9,9 @@ import {
 
 import { handleFashionApi, isFashionApiPath, runScheduledGeneration, type FashionEnv } from './fashion-api'
 import { handleAnalysisApi, isAnalysisApiPath, type AnalysisEnv } from './analysis-api'
+import { handleResearchApi, isResearchApiPath, type ResearchEnv } from './research-api'
 
-interface Env extends FashionEnv, AnalysisEnv {
+interface Env extends FashionEnv, AnalysisEnv, ResearchEnv {
   ASSETS: Fetcher
   EXTENSION_CONFIG: KVNamespace
   CONFIG_ENVIRONMENT?: string
@@ -86,6 +87,7 @@ export default {
     const url = new URL(request.url)
     if (url.pathname === '/api/health') return json({ ok: true, service: 'cookie-amazon-business-api', sharedLibrary: true, collaboration: true })
     if (isAnalysisApiPath(url.pathname)) return handleAnalysisApi(request, env)
+    if (isResearchApiPath(url.pathname)) return handleResearchApi(request, env)
     if (url.pathname === CONFIG_PATH) {
       if (request.method !== 'GET') return json({ ok: false, error: 'METHOD_NOT_ALLOWED' }, 405)
       if (hasForbiddenCredentialHeaders(request)) return json({ ok: false, error: 'CREDENTIAL_HEADERS_FORBIDDEN' }, 400)

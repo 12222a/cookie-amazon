@@ -15,28 +15,33 @@ import type {
 import { renderKeywordTrend } from '../../src/panel/keyword-trend-view'
 import { fetchSellerSpriteReviews, type ReviewCommentsResult } from '../../src/panel/review-comments-client'
 import { analyzeSellerSpriteReviews, type ReviewPanelData } from '../../src/panel/review-analysis'
-import { createResearchRecord, canEditRecord, isResearchStatus, updateResearchRecord, type ResearchRecord, type ResearchStatus } from '../../src/research-record'
-import { ResearchRecordStore, RESEARCH_RECORDS_STORAGE_KEY } from '../../src/research-record-store'
+import { isResearchStatus, type ResearchStatus } from '../../src/research-record'
+import { describeRecordResult, ResearchRecordClient } from '../../src/panel/research-record-client'
 import { createViewerIdentity, describeViewer, ViewerIdentityStore, VIEWER_IDENTITY_STORAGE_KEY, type ViewerIdentity } from '../../src/viewer-identity'
 import type { AnalysisAskSuccess } from '@cookie-amazon/protocol'
 
 const objectStore = new AnalysisObjectStore(browser.storage.local)
-const recordStore = new ResearchRecordStore(browser.storage.local)
 const identityStore = new ViewerIdentityStore(browser.storage.local)
 const positionCache = new KeywordPositionCache(browser.storage.local)
+/**
+ * 研究记录的读写在服务端（见 research-record-client），客户端不再持有记录副本：
+ * 本地数组做不到跨浏览器共享，也做不到组间隔离。
+ */
+let recordClient: ResearchRecordClient | null = null
 
 const sourceElement = document.querySelector<HTMLParagraphElement>('#source')
 const viewerElement = document.querySelector<HTMLParagraphElement>('#viewer')
 const identitySection = document.querySelector<HTMLElement>('#identity')
 const identityForm = document.querySelector<HTMLFormElement>('#identity-form')
-const nameInput = document.querySelector<HTMLInputElement>('#viewer-name')
-const groupInput = document.querySelector<HTMLInputElement>('#viewer-group')
+/** 访问密钥输入框。id 沿用 viewer-name，避免一次性改掉样式与测试选择器。 */
+const tokenInput = document.querySelector<HTMLInputElement>('#viewer-name')
+const clearTokenButton = document.querySelector<HTMLButtonElement>('#viewer-clear')
 const identityError = document.querySelector<HTMLParagraphElement>('#identity-error')
 const emptyElement = document.querySelector<HTMLElement>('#empty')
 const objectElement = document.querySelector<HTMLElement>('#object')
 const fieldsElement = document.querySelector<HTMLDListElement>('#fields')
 const formElement = document.querySelector<HTMLFormElement>('#manual')
-const inputElement = document.querySelector<HTMLInputElement>('#asin')
+  const inputElement = document.querySelector<HTMLInputElement>('#asin')
 const errorElement = document.querySelector<HTMLParagraphElement>('#error')
 const loadButton = document.querySelector<HTMLButtonElement>('#load-positions')
 const statusElement = document.querySelector<HTMLParagraphElement>('#positions-status')
@@ -105,6 +110,23 @@ const setRecordError = (message: string | null): void => {
   if (!recordError) return
   recordError.hidden = message === null
   recordError.textContent = message ?? ''
+}
+
+/**
+ * 把研究记录区恢复到「不知道有任何记录」的状态。
+ *
+ * 换身份或退出时必须走过这里：留着上一个身份的 owner 与摘要，
+ * 等于把别组的结论显示给了没有权限的人。
+ */
+const clearRecordPanel = (): void => {
+  if (recordOwnerElement) recordOwnerElement.textContent = ''
+  if (recordNoteElement) {
+    recordNoteElement.hidden = false
+    recordNoteElement.textContent = ''
+  }
+  if (recordForm) recordForm.hidden = true
+  if (recordSummaryInput) recordSummaryInput.value = ''
+  setRecordError(null)
 }
 
 const setStatus = (message: string | null): void => {
@@ -329,21 +351,35 @@ const renderRecord = async (): Promise<void> => {
   const target = current
   const targetKey = positionTargetKey(target)
   recordSection.hidden = false
-  // 只有组内记录可见：组外记录既不该显示，也不该泄漏出「有人研究过」这件事。
-  const visible = await recordStore.find(target.asin, viewer?.group ?? null)
+  if (recordClient === null) {
+    // 没设密钥就没有服务端身份，此时不能拿本地数组冒充隔离。
+    if (recordOwnerElement) recordOwnerElement.textContent = ''
+    if (recordNoteElement) {
+      recordNoteElement.hidden = false
+      recordNoteElement.textContent = '研究记录需要访问密钥：填写后才能看到本小组的记录。'
+    }
+    if (recordForm) recordForm.hidden = true
+    setRecordError(null)
+    return
+  }
+  // 可见性由服务端按密钥对应的小组决定：客户端既不指定组，也拿不到别组的记录。
+  const result = await recordClient.find(target.asin, target.market)
   if (current === null || positionTargetKey(current) !== targetKey) return
+  const visible = result.kind === 'found' ? result.record : null
   const colleague = describeColleagueRecord(visible)
   if (recordOwnerElement) recordOwnerElement.textContent = colleague.kind === 'colleague' ? colleague.owner : ''
+  const notice = describeRecordResult(result)
   if (recordNoteElement) {
     recordNoteElement.hidden = false
-    recordNoteElement.textContent = colleague.note
+    recordNoteElement.textContent = notice ?? colleague.note
   }
-  const editable = visible === null || canEditRecord(visible, viewer)
-  if (recordForm) recordForm.hidden = !editable || viewer === null
+  // 能不能改由服务端在提交时判定；这里只在确实失败时把表单关上。
+  const editable = result.kind === 'found' || result.kind === 'none'
+  if (recordForm) recordForm.hidden = !editable
   const state = describeRecordForOwner(visible)
   if (recordSummaryInput && editable) recordSummaryInput.value = state.summary
   if (recordStatusSelect && editable) recordStatusSelect.value = state.status
-  setRecordError(null)
+  setRecordError(result.kind === 'unavailable' ? '暂时无法连接研究记录服务，显示的可能不是最新状态。' : null)
 }
 
 /** 缓存命中要说出来：用户不会因为「快了」而疑惑，但会因为「同样的数据为什么又出来了」而疑惑。 */
@@ -427,14 +463,16 @@ const askCurrentAnalysis = async (): Promise<void> => {
 
   try {
     // 记录可能刚刚被同事或当前用户更新，提问时再读一次，避免把旧记录送给模型。
-    const record = await recordStore.find(target.asin, viewer?.group ?? null)
+    const recordResult = recordClient === null
+      ? null
+      : await recordClient.find(target.asin, target.market)
     if (requestId !== analysisRequestId || current === null || positionTargetKey(current) !== targetKey) return
     const evidence = buildAnalysisEvidence({
       object: target,
       keywordRows,
       keywordSummary,
       reviewData,
-      record,
+      record: recordResult?.kind === 'found' ? recordResult.record : null,
     })
     const result = await askAnalysis(question, evidence)
     if (requestId !== analysisRequestId || current === null || positionTargetKey(current) !== targetKey) return
@@ -459,12 +497,21 @@ const askCurrentAnalysis = async (): Promise<void> => {
 
 const renderIdentity = async (): Promise<void> => {
   const nextViewer = await identityStore.read()
-  if (viewer?.name !== nextViewer?.name || viewer?.group !== nextViewer?.group) resetAnalysisForTarget()
+  /**
+   * 身份变了就等于换了一个人：他看到的记录、能改的东西都不同了。
+   * 因此不能只换 token——屏幕上属于上一个身份的研究记录必须立刻消失，
+   * 否则新身份会看到（并可能据此判断）别人小组的内容。
+   */
+  const identityChanged = viewer?.token !== nextViewer?.token
+  if (identityChanged) {
+    resetAnalysisForTarget()
+    clearRecordPanel()
+  }
   viewer = nextViewer
+  recordClient = viewer === null ? null : new ResearchRecordClient({ token: viewer.token })
   if (viewerElement) viewerElement.textContent = describeViewer(viewer)
   if (identitySection) identitySection.hidden = viewer !== null
-  if (nameInput && viewer) nameInput.value = viewer.name
-  if (groupInput && viewer) groupInput.value = viewer.group
+  if (clearTokenButton) clearTokenButton.hidden = viewer === null
 }
 
 const render = async (): Promise<void> => {
@@ -531,14 +578,26 @@ const render = async (): Promise<void> => {
 
 identityForm?.addEventListener('submit', (event) => {
   event.preventDefault()
-  const identity = createViewerIdentity({ name: nameInput?.value ?? '', group: groupInput?.value ?? '' })
+  const identity = createViewerIdentity({ token: tokenInput?.value ?? '' })
   if (identity === null) {
-    setIdentityError('名字和小组都要填，研究记录才能归属到人。')
+    setIdentityError('请填写管理员给你的访问密钥。')
     return
   }
   setIdentityError(null)
+  // 换密钥等于换人：旧回答与旧记录都不该继续留在屏幕上。
+  resetAnalysisForTarget()
   void identityStore.write(identity).then((ok) => {
     if (!ok) { setIdentityError('无法保存身份，请检查浏览器存储权限。'); return }
+    return render()
+  })
+})
+
+clearTokenButton?.addEventListener('click', () => {
+  // 退出会立刻清空面板：清掉密钥后，任何还在屏幕上的研究记录与回答都不再对应一个合法身份。
+  resetAnalysisForTarget()
+  void identityStore.clear().then((ok) => {
+    if (!ok) { setIdentityError('无法清除密钥，请检查浏览器存储权限。'); return }
+    if (tokenInput) tokenInput.value = ''
     return render()
   })
 })
@@ -546,28 +605,20 @@ identityForm?.addEventListener('submit', (event) => {
 recordForm?.addEventListener('submit', (event) => {
   event.preventDefault()
   const target = current
-  const self = viewer
-  if (target === null || self === null) return
+  const client = recordClient
+  if (target === null || client === null) return
   // 状态只在这里归一：非法值不猜，落到默认的「研究中」。
-  // 真正能否写下去由 updateResearchRecord / createResearchRecord 判定。
+  // 归属与编辑权由服务端判定：客户端提交什么身份都不算数。
   const raw = recordStatusSelect?.value
   const status: ResearchStatus = isResearchStatus(raw) ? raw : 'researching'
   void (async () => {
-    const existing = await recordStore.find(target.asin, self.group)
-    // 编辑权在提交路径上再复核一次：界面隐藏表单是提示，不是许可。
-    if (existing !== null && !canEditRecord(existing, self)) {
-      setRecordError('这条记录由 ' + existing.owner + ' 维护，只有作者本人能改。')
+    const summary = recordSummaryInput?.value ?? ''
+    const result = await client.save({ asin: target.asin, market: target.market, status, summary })
+    const failure = describeRecordResult(result)
+    if (failure !== null || result.kind !== 'found') {
+      setRecordError(failure ?? '无法保存这条记录，请稍后重试。')
       return
     }
-    const summary = recordSummaryInput?.value ?? ''
-    const next: ResearchRecord | null = existing === null
-      ? createResearchRecord({
-          asin: target.asin, market: target.market,
-          owner: self.name, group: self.group, summary, status,
-        })
-      : updateResearchRecord(existing, { summary, status })
-    if (next === null) { setRecordError('无法保存这条记录，请检查填写内容。'); return }
-    if (!(await recordStore.save(next))) { setRecordError('无法保存到扩展存储，请稍后重试。'); return }
     setRecordError(null)
     resetAnalysisForTarget('研究记录已更新，请重新提问。')
     await renderRecord()
@@ -588,8 +639,9 @@ formElement?.addEventListener('submit', (event) => {
     asin: inputElement?.value ?? '',
     market: DEFAULT_MARKET,
     source: 'manual',
-    owner: viewer?.name ?? null,
-    group: viewer?.group ?? null,
+    // 归属不由客户端填：身份由服务端按密钥确定，对象本身只记 ASIN 与市场。
+    owner: null,
+    group: null,
   })
   if (created === null) {
     setError('ASIN 应为 10 位字母或数字，例如 B07Z82895W。')
@@ -609,7 +661,7 @@ inputElement?.addEventListener('input', () => setError(null))
 
 // 面板同时被两处写入（亚马逊侧选中、本面板手动输入），因此订阅存储变更而不是只在打开时读一次。
 browser.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName === 'local' && [ANALYSIS_OBJECT_STORAGE_KEY, RESEARCH_RECORDS_STORAGE_KEY, VIEWER_IDENTITY_STORAGE_KEY].some((key) => key in changes)) {
+  if (areaName === 'local' && [ANALYSIS_OBJECT_STORAGE_KEY, VIEWER_IDENTITY_STORAGE_KEY].some((key) => key in changes)) {
     resetAnalysisForTarget()
   }
   if (areaName === 'local' && Object.keys(changes).length > 0) void render()

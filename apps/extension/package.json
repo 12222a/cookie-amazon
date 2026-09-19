@@ -16,5 +16,9 @@
     "typecheck": "wxt prepare && tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
-  "devDependencies": { "typescript": "^5.9.3", "wxt": "^0.21.3" }
+  "devDependencies": {
+    "happy-dom": "^20.14.5",
+    "typescript": "^5.9.3",
+    "wxt": "^0.21.3"
+  }
 }

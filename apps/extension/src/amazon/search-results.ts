@@ -1,8 +1,8 @@
 /**
  * 搜索结果卡片的解析与选中对象构造。
  *
- * 这里只做纯字符串处理，不碰 document：亚马逊侧的注入脚本把它作用于真实 DOM 节点，
- * 测试直接喂固定 HTML 片段。改版导致结构变化时，解析返回空值而不是抛错——
+ * 用原生 DOMParser 读取脱离页面的 HTML 片段，不修改亚马逊页面。
+ * 改版导致结构变化时，解析返回空值而不是抛错——
  * 页面照常浏览，只是没有卡片可点。
  */
 import {
@@ -20,9 +20,6 @@ export type SearchResultCard = {
   reviews: number | null
   sponsored: boolean
 }
-const CARD_PATTERN = /<(\w+)\b[^>]*data-component-type="s-search-result"[^>]*>([\s\S]*?)<\/\1>/gi
-const ASIN_IN_OPEN_TAG = /data-asin="([^"]*)"/i
-
 /** 越界或非法的数字实体一律留空，不让一截图里的怪 entity 把整页解析掀翻。 */
 const safeCodePoint = (value: number): string =>
   Number.isInteger(value) && value >= 0 && value <= 0x10ffff ? String.fromCodePoint(value) : ''
@@ -85,9 +82,10 @@ const readSponsored = (body: string): boolean => {
   return /\bSponsored\b/i.test(text) || /\bGesponsert\b/i.test(text) || /赞助/i.test(text)
 }
 /** 单个卡片片段的读取。缺任何字段都返回 null，不猜。 */
-const parseCard = (openTag: string, body: string): SearchResultCard | null => {
-  const asin = (openTag.match(ASIN_IN_OPEN_TAG)?.[1] ?? '').trim().toUpperCase()
+const parseCard = (element: Element): SearchResultCard | null => {
+  const asin = (element.getAttribute('data-asin') ?? '').trim().toUpperCase()
   if (!/^[A-Z0-9]{10}$/.test(asin)) return null
+  const body = element.innerHTML
   return {
     asin,
     title: readTitle(body),
@@ -98,16 +96,14 @@ const parseCard = (openTag: string, body: string): SearchResultCard | null => {
   }
 }
 /**
- * 从一段 HTML 里切出所有搜索结果卡片。
- *
- * 用跟卖家精灵那侧一致的正则切片方式，不引入 DOM 依赖：
- * 解析发生在注入脚本里（那里有真实 document）与测试里（纯字符串），两边行为一致。
+ * 从一段 HTML 里读取完整卡片，保留嵌套结构与相邻卡片的边界。
  */
 export const parseSearchResultCards = (html: string): SearchResultCard[] => {
   if (typeof html !== 'string' || html.length === 0) return []
+  const document = new DOMParser().parseFromString(html, 'text/html')
   const cards: SearchResultCard[] = []
-  for (const match of html.matchAll(CARD_PATTERN)) {
-    const card = parseCard(match[0].slice(0, match[0].indexOf('>') + 1), match[2] ?? '')
+  for (const element of document.querySelectorAll(SEARCH_RESULT_CARD_SELECTOR)) {
+    const card = parseCard(element)
     if (card !== null) cards.push(card)
   }
   return cards
