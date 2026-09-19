@@ -12,6 +12,7 @@ cloudflare/config-worker/.wrangler/
 *.exit
 *.tmp
 .cursor-*
+.playwright-cli/
 .codegraph/
 artifacts/
 chrome-mv3.zip
