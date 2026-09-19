@@ -68,14 +68,37 @@ const readRating = (body: string): number | null => {
   const value = Number(captured.replace(',', '.'))
   return Number.isFinite(value) ? value : null
 }
-/** 评论数允许有千分位与 aria-label 包装，取第一个看起来像计数的数字。 */
-const readReviews = (body: string): number | null => {
-  const raw = firstMatch(body, /(?:aria-label="([^"]*?ratings?[^"]*)"|(\d[\d,]*)\s*(?:ratings?|reviews?|Bewertungen))/i)
-  const text = raw === null ? null : plainText(raw)
-  const match = (text ?? firstMatch(body, /aria-label="([^"]*?[\d,]+[^"]*?)"/i) ?? '').match(/\d[\d,]*/)
+const countFrom = (value: string | null | undefined): number | null => {
+  if (value === null || value === undefined) return null
+  const match = value.match(/\d[\d,]*/)
   if (match === null) return null
-  const value = Number(match[0].replaceAll(',', ''))
-  return Number.isFinite(value) ? value : null
+  const value2 = Number(match[0].replaceAll(',', ''))
+  return Number.isFinite(value2) ? value2 : null
+}
+
+const RATING_WORD = /ratings?|reviews?|Bewertungen/i
+
+/**
+ * 评论数只从「像评论数的地方」读：指向评论区的链接，或标签里带 ratings/reviews 字样的元素。
+ *
+ * 不能退化成「卡片里第一个带数字的 aria-label」——那会把 `4.5 out of 5 stars` 读成 4 条评论、
+ * 把 `FREE delivery Tue, Sep 23` 读成 23 条。读不到就是 null，宁缺勿猜。
+ */
+const readReviews = (element: Element): number | null => {
+  const linked = element.querySelector('a[href*="customerReviews"], a[href*="/product-reviews/"]')
+  const fromLink = countFrom(linked?.getAttribute('aria-label')) ?? countFrom(linked?.textContent)
+  if (fromLink !== null) return fromLink
+
+  for (const candidate of element.querySelectorAll('[aria-label]')) {
+    const label = candidate.getAttribute('aria-label')
+    if (label !== null && RATING_WORD.test(label)) {
+      const value = countFrom(label)
+      if (value !== null) return value
+    }
+  }
+
+  const inline = firstMatch(element.innerHTML, /(\d[\d,]*)\s*(?:ratings?|reviews?|Bewertungen)/i)
+  return countFrom(inline)
 }
 const readSponsored = (body: string): boolean => {
   const text = plainText(body)
@@ -91,7 +114,7 @@ const parseCard = (element: Element): SearchResultCard | null => {
     title: readTitle(body),
     price: readPrice(body),
     rating: readRating(body),
-    reviews: readReviews(body),
+    reviews: readReviews(element),
     sponsored: readSponsored(body),
   }
 }
