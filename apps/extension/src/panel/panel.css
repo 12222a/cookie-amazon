@@ -184,3 +184,79 @@ body {
   outline: 2px solid #6ea8a0;
   outline-offset: 1px;
 }
+
+.panel-viewer {
+  margin: 2px 0 0;
+  color: #8b9794;
+  font-size: 11px;
+}
+
+.panel-identity {
+  padding: 12px;
+  border: 1px solid #695235;
+  background: #2b2116;
+}
+
+.panel-identity .panel-hint {
+  margin: 0 0 10px;
+  color: #ddbf94;
+}
+
+.panel-identity-form,
+.panel-record-form {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.panel-identity-form label,
+.panel-record-form label {
+  color: #8b9794;
+  font-size: 11px;
+}
+
+.panel-identity-form input,
+.panel-record-form input,
+.panel-record-form textarea,
+.panel-record-form select {
+  padding: 6px 8px;
+  border: 1px solid #35414a;
+  background: #131c23;
+  color: #f2f5f3;
+  font: inherit;
+  resize: vertical;
+}
+
+.panel-identity-form button,
+.panel-record-form button {
+  padding: 6px 10px;
+  border: 1px solid #44515a;
+  background: transparent;
+  color: #f2f5f3;
+  font: inherit;
+  cursor: pointer;
+}
+
+.panel-record {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #29343d;
+}
+
+.panel-record-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.panel-record-head h2 {
+  margin: 0;
+  color: #f2f5f3;
+  font-size: 12px;
+}
+
+.panel-record-owner {
+  margin-left: auto;
+  color: #8b9794;
+  font-size: 10px;
+}

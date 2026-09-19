@@ -11,7 +11,20 @@
       <header class="panel-head">
         <h1>选品面板</h1>
         <p id="source" class="panel-source"></p>
+        <p id="viewer" class="panel-viewer"></p>
       </header>
+
+      <section id="identity" class="panel-identity" hidden>
+        <p class="panel-hint">先设置你是谁、属于哪个小组，研究记录才能归属到人、按小组隔离。</p>
+        <form id="identity-form" class="panel-identity-form">
+          <label for="viewer-name">名字</label>
+          <input id="viewer-name" name="name" type="text" maxlength="64" autocomplete="off" placeholder="例如 amy" />
+          <label for="viewer-group">小组</label>
+          <input id="viewer-group" name="group" type="text" maxlength="64" autocomplete="off" placeholder="例如 team-a" />
+          <button id="identity-submit" type="submit">保存身份</button>
+          <p id="identity-error" class="panel-error" role="alert" hidden></p>
+        </form>
+      </section>
 
       <section id="empty" class="panel-empty" hidden>
         <p>还没有分析对象。</p>
@@ -20,6 +33,26 @@
 
       <section id="object" class="panel-object" hidden>
         <dl id="fields" class="panel-fields"></dl>
+
+        <section id="record" class="panel-record" hidden>
+          <div class="panel-record-head">
+            <h2>研究记录</h2>
+            <span id="record-owner" class="panel-record-owner"></span>
+          </div>
+          <p id="record-note" class="panel-hint"></p>
+          <form id="record-form" class="panel-record-form" hidden>
+            <label for="record-summary">结论摘要</label>
+            <textarea id="record-summary" name="summary" rows="3" maxlength="500" placeholder="例如：自然位只在前 3 页且大量依赖广告，先观察"></textarea>
+            <label for="record-status">状态</label>
+            <select id="record-status" name="status">
+              <option value="researching">研究中</option>
+              <option value="verified">已验证</option>
+              <option value="rejected">已否决</option>
+            </select>
+            <button id="record-submit" type="submit">保存研究记录</button>
+            <p id="record-error" class="panel-error" role="alert" hidden></p>
+          </form>
+        </section>
 
         <section class="panel-positions">
           <div class="panel-positions-head">

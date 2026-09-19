@@ -2,12 +2,24 @@ import '../../src/panel/panel.css'
 import { AnalysisObjectStore } from '../../src/analysis-object-store'
 import { createAnalysisObject, DEFAULT_MARKET, type AnalysisObject } from '../../src/analysis-object'
 import { describeAnalysisObject } from '../../src/panel/panel-state'
+import { describeColleagueRecord, describeRecordForOwner } from '../../src/panel/research-panel-state'
 import { requestKeywordPositions, type KeywordPositionResult } from '../../src/panel/keyword-positions-client'
 import type { KeywordPositionRow } from '../../src/panel/keyword-positions'
+import { createResearchRecord, canEditRecord, isResearchStatus, updateResearchRecord, type ResearchRecord, type ResearchStatus } from '../../src/research-record'
+import { ResearchRecordStore } from '../../src/research-record-store'
+import { createViewerIdentity, describeViewer, ViewerIdentityStore, type ViewerIdentity } from '../../src/viewer-identity'
 
 const objectStore = new AnalysisObjectStore(browser.storage.local)
+const recordStore = new ResearchRecordStore(browser.storage.local)
+const identityStore = new ViewerIdentityStore(browser.storage.local)
 
 const sourceElement = document.querySelector<HTMLParagraphElement>('#source')
+const viewerElement = document.querySelector<HTMLParagraphElement>('#viewer')
+const identitySection = document.querySelector<HTMLElement>('#identity')
+const identityForm = document.querySelector<HTMLFormElement>('#identity-form')
+const nameInput = document.querySelector<HTMLInputElement>('#viewer-name')
+const groupInput = document.querySelector<HTMLInputElement>('#viewer-group')
+const identityError = document.querySelector<HTMLParagraphElement>('#identity-error')
 const emptyElement = document.querySelector<HTMLElement>('#empty')
 const objectElement = document.querySelector<HTMLElement>('#object')
 const fieldsElement = document.querySelector<HTMLDListElement>('#fields')
@@ -18,14 +30,34 @@ const loadButton = document.querySelector<HTMLButtonElement>('#load-positions')
 const statusElement = document.querySelector<HTMLParagraphElement>('#positions-status')
 const tableWrapElement = document.querySelector<HTMLElement>('#positions-table-wrap')
 const rowsElement = document.querySelector<HTMLTableSectionElement>('#positions-rows')
+const recordSection = document.querySelector<HTMLElement>('#record')
+const recordOwnerElement = document.querySelector<HTMLSpanElement>('#record-owner')
+const recordNoteElement = document.querySelector<HTMLParagraphElement>('#record-note')
+const recordForm = document.querySelector<HTMLFormElement>('#record-form')
+const recordSummaryInput = document.querySelector<HTMLTextAreaElement>('#record-summary')
+const recordStatusSelect = document.querySelector<HTMLSelectElement>('#record-status')
+const recordError = document.querySelector<HTMLParagraphElement>('#record-error')
 
 let current: AnalysisObject | null = null
+let viewer: ViewerIdentity | null = null
 let loading = false
 
 const setError = (message: string | null): void => {
   if (!errorElement) return
   errorElement.hidden = message === null
   errorElement.textContent = message ?? ''
+}
+
+const setIdentityError = (message: string | null): void => {
+  if (!identityError) return
+  identityError.hidden = message === null
+  identityError.textContent = message ?? ''
+}
+
+const setRecordError = (message: string | null): void => {
+  if (!recordError) return
+  recordError.hidden = message === null
+  recordError.textContent = message ?? ''
 }
 
 const setStatus = (message: string | null): void => {
@@ -81,6 +113,31 @@ const describeResult = (result: KeywordPositionResult): string | null => {
   return `读取失败（${result.reason}），请稍后重试。`
 }
 
+/**
+ * 研究记录区：同组已有记录时显示是谁、什么状态、结论是什么；
+ * 归属人本人则把表单打开并预填，别人只读。
+ */
+const renderRecord = async (): Promise<void> => {
+  if (recordSection === null || current === null) return
+  recordSection.hidden = false
+  // 只有组内记录可见：组外记录既不该显示，也不该泄漏出「有人研究过」这件事。
+  const visible = ResearchRecordStore.find(
+    await recordStore.read(), current.asin, viewer?.group ?? null,
+  )
+  const colleague = describeColleagueRecord(visible)
+  if (recordOwnerElement) recordOwnerElement.textContent = colleague.kind === 'colleague' ? colleague.owner : ''
+  if (recordNoteElement) {
+    recordNoteElement.hidden = false
+    recordNoteElement.textContent = colleague.note
+  }
+  const editable = visible === null || canEditRecord(visible, viewer)
+  if (recordForm) recordForm.hidden = !editable || viewer === null
+  const state = describeRecordForOwner(visible)
+  if (recordSummaryInput && editable) recordSummaryInput.value = state.summary
+  if (recordStatusSelect && editable) recordStatusSelect.value = state.status
+  setRecordError(null)
+}
+
 const loadPositions = async (): Promise<void> => {
   if (current === null || loading) return
   loading = true
@@ -94,12 +151,22 @@ const loadPositions = async (): Promise<void> => {
   }
 }
 
+const renderIdentity = async (): Promise<void> => {
+  viewer = await identityStore.read()
+  if (viewerElement) viewerElement.textContent = describeViewer(viewer)
+  if (identitySection) identitySection.hidden = viewer !== null
+  if (nameInput && viewer) nameInput.value = viewer.name
+  if (groupInput && viewer) groupInput.value = viewer.group
+}
+
 const render = async (): Promise<void> => {
+  await renderIdentity()
   current = await objectStore.read()
   const state = describeAnalysisObject(current)
   if (state.kind === 'empty') {
     if (emptyElement) emptyElement.hidden = false
     if (objectElement) objectElement.hidden = true
+    if (recordSection) recordSection.hidden = true
     if (sourceElement) sourceElement.textContent = ''
     return
   }
@@ -111,13 +178,54 @@ const render = async (): Promise<void> => {
   setStatus(null)
   if (tableWrapElement) tableWrapElement.hidden = true
   renderRows([])
+  await renderRecord()
 }
+
+identityForm?.addEventListener('submit', (event) => {
+  event.preventDefault()
+  const identity = createViewerIdentity({ name: nameInput?.value ?? '', group: groupInput?.value ?? '' })
+  if (identity === null) {
+    setIdentityError('名字和小组都要填，研究记录才能归属到人。')
+    return
+  }
+  setIdentityError(null)
+  void identityStore.write(identity).then((ok) => {
+    if (!ok) { setIdentityError('无法保存身份，请检查浏览器存储权限。'); return }
+    return render()
+  })
+})
+
+recordForm?.addEventListener('submit', (event) => {
+  event.preventDefault()
+  if (current === null || viewer === null) return
+  const status: ResearchStatus = isResearchStatus(recordStatusSelect?.value) ? recordStatusSelect.value : 'researching'
+  void (async () => {
+    const existing = ResearchRecordStore.find(await recordStore.read(), current!.asin, viewer!.group)
+    const next: ResearchRecord | null = existing === null
+      ? createResearchRecord({
+          asin: current!.asin, market: current!.market,
+          owner: viewer!.name, group: viewer!.group,
+          summary: recordSummaryInput?.value ?? '', status,
+        })
+      : updateResearchRecord(existing, { summary: recordSummaryInput?.value ?? '', status })
+    if (next === null) { setRecordError('无法保存这条记录，请检查填写内容。'); return }
+    if (!(await recordStore.save(next))) { setRecordError('无法保存到扩展存储，请稍后重试。'); return }
+    setRecordError(null)
+    await renderRecord()
+  })()
+})
 
 loadButton?.addEventListener('click', () => { void loadPositions() })
 
 formElement?.addEventListener('submit', (event) => {
   event.preventDefault()
-  const created = createAnalysisObject({ asin: inputElement?.value ?? '', market: DEFAULT_MARKET, source: 'manual' })
+  const created = createAnalysisObject({
+    asin: inputElement?.value ?? '',
+    market: DEFAULT_MARKET,
+    source: 'manual',
+    owner: viewer?.name ?? null,
+    group: viewer?.group ?? null,
+  })
   if (created === null) {
     setError('ASIN 应为 10 位字母或数字，例如 B07Z82895W。')
     return
