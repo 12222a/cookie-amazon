@@ -28,10 +28,27 @@ export type KeywordPositionResult =
   | { kind: 'not-logged-in' }
   | { kind: 'permission-required' }
   | { kind: 'failed'; reason: string }
+
+/**
+ * 取数结果的两层：原始响应与展示行。
+ *
+ * 缓存需要原始响应（它与谁在看无关，可跨人复用），界面需要展示行。
+ * 分成两层，两个调用方各取所需，不必让其中一方将就另一方。
+ */
+export type KeywordReverseResult =
+  | { kind: 'data'; data: SellerSpriteKeywordReverseData }
+  | { kind: 'unsupported-market'; market: string }
+  | { kind: 'not-logged-in' }
+  | { kind: 'permission-required' }
+  | { kind: 'failed'; reason: string }
 type SendMessage = (message: unknown) => Promise<unknown>
 const defaultSend: SendMessage = (message) => browser.runtime.sendMessage(message)
 const requestId = (): string => `panel-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-const failureKind = (code: string): KeywordPositionResult => {
+/**
+ * 把上游错误码归到两种结果上。返回的三种 kind 在两层结果里同形，
+ * 因此这里的类型是它们的交集，两层都能直接用。
+ */
+const failureKind = (code: string): Extract<KeywordPositionResult, { kind: 'unsupported-market' | 'not-logged-in' | 'permission-required' | 'failed' }> => {
   if (code === 'TARGET_NOT_LOGGED_IN') return { kind: 'not-logged-in' }
   if (code === 'TARGET_PERMISSION_MISSING' || code === 'PERMISSION_REQUEST_DENIED') {
     return { kind: 'permission-required' }
@@ -46,15 +63,16 @@ const buildInput = (asin: string, marketId: number): SellerSpriteKeywordReverseI
   badges: [],
   limit: 50,
 })
+
 /**
- * 取某个 ASIN 的词位。任何异常都翻译成结果对象，不向调用方抛错——
+ * 取某个 ASIN 的原始反查响应。任何异常都翻译成结果对象，不向调用方抛错——
  * 面板要能一直显示，不能因为一次取数失败就白屏。
  */
-export const requestKeywordPositions = async (
+export const fetchKeywordReverse = async (
   asin: string,
   market: string,
   options: { send?: SendMessage } = {},
-): Promise<KeywordPositionResult> => {
+): Promise<KeywordReverseResult> => {
   const marketId = KEYWORD_MARKET_IDS[market.trim().toUpperCase()]
   if (marketId === undefined) return { kind: 'unsupported-market', market }
   const send = options.send ?? defaultSend
@@ -78,5 +96,18 @@ export const requestKeywordPositions = async (
     return { kind: 'failed', reason: 'TARGET_RESPONSE_INVALID' }
   }
   if (!response.ok) return failureKind(response.error.code)
-  return { kind: 'rows', rows: describeKeywordPositions(response.data as SellerSpriteKeywordReverseData) }
+  return { kind: 'data', data: response.data as SellerSpriteKeywordReverseData }
+}
+/**
+ * 取某个 ASIN 的词位。任何异常都翻译成结果对象，不向调用方抛错——
+ * 面板要能一直显示，不能因为一次取数失败就白屏。
+ */
+export const requestKeywordPositions = async (
+  asin: string,
+  market: string,
+  options: { send?: SendMessage } = {},
+): Promise<KeywordPositionResult> => {
+  const result = await fetchKeywordReverse(asin, market, options)
+  if (result.kind !== 'data') return result
+  return { kind: 'rows', rows: describeKeywordPositions(result.data) }
 }

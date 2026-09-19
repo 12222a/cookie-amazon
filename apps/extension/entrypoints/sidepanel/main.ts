@@ -3,7 +3,9 @@ import { AnalysisObjectStore } from '../../src/analysis-object-store'
 import { createAnalysisObject, DEFAULT_MARKET, type AnalysisObject } from '../../src/analysis-object'
 import { describeAnalysisObject } from '../../src/panel/panel-state'
 import { describeColleagueRecord, describeRecordForOwner, RESEARCH_STATUS_LABELS } from '../../src/panel/research-panel-state'
-import { requestKeywordPositions, type KeywordPositionResult } from '../../src/panel/keyword-positions-client'
+import { type KeywordPositionResult } from '../../src/panel/keyword-positions-client'
+import { requestKeywordPositionsCached, type CachedKeywordPositionResult } from '../../src/panel/keyword-position-cache-client'
+import { KeywordPositionCache } from '../../src/panel/keyword-position-cache'
 import type { KeywordPositionRow } from '../../src/panel/keyword-positions'
 import { createResearchRecord, canEditRecord, isResearchStatus, updateResearchRecord, type ResearchRecord, type ResearchStatus } from '../../src/research-record'
 import { ResearchRecordStore } from '../../src/research-record-store'
@@ -12,6 +14,7 @@ import { createViewerIdentity, describeViewer, ViewerIdentityStore, type ViewerI
 const objectStore = new AnalysisObjectStore(browser.storage.local)
 const recordStore = new ResearchRecordStore(browser.storage.local)
 const identityStore = new ViewerIdentityStore(browser.storage.local)
+const positionCache = new KeywordPositionCache(browser.storage.local)
 
 const sourceElement = document.querySelector<HTMLParagraphElement>('#source')
 const viewerElement = document.querySelector<HTMLParagraphElement>('#viewer')
@@ -136,13 +139,29 @@ const renderRecord = async (): Promise<void> => {
   setRecordError(null)
 }
 
+/** 缓存命中要说出来：用户不会因为「快了」而疑惑，但会因为「同样的数据为什么又出来了」而疑惑。 */
+const describeCacheAge = (ageMs: number): string => {
+  const minutes = Math.floor(ageMs / 60_000)
+  if (minutes < 1) return '刚刚缓存'
+  if (minutes < 60) return `${minutes} 分钟前的缓存`
+  const hours = Math.floor(minutes / 60)
+  return `${hours} 小时前的缓存`
+}
+
 const loadPositions = async (): Promise<void> => {
-  if (current === null || loading) return
+  const target = current
+  if (target === null || loading) return
   loading = true
   if (loadButton) loadButton.disabled = true
   setStatus('正在读取…')
   try {
-    setStatus(describeResult(await requestKeywordPositions(current.asin, current.market)))
+    const result: CachedKeywordPositionResult = await requestKeywordPositionsCached(
+      target.asin, target.market, { cache: positionCache },
+    )
+    const message = describeResult(result)
+    setStatus(result.cached && message !== null
+      ? `${message}（${describeCacheAge(result.ageMs)}）`
+      : message)
   } finally {
     loading = false
     if (loadButton) loadButton.disabled = false
