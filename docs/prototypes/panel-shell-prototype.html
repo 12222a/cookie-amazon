@@ -1,0 +1,648 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>选品面板 · 外壳方向原型（PROTOTYPE）</title>
+<!--
+  原型：选品面板「外壳」的四个方向。切换用底部浮条或 ← → 键，状态写在 ?variant=A|B|C|D。
+  同一屏同时给出侧边栏与页面内浮层，因为 ADR-0004 要求两处视觉与交互一致，只改一处的方向不成立。
+  四个方向渲染同一份固定假数据（DATA），差异只在结构与视觉。
+  一次性代码：不追求健壮，只回答「壳该长什么样」。结论落定后整份丢掉，只把选中的方向折回真实代码。
+-->
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #17191b; color: #d8dcdd; font: 13px/1.55 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  button { font: inherit; cursor: pointer; }
+  input, textarea, select { font: inherit; }
+
+  /* ---- 原型外框（不属于被评估的设计） ---- */
+  .proto-top { display: flex; align-items: center; gap: 14px; padding: 10px 18px; border-bottom: 1px solid #2a2e31; background: #1d2023; }
+  .proto-tag { padding: 3px 7px; border: 1px solid #4a5157; color: #9aa3a8; font: 700 10px ui-monospace, Consolas, monospace; letter-spacing: .12em; }
+  .proto-top h1 { margin: 0; font-size: 13px; font-weight: 600; }
+  .proto-top p { margin: 0; color: #868f95; font-size: 12px; }
+  .proto-top b { color: #e6e9ea; }
+
+  .stage { display: grid; grid-template-columns: 396px minmax(0, 1fr); gap: 18px; padding: 18px; align-items: start; }
+  .frame { border: 1px solid #2a2e31; background: #101214; }
+  .frame-bar { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; border-bottom: 1px solid #2a2e31; color: #7e868b; font: 500 10px ui-monospace, Consolas, monospace; letter-spacing: .06em; }
+  .panel-scroll { height: 780px; overflow: auto; }
+  .page-frame .page-scroll { position: relative; height: 780px; overflow: auto; background: #fff; }
+
+  /* ---- 模拟亚马逊搜索结果页 ---- */
+  .amz { padding: 0 0 40px; color: #0f1111; font: 14px/1.5 "Amazon Ember", system-ui, "Segoe UI", sans-serif; }
+  .amz-bar { display: flex; align-items: center; gap: 10px; padding: 9px 14px; background: #131921; color: #fff; }
+  .amz-logo { font-weight: 700; letter-spacing: -.02em; }
+  .amz-search { flex: 1; max-width: 620px; display: flex; }
+  .amz-search i { flex: 1; padding: 6px 10px; background: #fff; color: #565959; font-style: normal; font-size: 12px; }
+  .amz-search span { padding: 6px 12px; background: #febd69; color: #111; font-size: 12px; }
+  .amz-sub { display: flex; gap: 16px; padding: 7px 14px; border-bottom: 1px solid #e7e7e7; color: #565959; font-size: 12px; }
+  .amz-sub b { color: #c45500; }
+  .amz-count { padding: 10px 14px 4px; color: #565959; font-size: 12px; }
+  .amz-list { padding: 0 14px; }
+  .amz-card { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 14px; padding: 14px 4px; border-bottom: 1px solid #e7e7e7; }
+  .amz-shot { height: 150px; background: repeating-linear-gradient(135deg, #f2f3f3 0 10px, #e9ebeb 10px 20px); }
+  .amz-card h3 { margin: 0 0 4px; font-size: 15px; font-weight: 500; }
+  .amz-rating { color: #007185; font-size: 12px; }
+  .amz-rating b { color: #de7921; }
+  .amz-price { margin: 5px 0 3px; font-size: 19px; }
+  .amz-price small { font-size: 11px; color: #565959; }
+  .amz-line { color: #565959; font-size: 12px; }
+  .amz-spon { color: #565959; font-size: 11px; }
+  .amz-card.is-picked { outline: 2px solid #f5a451; outline-offset: 4px; }
+  .amz-hint { margin: 8px 0 0; color: #8b9794; font: 500 10px ui-monospace, Consolas, monospace; }
+
+  /* ---- 浮层摆放 ---- */
+  .overlay-slot { position: absolute; inset: 0; pointer-events: none; }
+  .overlay-slot > * { pointer-events: auto; }
+  .ov-stack { position: absolute; right: 22px; top: 205px; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+  .ov-label { color: #6f777b; font: 500 10px ui-monospace, Consolas, monospace; letter-spacing: .06em; }
+
+  /* ================= A · 深色控制台 ================= */
+  .vA { --bg:#0b1015; --panel:#111820; --soft:#151e26; --line:#273139; --ink:#f4f0e8; --muted:#8a949b; --dim:#56616a; --accent:#f5a451; --alt:#7cc5b8;
+    min-height: 100%; padding: 14px; background: var(--bg); color: var(--ink); font: 12px/1.55 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  .vA-head { display: flex; align-items: baseline; gap: 8px; }
+  .vA-asin { font: 600 15px ui-monospace, Consolas, monospace; letter-spacing: .02em; }
+  .vA-market { color: var(--muted); font-size: 11px; }
+  .vA-src { margin-left: auto; color: var(--dim); font: 500 10px ui-monospace, monospace; }
+  .vA-title { margin: 7px 0 9px; color: var(--muted); }
+  .vA-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; padding: 9px 10px; border: 1px solid var(--line); background: var(--soft); }
+  .vA-fields dt { color: var(--dim); font-size: 10px; }
+  .vA-fields dd { margin: 1px 0 0; font: 500 12px ui-monospace, Consolas, monospace; }
+  .vA-card { margin-top: 12px; padding: 11px 12px; border: 1px solid var(--line); background: var(--panel); }
+  .vA-card > h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 12px; font-weight: 600; }
+  .vA-card > h2 small { color: var(--dim); font: 500 10px ui-monospace, monospace; font-weight: 400; }
+  .vA-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; padding: 1px; background: var(--line); }
+  .vA-metrics > div { padding: 9px 8px; background: var(--panel); }
+  .vA-metrics b { display: block; color: var(--accent); font: 600 19px ui-monospace, Consolas, monospace; }
+  .vA-metrics span { color: var(--muted); font-size: 10px; }
+  .vA-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
+  .vA-chips span { padding: 2px 6px; border: 1px solid var(--line); color: var(--muted); font-size: 10px; }
+  .vA-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .vA-table th { padding: 4px 4px; border-bottom: 1px solid var(--line); color: var(--dim); font-size: 10px; font-weight: 500; text-align: left; white-space: nowrap; }
+  .vA-table td { padding: 5px 4px; border-bottom: 1px solid #1c252c; vertical-align: top; }
+  .vA-table td.kw { font-weight: 500; }
+  .vA-table td.num { font: 500 11px ui-monospace, Consolas, monospace; color: var(--alt); white-space: nowrap; }
+  .vA-table .is-unknown { color: var(--dim); }
+  .vA-pains { margin: 0; padding: 0; list-style: none; }
+  .vA-pains li { display: flex; align-items: baseline; gap: 8px; padding: 6px 0; border-bottom: 1px solid #1c252c; }
+  .vA-pains li:last-child { border-bottom: 0; }
+  .vA-pains b { margin-left: auto; color: var(--accent); font: 600 12px ui-monospace, monospace; }
+  .vA-pains em { color: var(--dim); font-size: 10px; font-style: normal; }
+  .vA-qa textarea { width: 100%; min-height: 46px; padding: 7px 8px; border: 1px solid var(--line); background: #0d141a; color: var(--ink); font-size: 11px; resize: vertical; }
+  .vA-qa button { margin-top: 7px; width: 100%; padding: 7px; border: 0; background: var(--accent); color: #241a12; font-weight: 700; }
+  .vA-record { display: flex; align-items: baseline; gap: 8px; color: var(--muted); font-size: 11px; }
+  .vA-record b { color: var(--alt); font-weight: 600; }
+
+  /* A · 浮层 */
+  .ovA { width: 268px; border: 1px solid #35414a; background: #0b1015; color: #cdd5d4; font: 12px/1.5 system-ui, sans-serif; box-shadow: 0 6px 20px rgba(0,0,0,.45); }
+  .ovA .head { display: flex; align-items: baseline; gap: 8px; padding: 8px 11px; border-bottom: 1px solid #29343d; cursor: grab; }
+  .ovA .head b { color: #f2f5f3; font: 600 12px ui-monospace, monospace; }
+  .ovA .head span { margin-left: auto; color: #8b9794; font-size: 10px; }
+  .ovA dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 8px; margin: 0; padding: 8px 11px; }
+  .ovA dt { color: #8b9794; font-size: 10px; }
+  .ovA dd { margin: 0; color: #f2f5f3; font: 500 11px ui-monospace, monospace; }
+  .ovA .acts { display: flex; gap: 6px; padding: 0 11px 10px; }
+  .ovA .acts button { flex: 1; padding: 5px 8px; border: 1px solid #44515a; background: transparent; color: #f2f5f3; font-size: 11px; }
+  .ovA .pill { padding: 4px 9px; border: 1px solid #35414a; background: #0b1015; color: #f2f5f3; font-size: 11px; }
+
+  /* ================= B · 浅色分析台账 ================= */
+  .vB { --bg:#fff; --canvas:#f6f7f6; --line:#dcdfdd; --ink:#16191a; --muted:#6b7370; --accent:#1f6feb; --warn:#b9821f;
+    display: flex; min-height: 100%; flex-direction: column; background: var(--bg); color: var(--ink); font: 12px/1.5 "Segoe UI", system-ui, "Microsoft YaHei", sans-serif; }
+  .vB-head { display: flex; align-items: center; gap: 7px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  .vB-head b { font: 600 12px ui-monospace, Consolas, monospace; }
+  .vB-head .mk { padding: 1px 4px; border: 1px solid var(--line); color: var(--muted); font: 500 10px ui-monospace, monospace; }
+  .vB-head button { margin-left: auto; padding: 3px 8px; border: 1px solid var(--line); background: #fff; font-size: 11px; }
+  .vB-statbar { padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--canvas); color: var(--muted); font: 500 11px ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums; }
+  .vB-statbar b { color: var(--ink); }
+  .vB-body { display: grid; grid-template-columns: 74px minmax(0, 1fr); flex: 1; min-height: 0; }
+  .vB-rail { border-right: 1px solid var(--line); background: var(--canvas); }
+  .vB-rail button { display: block; width: 100%; padding: 9px 4px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--muted); font-size: 11px; }
+  .vB-rail button.is-on { background: #fff; box-shadow: inset 3px 0 0 var(--accent); color: var(--ink); font-weight: 600; }
+  .vB-content { min-width: 0; overflow: auto; }
+  .vB-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  .vB-table th { position: sticky; top: 0; z-index: 1; padding: 5px 4px; border-bottom: 1px solid var(--line); background: var(--canvas); color: var(--muted); font-size: 10px; font-weight: 600; text-align: left; white-space: nowrap; }
+  .vB-table th.sort::after { color: var(--accent); content: ' ↑'; }
+  .vB-table td { padding: 6px 4px; border-bottom: 1px solid #eef0ef; white-space: nowrap; }
+  .vB-table tbody tr:nth-child(even) { background: #fafbfa; }
+  .vB-table td.kw { max-width: 96px; overflow: hidden; font-weight: 500; text-overflow: ellipsis; }
+  .vB-table svg { width: 40px; }
+  .vB-table td.dim { color: var(--muted); }
+  .vB-table .warn { color: var(--warn); }
+  .vB-foot { display: flex; gap: 10px; padding: 6px 10px; border-top: 1px solid var(--line); background: var(--canvas); color: var(--muted); font: 500 10px ui-monospace, monospace; }
+
+  /* B · 浮层 */
+  .ovB { width: 330px; border: 1px solid #d3d7d5; background: #fff; color: #16191a; font: 11px/1.5 "Segoe UI", system-ui, sans-serif; box-shadow: 0 4px 14px rgba(0,0,0,.16); }
+  .ovB .head { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-bottom: 1px solid #e4e7e5; background: #f6f7f6; font: 600 11px ui-monospace, monospace; }
+  .ovB .head button { margin-left: auto; padding: 2px 7px; border: 1px solid #cfd3d1; background: #fff; font-size: 10px; }
+  .ovB table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  .ovB th { padding: 3px 8px; color: #6b7370; font-size: 10px; font-weight: 600; text-align: left; }
+  .ovB td { padding: 3px 8px; border-top: 1px solid #eef0ef; }
+  .ovB td.kw { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ovB .pill { padding: 3px 8px; border: 1px solid #d3d7d5; background: #fff; font: 600 10px ui-monospace, monospace; }
+
+  /* ================= C · 对话优先 ================= */
+  /* --accent 用于色块、圆点、按钮底色；--accent-ink 用于小字，因为 #b0632c 压在暖白底上只有 4.25:1，不够正文标准。 */
+  .vC { --bg:#fbf8f3; --paper:#fff; --line:#e7ded1; --ink:#2b2622; --muted:#7d7368; --accent:#b0632c; --accent-ink:#8f4a1e; --bubble:#f2ece3;
+    display: flex; min-height: 100%; flex-direction: column; background: var(--bg); color: var(--ink); font: 13px/1.7 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  .vC-head { display: flex; align-items: baseline; gap: 8px; padding: 12px 15px; border-bottom: 1px solid var(--line); }
+  .vC-head b { font: 700 15px Georgia, "Songti SC", serif; letter-spacing: -.01em; }
+  .vC-head span { margin-left: auto; color: var(--muted); font: 500 10px ui-monospace, monospace; }
+  .vC-thread { flex: 1; padding: 15px; }
+  .vC-msg { margin-bottom: 13px; }
+  .vC-user { display: flex; justify-content: flex-end; }
+  .vC-user p { max-width: 84%; margin: 0; padding: 9px 12px; border-radius: 14px 14px 4px 14px; background: var(--bubble); }
+  .vC-ai { padding: 12px 13px; border: 1px solid var(--line); border-radius: 4px 14px 14px 14px; background: var(--paper); }
+  .vC-lead { margin: 0 0 10px; font-size: 13px; }
+  .vC-lead mark { padding: 0 3px; background: #f3e2d0; color: #7b4320; }
+  .vC h4 { margin: 12px 0 5px; color: var(--accent-ink); font: 700 10px ui-monospace, Consolas, monospace; letter-spacing: .1em; }
+  .vC ul { margin: 0; padding-left: 17px; }
+  .vC li { margin-bottom: 4px; }
+  .vC li span { color: var(--muted); font: 500 11px ui-monospace, monospace; }
+  .vC-view { margin: 12px 0 4px; padding: 9px 10px; border: 1px dashed var(--line); background: #fdfbf8; }
+  .vC-view figcaption { margin-bottom: 6px; color: var(--muted); font: 500 10px ui-monospace, monospace; }
+  .vC-view table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .vC-view th { padding: 2px 4px; color: var(--muted); font-size: 10px; font-weight: 600; text-align: left; }
+  .vC-view td { padding: 3px 4px; border-top: 1px solid #f0e9de; }
+  /* 句中标号：上标数字直接贴在句子末尾，与底部来源表按序号对应。 */
+  .vC-ref { margin-left: 2px; color: var(--accent-ink); font: 700 9px ui-monospace, Consolas, monospace; vertical-align: super; }
+  .vC-srcs { margin: 9px 0 0; padding: 8px 10px; border-top: 1px solid var(--line); }
+  .vC-srcs li { display: flex; gap: 7px; margin-bottom: 3px; color: var(--muted); font-size: 11px; list-style: none; }
+  .vC-srcs b { color: var(--accent-ink); font: 700 9px ui-monospace, Consolas, monospace; }
+  .vC-srcs i { color: var(--dim, #a89a8c); font-style: normal; }
+  /* 数据抽屉：默认收起，与对话串共用同一份证据包。 */
+  .vC-drawer { border-top: 1px solid var(--line); background: var(--paper); }
+  .vC-drawer > header { display: flex; align-items: baseline; gap: 8px; padding: 10px 15px; cursor: pointer; }
+  .vC-drawer > header span { font-weight: 600; }
+  .vC-drawer > header em { color: var(--muted); font: 500 10px ui-monospace, Consolas, monospace; font-style: normal; }
+  .vC-drawer > header b { margin-left: auto; color: var(--muted); font: 400 14px ui-monospace, monospace; }
+  .vC-drawer.is-open > header b { color: var(--accent); }
+  .vC-drawer .drawer-body { padding: 0 15px 13px; }
+  .vC-drawer .drawer-body h5 { margin: 10px 0 5px; color: var(--accent-ink); font: 700 10px ui-monospace, Consolas, monospace; letter-spacing: .1em; }
+  .vC-drawer .drawer-body h5:first-child { margin-top: 0; }
+  .vC-drawer table { width: 100%; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+  .vC-drawer th { padding: 3px 4px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 10px; font-weight: 600; text-align: left; white-space: nowrap; }
+  .vC-drawer td { padding: 4px; border-bottom: 1px solid #f4efe7; white-space: nowrap; }
+  .vC-drawer td.kw { max-width: 116px; overflow: hidden; text-overflow: ellipsis; }
+  .vC-drawer .pain { margin: 0; padding: 0; list-style: none; font-size: 11px; }
+  .vC-drawer .pain li { display: flex; gap: 8px; padding: 4px 0; border-bottom: 1px solid #f4efe7; }
+  .vC-drawer .pain b { margin-left: auto; color: var(--accent-ink); font: 700 11px ui-monospace, monospace; }
+  .vC-drill { margin-top: 11px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: #6b5a48; font: 500 11px ui-monospace, Consolas, monospace; }
+  .vC-suggests { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; margin-top: 10px; }
+  .vC-suggests button { padding: 6px 11px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: #6b5a48; font-size: 11px; }
+  .vC-composer { display: flex; gap: 7px; padding: 11px 15px; border-top: 1px solid var(--line); background: var(--paper); }
+  .vC-composer input { flex: 1; padding: 8px 11px; border: 1px solid var(--line); border-radius: 999px; background: #fdfbf8; }
+  .vC-composer button { padding: 0 15px; border: 0; border-radius: 999px; background: var(--accent); color: #fff; font-weight: 600; }
+
+  /* C · 浮层 */
+  .ovC { width: 300px; border: 1px solid #e7ded1; border-radius: 4px 16px 16px 16px; background: #fff; color: #2b2622; font: 12px/1.6 system-ui, "Segoe UI", sans-serif; box-shadow: 0 8px 22px rgba(80,60,40,.16); }
+  .ovC .head { display: flex; align-items: baseline; gap: 8px; padding: 9px 12px 0; }
+  .ovC .head b { font: 700 12px Georgia, "Songti SC", serif; }
+  .ovC .head span { margin-left: auto; color: #a1958a; font: 500 10px ui-monospace, monospace; }
+  .ovC p { margin: 7px 12px 10px; }
+  .ovC mark { padding: 0 3px; background: #f3e2d0; color: #7b4320; }
+  .ovC .ask { display: flex; gap: 6px; padding: 0 12px 11px; }
+  .ovC .ask i { flex: 1; padding: 6px 10px; border: 1px solid #e7ded1; border-radius: 999px; background: #fdfbf8; color: #a1958a; font-style: normal; font-size: 11px; }
+  .ovC .ask button { padding: 0 12px; border: 0; border-radius: 999px; background: #b0632c; color: #fff; }
+  .badge-c { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid #bfae99; border-radius: 999px; background: #fffdfa; box-shadow: 0 6px 18px rgba(60,40,20,.32); color: #4a3b2c; font: 600 10px ui-monospace, monospace; }
+  .badge-c i { width: 6px; height: 6px; border-radius: 50%; background: #b0632c; }
+  .ovC .badge i { width: 6px; height: 6px; border-radius: 50%; background: #b0632c; }
+
+  /* ================= D · 焦点检视台 ================= */
+  .vD { --bg:#0e0f10; --panel:#131516; --line:#26292b; --ink:#eceeee; --muted:#8b9193; --dim:#5c6365; --accent:#e0b055;
+    min-height: 100%; padding: 0 0 20px; background: var(--bg); color: var(--ink); font: 13px/1.6 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  .vD-sticky { position: sticky; top: 0; z-index: 2; display: flex; align-items: baseline; gap: 9px; padding: 11px 16px; border-bottom: 1px solid var(--line); background: rgba(14,15,16,.94); backdrop-filter: blur(6px); }
+  .vD-sticky b { font: 600 13px ui-monospace, Consolas, monospace; letter-spacing: .02em; }
+  .vD-sticky span { color: var(--muted); font: 500 11px ui-monospace, monospace; }
+  .vD-sticky em { margin-left: auto; padding: 2px 7px; border: 1px solid #4a4433; color: var(--accent); font: 500 10px ui-monospace, monospace; font-style: normal; }
+  .vD-focus { padding: 22px 16px 18px; }
+  .vD-eyebrow { margin: 0; color: var(--dim); font: 500 10px ui-monospace, Consolas, monospace; letter-spacing: .14em; }
+  .vD-big { margin: 6px 0 0; font: 300 54px/1 ui-monospace, Consolas, monospace; letter-spacing: -.04em; }
+  .vD-big small { color: var(--muted); font-size: 19px; }
+  .vD-sub { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
+  .vD-bar { height: 2px; margin-top: 14px; background: var(--line); }
+  .vD-bar i { display: block; height: 100%; background: var(--accent); }
+  .vD-drawers { margin: 0; padding: 0; border-top: 1px solid var(--line); list-style: none; }
+  .vD-drawers > li { border-bottom: 1px solid var(--line); }
+  .vD-drawers header { display: flex; align-items: baseline; gap: 10px; padding: 13px 16px; cursor: pointer; }
+  .vD-drawers header span { font-weight: 500; }
+  .vD-drawers header em { color: var(--muted); font-size: 11px; font-style: normal; }
+  .vD-drawers header b { margin-left: auto; color: var(--dim); font: 400 15px ui-monospace, monospace; }
+  .vD-drawers li.is-open header b { color: var(--accent); }
+  .vD-drawers .body { padding: 0 16px 15px; }
+  .vD-rows { margin: 0; padding: 0; list-style: none; font-size: 12px; }
+  .vD-rows li { display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 9px; padding: 5px 0; border-bottom: 1px solid #1b1e1f; }
+  .vD-rows li:last-child { border-bottom: 0; }
+  .vD-rows .kw { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vD-rows .n { color: var(--accent); font: 500 11px ui-monospace, monospace; }
+  .vD-rows .n.miss { color: var(--dim); }
+  .vD-rows .ad { color: var(--muted); font: 500 11px ui-monospace, monospace; }
+  .vD-note { margin: 12px 16px 0; color: var(--dim); font: 500 10px ui-monospace, Consolas, monospace; }
+
+  /* D · 浮层 */
+  .ovD { width: 250px; border: 1px solid #2c3032; background: #131516; color: #eceeee; font: 12px/1.6 system-ui, sans-serif; box-shadow: 0 8px 22px rgba(0,0,0,.5); }
+  .ovD .row { display: flex; align-items: baseline; gap: 8px; padding: 8px 11px; border-bottom: 1px solid #232728; }
+  .ovD .row b { font: 600 12px ui-monospace, monospace; }
+  .ovD .row span { margin-left: auto; color: #e0b055; font: 500 11px ui-monospace, monospace; }
+  .ovD .lines { margin: 0; padding: 7px 11px; list-style: none; }
+  .ovD .lines li { display: flex; gap: 8px; padding: 3px 0; color: #b9bec0; font-size: 11px; }
+  .ovD .lines b { margin-left: auto; color: #eceeee; font: 500 11px ui-monospace, monospace; }
+  .ovD .go { width: 100%; padding: 6px; border: 0; border-top: 1px solid #232728; background: transparent; color: #8b9193; font-size: 10px; }
+  .ovD .pill { display: inline-flex; align-items: center; gap: 7px; padding: 5px 9px; border: 1px solid #2c3032; background: #131516; font: 500 10px ui-monospace, monospace; }
+  .ovD .pill i { width: 5px; height: 5px; background: #e0b055; }
+
+  /* ---- 切换浮条 ---- */
+  .switcher { position: fixed; bottom: 18px; left: 50%; z-index: 40; display: flex; align-items: center; gap: 10px; padding: 7px 11px; border: 1px solid #3b4246; border-radius: 999px; background: #24282b; box-shadow: 0 8px 26px rgba(0,0,0,.5); transform: translateX(-50%); }
+  .switcher button { width: 26px; height: 26px; border: 1px solid #4a5157; border-radius: 50%; background: transparent; color: #d8dcdd; }
+  .switcher button:hover { border-color: #f5a451; color: #f5a451; }
+  .switcher .label { min-width: 210px; text-align: center; font-size: 12px; }
+  .switcher .label b { color: #f5a451; font: 700 12px ui-monospace, monospace; }
+  .switcher .label span { color: #9aa3a8; }
+</style>
+</head>
+<body>
+  <header class="proto-top">
+    <span class="proto-tag">PROTOTYPE</span>
+    <h1>选品面板 · 外壳方向</h1>
+    <p id="proto-desc"></p>
+  </header>
+
+  <main class="stage">
+    <section class="frame">
+      <div class="frame-bar"><span>侧边栏 · 384px</span><span>chrome-extension sidepanel</span></div>
+      <div class="panel-scroll" id="panel-root"></div>
+    </section>
+
+    <section class="frame page-frame">
+      <div class="frame-bar"><span>模拟亚马逊搜索结果页</span><span>浮动层就地展示 · 真实环境里为 fixed 定位</span></div>
+      <div class="page-scroll">
+        <div class="amz">
+          <div class="amz-bar"><span class="amz-logo">amazon</span><span class="amz-search"><i>yoga mat</i><span>搜索</span></span></div>
+          <div class="amz-sub"><span>全部</span><span>运动户外</span><span>瑜伽垫</span><b>Prime</b></div>
+          <p class="amz-count">1-3 条结果，共 2,000 条</p>
+          <div class="amz-list" id="amz-list"></div>
+        </div>
+        <div class="overlay-slot" id="overlay-root"></div>
+      </div>
+    </section>
+  </main>
+
+  <div class="switcher">
+    <button id="prev" type="button" aria-label="上一个方向">‹</button>
+    <span class="label" id="switcher-label"></span>
+    <button id="next" type="button" aria-label="下一个方向">›</button>
+    <span style="color:#5f686d;font:500 10px ui-monospace,monospace">← → 切换</span>
+  </div>
+
+<script>
+const DATA = {
+  asin: 'B0C9Q8ZP7L',
+  market: '美国站 · US',
+  source: '搜索结果页选中',
+  title: '折叠硅胶瑜伽垫 6mm 加厚防滑 家用旅行便携（含背带）',
+  fields: { price: '$29.99', rating: '4.3 ★ · 1284 条评论', bsr: '#1,204 运动户外', ship: 'FBA · 官方店' },
+  summary: { total: 50, ranked: 41, ads: 27, types: 5 },
+  sourceTypes: [
+    { label: '自然搜索词', count: 32 },
+    { label: 'SP广告词', count: 11 },
+    { label: '品牌广告词', count: 6 },
+    { label: '视频广告词', count: 3 },
+    { label: 'AC推荐词', count: 4 },
+  ],
+  keywords: [
+    { kw: 'yoga mat', natural: '3', ad: '—', ns: '76%', as: '9%', types: '自然搜索词', trend: 'strong' },
+    { kw: 'thick yoga mat', natural: '7', ad: '2', ns: '48%', as: '41%', types: '自然搜索词、SP广告词', trend: 'up' },
+    { kw: 'non slip yoga mat', natural: '第 2 页 · 107', ad: '5', ns: '22%', as: '55%', types: 'SP广告词', trend: 'up' },
+    { kw: 'travel yoga mat', natural: '18', ad: '—', ns: '31%', as: '—', types: '自然搜索词', trend: 'flat' },
+    { kw: 'yoga mat with strap', natural: '—', ad: '4', ns: '—', as: '63%', types: 'SP广告词、品牌广告词', trend: 'up' },
+    { kw: 'eco friendly yoga mat', natural: '34', ad: '—', ns: '12%', as: '—', types: '自然搜索词', trend: 'down' },
+    { kw: 'exercise mat for home', natural: '—', ad: '19', ns: '—', as: '8%', types: 'SP广告词', trend: 'down' },
+  ],
+  pains: [
+    { label: '边缘卷边', count: 12, low: '低星占 88%', note: '提到收纳后回弹慢' },
+    { label: '开箱气味', count: 9, low: '低星占 78%', note: '集中在到货前 3 天' },
+    { label: '出汗后防滑下降', count: 8, low: '低星占 75%', note: '与 6mm 厚度相关' },
+    { label: '厚度与描述不符', count: 5, low: '低星占 60%', note: '实测 5.2mm' },
+  ],
+  reviews: { sampled: 120, lowStar: 34 },
+  record: { owner: 'amy', group: 'team-a', status: '研究中', summary: '自然位只在前 3 页且大量依赖广告，先观察', at: '今天 10:24' },
+  qa: {
+    question: '这个 ASIN 现在最需要关注什么？',
+    lead: '它的自然位集中在少数大词，27 个词靠广告才拿到位置。先说三条事实。',
+    facts: [
+      ['50 个反查词里 41 个有自然排名，但只有 3 个进前 10', '1,2'],
+      ['“non slip yoga mat” 自然位已掉到第 2 页，同时广告位在第 5', '2'],
+      ['120 条评论样本里 34 条为低星，4 类问题反复出现', '4'],
+    ],
+    inferences: [
+      ['大词靠自然位、长尾靠广告，广告一停流量会明显下滑。', '2,3'],
+      ['低星问题集中在耐用性（卷边、气味），属于可改的产品点而非定价问题。', '4'],
+    ],
+    sources: [
+      ['1', '前台字段', '价格 $29.99 · 评分 4.3 · BSR #1,204'],
+      ['2', '词位表', '50 条 · 自然位 41 有排名 · 广告位 27'],
+      ['3', '来源类型', '自然搜索词 32 · SP广告词 11 · 品牌广告词 6'],
+      ['4', '评论样本', '120 条 · 低星 34 · 4 类痛点'],
+    ],
+    suggests: ['它主要靠广告撑着吗？', '低星问题集中在哪？'],
+  },
+  notes: '缺成本数据（采购、物流、广告、退货）：不输出利润结论。',
+};
+
+const AMZ_CARDS = [
+  { title: '折叠硅胶瑜伽垫 6mm 加厚防滑 旅行便携', rating: '★★★★☆', n: '1,284', price: '$29.99', line: '6mm 加厚 · 附背带 · 免费配送', spon: false, picked: true },
+  { title: '加厚瑜伽垫 8mm 双面防滑 家用健身垫', rating: '★★★★☆', n: '3,905', price: '$35.90', line: 'Prime 会员次日达', spon: true, picked: false },
+  { title: 'TPE 环保瑜伽垫 初学者 6mm 带绑带', rating: '★★★★☆', n: '742', price: '$24.50', line: '含收纳袋 · 30 天退货', spon: false, picked: false },
+];
+
+const esc = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+const unknown = (value) => value === '—' ? '<span class="is-unknown">—</span>' : esc(value);
+
+const spark = (kind) => {
+  const paths = {
+    strong: '0,14 10,13 20,11 30,9 40,7 52,4',
+    up: '0,16 10,15 20,12 30,11 40,7 52,5',
+    flat: '0,11 10,10 20,12 30,10 40,11 52,10',
+    down: '0,5 10,7 20,9 30,12 40,14 52,16',
+  };
+  return `<svg viewBox="0 0 52 20" width="52" height="20" aria-hidden="true"><polyline points="${paths[kind]}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+};
+
+const renderAmz = () => AMZ_CARDS.map((card, index) => `
+  <article class="amz-card${card.picked ? ' is-picked' : ''}">
+    <div class="amz-shot"></div>
+    <div>
+      ${card.spon ? '<div class="amz-spon">Sponsored</div>' : ''}
+      <h3>${esc(card.title)}</h3>
+      <div class="amz-rating"><b>${card.rating}</b> ${card.n}</div>
+      <div class="amz-price">${card.price} <small>免运费</small></div>
+      <div class="amz-line">${esc(card.line)}</div>
+      ${card.picked ? '<p class="amz-hint">← 已选中这个商品，面板与浮层都指向它</p>' : ''}
+    </div>
+  </article>`).join('');
+
+/* ---------- A · 深色控制台 ---------- */
+const panelA = () => `
+  <div class="vA">
+    <header class="vA-head">
+      <span class="vA-asin">${DATA.asin}</span>
+      <span class="vA-market">${DATA.market}</span>
+      <span class="vA-src">${DATA.source}</span>
+    </header>
+    <p class="vA-title">${DATA.title}</p>
+    <dl class="vA-fields">
+      <div><dt>价格</dt><dd>${DATA.fields.price}</dd></div>
+      <div><dt>评分</dt><dd>${DATA.fields.rating}</dd></div>
+      <div><dt>BSR</dt><dd>${DATA.fields.bsr}</dd></div>
+      <div><dt>配送</dt><dd>${DATA.fields.ship}</dd></div>
+    </dl>
+    <section class="vA-card" style="padding:1px;border-color:#273139">
+      <div class="vA-metrics">
+        <div><b>${DATA.summary.total}</b><span>关键词</span></div>
+        <div><b>${DATA.summary.ranked}</b><span>有自然排名</span></div>
+        <div><b>${DATA.summary.ads}</b><span>有广告位</span></div>
+        <div><b>${DATA.summary.types}</b><span>来源类型</span></div>
+      </div>
+    </section>
+    <section class="vA-card">
+      <h2>词量概览 <small>来源类型</small></h2>
+      <div class="vA-chips">${DATA.sourceTypes.map((t) => `<span>${t.label} ${t.count}</span>`).join('')}</div>
+    </section>
+    <section class="vA-card">
+      <h2>词位表 <small>${DATA.summary.total} 条 · 显示前 5</small></h2>
+      <table class="vA-table">
+        <thead><tr><th>关键词</th><th>自然</th><th>广告</th><th>自然流量</th><th></th></tr></thead>
+        <tbody>${DATA.keywords.slice(0, 6).map((row) => `
+          <tr>
+            <td class="kw">${esc(row.kw)}<br /><span style="color:#56616a;font:500 10px ui-monospace,monospace">${esc(row.types)}</span></td>
+            <td class="num">${unknown(row.natural)}</td>
+            <td class="num">${unknown(row.ad)}</td>
+            <td class="num">${unknown(row.ns)}</td>
+            <td class="num" style="color:#7cc5b8">${spark(row.trend)}</td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </section>
+    <section class="vA-card">
+      <h2>评论痛点 <small>样本 ${DATA.reviews.sampled} 条 · 低星 ${DATA.reviews.lowStar}</small></h2>
+      <ul class="vA-pains">${DATA.pains.map((p) => `<li><span>${p.label}</span><em>${p.note}</em><b>${p.count}</b></li>`).join('')}</ul>
+    </section>
+    <section class="vA-card vA-qa">
+      <h2>AI 问答</h2>
+      <textarea placeholder="${esc(DATA.qa.question)}"></textarea>
+      <button type="button">让 AI 分析</button>
+    </section>
+    <section class="vA-card vA-record">
+      <span>${DATA.record.owner} · ${DATA.record.group}</span><b>${DATA.record.status}</b><span>${DATA.record.at}</span>
+    </section>
+  </div>`;
+
+const overlayA = () => `
+  <div class="ov-stack">
+    <span class="ov-label">浮层 · 展开</span>
+    <div class="ovA">
+      <div class="head"><b>${DATA.asin}</b><span>${DATA.fields.price} · 4.3★</span></div>
+      <dl>
+        <dt>自然位</dt><dd>3（yoga mat）</dd>
+        <dt>广告位</dt><dd>27 个词</dd>
+        <dt>低星</dt><dd>${DATA.reviews.lowStar}/${DATA.reviews.sampled}</dd>
+      </dl>
+      <div class="acts"><button type="button">固定到侧边栏</button><button type="button">收起</button></div>
+    </div>
+    <span class="ov-label">浮层 · 收起</span>
+    <div class="ovA" style="width:auto"><div class="pill">${DATA.asin} · 4.3★</div></div>
+  </div>`;
+
+/* ---------- B · 浅色分析台账 ---------- */
+const panelB = () => `
+  <div class="vB">
+    <header class="vB-head">
+      <b>${DATA.asin}</b><span class="mk">US</span>
+      <button type="button">导出</button>
+    </header>
+    <div class="vB-statbar"><b>${DATA.summary.total}</b> 词 · <b>${DATA.summary.ranked}</b> 有排名 · <b>${DATA.summary.ads}</b> 有广告 · <b>${DATA.summary.types}</b> 来源 | ${DATA.fields.price} · 4.3★(${DATA.reviews.sampled}) · ${DATA.fields.bsr}</div>
+    <div class="vB-body">
+      <nav class="vB-rail">
+        <button class="is-on" type="button">词位</button>
+        <button type="button">概览</button>
+        <button type="button">评论</button>
+        <button type="button">问答</button>
+        <button type="button">记录</button>
+      </nav>
+      <div class="vB-content">
+        <table class="vB-table">
+          <thead><tr><th class="sort">关键词</th><th>自然</th><th>广告</th><th>自然%</th><th>广告%</th><th>趋势</th></tr></thead>
+          <tbody>${DATA.keywords.map((row) => `
+            <tr>
+              <td class="kw" title="${esc(row.kw)}">${esc(row.kw)}</td>
+              <td class="${row.natural === '—' ? 'dim' : ''}">${esc(row.natural)}</td>
+              <td class="${row.ad === '—' ? 'dim' : ''}">${esc(row.ad)}</td>
+              <td>${esc(row.ns)}</td>
+              <td class="${row.as === '—' ? 'dim warn' : ''}">${esc(row.as)}</td>
+              <td style="color:#6b7370">${spark(row.trend)}</td>
+            </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>
+    <footer class="vB-foot"><span>排序：自然位 ↑</span><span>${DATA.summary.total} 条</span><span style="margin-left:auto">${DATA.record.owner} · ${DATA.record.status}</span></footer>
+  </div>`;
+
+const overlayB = () => `
+  <div class="ov-stack">
+    <span class="ov-label">浮层 · 展开</span>
+    <div class="ovB">
+      <div class="head">${DATA.asin} · US<button type="button">固定到侧边栏</button></div>
+      <table>
+        <thead><tr><th>关键词</th><th>自然</th><th>广告</th></tr></thead>
+        <tbody>
+          <tr><td class="kw">yoga mat</td><td>3</td><td>—</td></tr>
+          <tr><td class="kw">non slip yoga mat</td><td>第 2 页 · 107</td><td>5</td></tr>
+          <tr><td class="kw">yoga mat with strap</td><td>—</td><td>4</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <span class="ov-label">浮层 · 收起</span>
+    <div class="ovB" style="width:auto"><div class="pill">B0C9Q8ZP7L · 41/50 有排名</div></div>
+  </div>`;
+
+/* ---------- C · 对话优先 ---------- */
+const panelC = () => `
+  <div class="vC">
+    <header class="vC-head"><b>选品助手</b><span>${DATA.asin} · US</span></header>
+    <div class="vC-thread">
+      <div class="vC-msg vC-user"><p>${DATA.qa.question}</p></div>
+      <div class="vC-msg vC-ai">
+        <p class="vC-lead">${DATA.qa.lead.replace('27 个词', '<mark>27 个词</mark>')}</p>
+        <h4>事实</h4>
+        <ul>${DATA.qa.facts.map(([text, refs]) => `<li>${esc(text)}<sup class="vC-ref">${refs}</sup></li>`).join('')}</ul>
+        <h4>结论与判断</h4>
+        <ul>${DATA.qa.inferences.map(([text, refs]) => `<li>${esc(text)}${refs ? `<sup class="vC-ref">${refs}</sup>` : ''}</li>`).join('')}</ul>
+        <ul class="vC-srcs">${DATA.qa.sources.map(([n, label, value]) => `<li><b>${n}</b><span>${esc(label)}</span><i>${esc(value)}</i></li>`).join('')}</ul>
+        <button class="vC-drill" type="button">查看词位表（50 条）→</button>
+      </div>
+      <div class="vC-suggests">${DATA.qa.suggests.map((q) => `<button type="button">${q}</button>`).join('')}</div>
+    </div>
+    <section class="vC-drawer">
+      <header><span>数据抽屉</span><em>词位 50 · 评论样本 120</em><b>+</b></header>
+    </section>
+    <form class="vC-composer"><input placeholder="就当前 ASIN 提问…" /><button type="button">发送</button></form>
+  </div>`;
+
+const overlayC = () => `
+  <div class="ov-stack">
+    <span class="ov-label">浮层 · 展开</span>
+    <div class="ovC">
+      <div class="head"><b>选品助手</b><span>${DATA.asin}</span></div>
+      <p>自然位集中在少数大词，<mark>27 个词靠广告</mark>拿到位置。</p>
+      <div class="ask"><i>追问：主要靠广告撑着吗？</i><button type="button">问</button></div>
+    </div>
+    <span class="ov-label">浮层 · 收起</span>
+    <div class="badge-c"><i></i>${DATA.asin} · 41/50</div>
+  </div>`;
+
+/* ---------- D · 焦点检视台 ---------- */
+const panelD = () => `
+  <div class="vD">
+    <header class="vD-sticky">
+      <b>${DATA.asin}</b><span>${DATA.fields.price}</span><em>${DATA.record.status}</em>
+    </header>
+    <section class="vD-focus">
+      <p class="vD-eyebrow">自然位覆盖</p>
+      <p class="vD-big">41<small>/50</small></p>
+      <p class="vD-sub">个词有自然排名 · ${DATA.summary.ads} 个词同时有广告位 · 4.3★ / ${DATA.reviews.sampled} 条</p>
+      <div class="vD-bar"><i style="width:82%"></i></div>
+    </section>
+    <ul class="vD-drawers">
+      <li class="is-open">
+        <header><span>词位</span><em>自然位集中在大词</em><b>−</b></header>
+        <div class="body">
+          <ul class="vD-rows">${DATA.keywords.slice(0, 5).map((row) => `
+            <li><span class="kw">${esc(row.kw)}</span><span class="n${row.natural === '—' ? ' miss' : ''}">${esc(row.natural)}</span><span class="ad">${esc(row.ad)}</span></li>`).join('')}</ul>
+        </div>
+      </li>
+      <li><header><span>前台字段</span><em>价格 ${DATA.fields.price} · ${DATA.fields.bsr}</em><b>+</b></header></li>
+      <li><header><span>评论痛点</span><em>4 类 · 低星 ${DATA.reviews.lowStar}/${DATA.reviews.sampled}</em><b>+</b></header></li>
+      <li><header><span>研究记录</span><em>${DATA.record.owner} · ${DATA.record.group} · ${DATA.record.summary}</em><b>+</b></header></li>
+      <li><header><span>AI 问答</span><em>基于证据包回答，引用具体字段</em><b>+</b></header></li>
+    </ul>
+    <p class="vD-note">${DATA.notes}</p>
+  </div>`;
+
+const overlayD = () => `
+  <div class="ov-stack">
+    <span class="ov-label">浮层 · 展开</span>
+    <div class="ovD">
+      <div class="row"><b>${DATA.asin}</b><span>41/50</span></div>
+      <ul class="lines">
+        <li><span>自然位 ≤10</span><b>3</b></li>
+        <li><span>有广告位</span><b>27</b></li>
+        <li><span>低星 / 样本</span><b>${DATA.reviews.lowStar}/${DATA.reviews.sampled}</b></li>
+      </ul>
+      <button class="go" type="button">固定到侧边栏查看全部</button>
+    </div>
+    <span class="ov-label">浮层 · 收起</span>
+    <div class="pill"><i></i>${DATA.asin} · 41/50 有排名</div>
+  </div>`;
+
+const VARIANTS = [
+  {
+    key: 'A', name: '深色控制台',
+    desc: '沿用现有深色橙青语言，卡片化分区：对象头 → 四格指标 → 词位表 → 痛点 → 问答 → 记录。信息全部平铺，一层不折叠。',
+    panel: panelA, overlay: overlayA,
+  },
+  {
+    key: 'B', name: '浅色分析台账',
+    desc: '浅色、零圆角、表格式。统计压成一行等宽数字条，左侧 74px 明细栏切分区，主体是一张带排序和粘性表头的密集表格。为「一次看很多行」设计。',
+    panel: panelB, overlay: overlayB,
+  },
+  {
+    key: 'C', name: '对话优先',
+    desc: '没有分区，只有一条对话串。数据作为回答里的证据（事实 / 判断 / 引用 / 内嵌视图规格 / 数值 chip），输入框常驻底部。为「看着页面问问题」设计。',
+    panel: panelC, overlay: overlayC,
+  },
+  {
+    key: 'D', name: '焦点检视台',
+    desc: '一个对象深入看：粘性头部钉住 ASIN/价格/状态，一个超大读数当焦点，下面逐个折叠抽屉。单色 + 单一琥珀强调，靠留白和字重分层。',
+    panel: panelD, overlay: overlayD,
+  },
+];
+
+const params = new URLSearchParams(location.search);
+const initial = VARIANTS.findIndex((item) => item.key === (params.get('variant') || '').toUpperCase());
+let index = initial >= 0 ? initial : 0;
+
+const panelRoot = document.getElementById('panel-root');
+const overlayRoot = document.getElementById('overlay-root');
+const label = document.getElementById('switcher-label');
+const desc = document.getElementById('proto-desc');
+
+const render = () => {
+  const variant = VARIANTS[index];
+  panelRoot.innerHTML = variant.panel();
+  overlayRoot.innerHTML = variant.overlay();
+  label.innerHTML = `<b>${variant.key}</b> <span>${variant.name}</span>`;
+  desc.textContent = variant.desc;
+  const next = new URLSearchParams(location.search);
+  next.set('variant', variant.key);
+  // 直接双击打开（file://）时 Chrome 会拒绝改写地址，此时放弃同步 URL，切换照常工作。
+  try { history.replaceState(null, '', `${location.pathname}?${next.toString()}`) } catch { /* 忽略 */ }
+};
+
+const move = (step) => {
+  index = (index + step + VARIANTS.length) % VARIANTS.length;
+  render();
+};
+
+document.getElementById('prev').addEventListener('click', () => move(-1));
+document.getElementById('next').addEventListener('click', () => move(1));
+document.addEventListener('keydown', (event) => {
+  const target = event.target;
+  if (target instanceof HTMLElement && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
+  if (event.key === 'ArrowLeft') move(-1);
+  if (event.key === 'ArrowRight') move(1);
+});
+
+document.getElementById('amz-list').innerHTML = renderAmz();
+render();
+</script>
+</body>
+</html>
