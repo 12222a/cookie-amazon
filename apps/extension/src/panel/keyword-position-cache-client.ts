@@ -9,15 +9,19 @@
  */
 import type { SellerSpriteKeywordReverseData } from '@cookie-amazon/protocol'
 import type { KeywordPositionCache } from './keyword-position-cache'
-import { describeKeywordPositions } from './keyword-positions'
+import { describeKeywordPositionSummary, describeKeywordPositions, type KeywordPositionSummary } from './keyword-positions'
 import { fetchKeywordReverse, type KeywordPositionResult } from './keyword-positions-client'
 
-export type CachedKeywordPositionResult = KeywordPositionResult & {
+type CacheMetadata = {
   /** 这份数据是不是本地缓存给的。 */
   cached: boolean
   /** 命中缓存时距写入多久；未命中为 0。 */
   ageMs: number
 }
+
+export type CachedKeywordPositionResult =
+  | ({ kind: 'rows'; rows: ReturnType<typeof describeKeywordPositions>; summary: KeywordPositionSummary } & CacheMetadata)
+  | (Exclude<KeywordPositionResult, { kind: 'rows' }> & CacheMetadata)
 
 type SendMessage = (message: unknown) => Promise<unknown>
 
@@ -51,6 +55,7 @@ export const requestKeywordPositionsCached = async (
     return {
       kind: 'rows',
       rows: describeKeywordPositions(data),
+      summary: describeKeywordPositionSummary(data),
       cached: true,
       ageMs: cached.ageMs,
     }
@@ -61,5 +66,11 @@ export const requestKeywordPositionsCached = async (
   if (fresh.kind !== 'data') return { ...fresh, cached: false, ageMs: 0 }
   // 写失败只是这次没缓存上，结果照样给用户。
   await options.cache.write(asin, market, fresh.data)
-  return { kind: 'rows', rows: describeKeywordPositions(fresh.data), cached: false, ageMs: 0 }
+  return {
+    kind: 'rows',
+    rows: describeKeywordPositions(fresh.data),
+    summary: describeKeywordPositionSummary(fresh.data),
+    cached: false,
+    ageMs: 0,
+  }
 }

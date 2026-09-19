@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { describeKeywordPositions, POSITION_TYPE_LABELS } from '../keyword-positions'
+import { describeKeywordPositionSummary, describeKeywordPositions, POSITION_TYPE_LABELS } from '../keyword-positions'
 import type { SellerSpriteKeywordReverseData } from '@cookie-amazon/protocol'
 const item = (over: Partial<SellerSpriteKeywordReverseData['items'][number]> = {}) => ({
   keywords: 'phone stand',
@@ -93,6 +93,57 @@ describe('keyword position rows', () => {
   })
   it('returns an empty list for an empty response', () => {
     expect(describeKeywordPositions(data([]))).toEqual([])
+  })
+})
+describe('keyword position summary', () => {
+  it('counts the same item for natural and ad rankings when both exist', () => {
+    expect(describeKeywordPositionSummary(data([
+      item({ natural: { page: 1, rank: 2 }, ad: { page: 1, rank: 4 }, positionTypes: ['NT', 'ADS'] }),
+      item({ keywords: 'desk stand', ad: { page: 2, rank: 9 }, positionTypes: ['ADS'] }),
+      item({ keywords: 'lamp', natural: { page: 1, rank: 12 }, positionTypes: ['NT'] }),
+    ]))).toEqual({
+      totalKeywords: 3,
+      rankedKeywords: 2,
+      adKeywords: 2,
+      sourceTypeCounts: [
+        { code: 'NT', label: '自然搜索词', count: 2 },
+        { code: 'ADS', label: 'SP广告词', count: 2 },
+      ],
+    })
+  })
+
+  it('deduplicates repeated source codes within one keyword', () => {
+    expect(describeKeywordPositionSummary(data([
+      item({ positionTypes: ['ADS', 'ADS', 'SOMETHING_NEW'] }),
+    ]))).toEqual({
+      totalKeywords: 1,
+      rankedKeywords: 0,
+      adKeywords: 0,
+      sourceTypeCounts: [
+        { code: 'ADS', label: 'SP广告词', count: 1 },
+        { code: 'SOMETHING_NEW', label: 'SOMETHING_NEW', count: 1 },
+      ],
+    })
+  })
+
+  it('returns an empty source list when no items are available', () => {
+    expect(describeKeywordPositionSummary(data([]))).toEqual({
+      totalKeywords: 0,
+      rankedKeywords: 0,
+      adKeywords: 0,
+      sourceTypeCounts: [],
+    })
+  })
+
+  it('does not count a position whose page is known but rank is missing', () => {
+    expect(describeKeywordPositionSummary(data([
+      item({ natural: { page: 2, rank: null }, ad: { page: 1, rank: null } }),
+    ]))).toEqual({
+      totalKeywords: 1,
+      rankedKeywords: 0,
+      adKeywords: 0,
+      sourceTypeCounts: [],
+    })
   })
 })
 describe('position type labels', () => {

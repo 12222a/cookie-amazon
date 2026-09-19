@@ -61,21 +61,32 @@
           </div>
           <p class="panel-hint">看它在每个关键词上的自然位与广告位，判断是靠自然出单还是靠广告撑着。</p>
           <p id="positions-status" class="panel-positions-status" role="status" hidden></p>
-          <div id="positions-table-wrap" class="panel-table-wrap" hidden>
-            <table class="panel-table">
-              <thead>
-                <tr>
-                  <th scope="col">关键词</th>
-                  <th scope="col">自然位</th>
-                  <th scope="col">广告位</th>
-                  <th scope="col">自然流量</th>
-                  <th scope="col">广告流量</th>
-                  <th scope="col">位置类型</th>
-                </tr>
-              </thead>
-              <tbody id="positions-rows"></tbody>
-            </table>
-          </div>
+          <section id="positions-summary" class="panel-position-summary" hidden>
+            <h3>词量概览</h3>
+            <div id="positions-summary-cards" class="panel-summary-cards"></div>
+            <div id="positions-source-types" class="panel-source-types" hidden>
+              <h4>来源类型</h4>
+              <ul id="positions-source-type-list"></ul>
+            </div>
+          </section>
+          <details id="positions-details" class="panel-positions-details" hidden>
+            <summary>展开关键词明细</summary>
+            <div id="positions-table-wrap" class="panel-table-wrap" hidden>
+              <table class="panel-table">
+                <thead>
+                  <tr>
+                    <th scope="col">关键词</th>
+                    <th scope="col">自然位</th>
+                    <th scope="col">广告位</th>
+                    <th scope="col">自然流量</th>
+                    <th scope="col">广告流量</th>
+                    <th scope="col">位置类型</th>
+                  </tr>
+                </thead>
+                <tbody id="positions-rows"></tbody>
+              </table>
+            </div>
+          </details>
         </section>
       </section>
 

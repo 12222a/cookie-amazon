@@ -31,6 +31,14 @@ describe('requestKeywordPositionsCached', () => {
     expect(first.cached).toBe(false)
     expect(second.kind).toBe('rows')
     expect(second.cached).toBe(true)
+    if (first.kind !== 'rows' || second.kind !== 'rows') throw new Error('expected row results')
+    expect(first.summary).toEqual({
+      totalKeywords: 1,
+      rankedKeywords: 0,
+      adKeywords: 0,
+      sourceTypeCounts: [],
+    })
+    expect(second.summary).toEqual(first.summary)
     expect(send).toHaveBeenCalledTimes(1)
   })
 

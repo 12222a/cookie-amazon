@@ -24,6 +24,17 @@ export type KeywordPositionRow = {
   adShare: string
   types: string
 }
+export type KeywordPositionSourceCount = {
+  code: string
+  label: string
+  count: number
+}
+export type KeywordPositionSummary = {
+  totalKeywords: number
+  rankedKeywords: number
+  adKeywords: number
+  sourceTypeCounts: KeywordPositionSourceCount[]
+}
 /**
  * 名次展示规则：第一页只写名次，翻页之后必须带页号——
  * 「107」和「第 2 页 · 107」对选品的含义完全不同，只写数字会误导。
@@ -31,8 +42,11 @@ export type KeywordPositionRow = {
  * 只有页号、没有名次时显示未知：「出现在第 2 页」读起来像一次展示，
  * 而我们并不知道它排在第几位。
  */
+const hasRank = (position: Position | null): position is Position & { rank: number } =>
+  position !== null && position.rank !== null
+
 const formatPosition = (position: Position | null): string => {
-  if (position === null || position.rank === null) return UNKNOWN
+  if (!hasRank(position)) return UNKNOWN
   const onFirstPage = position.page === null || position.page <= 1
   return onFirstPage ? String(position.rank) : `第 ${position.page} 页 · ${position.rank}`
 }
@@ -59,3 +73,34 @@ const toRow = (item: KeywordItem): KeywordPositionRow => ({
 })
 export const describeKeywordPositions = (data: SellerSpriteKeywordReverseData): KeywordPositionRow[] =>
   data.items.map(toRow)
+
+export const describeKeywordPositionSummary = (data: SellerSpriteKeywordReverseData): KeywordPositionSummary => {
+  let rankedKeywords = 0
+  let adKeywords = 0
+  const sourceTypeCounts = new Map<string, KeywordPositionSourceCount>()
+
+  for (const item of data.items) {
+    if (hasRank(item.natural)) rankedKeywords += 1
+    if (hasRank(item.ad)) adKeywords += 1
+
+    for (const code of new Set(item.positionTypes ?? [])) {
+      const current = sourceTypeCounts.get(code)
+      if (current === undefined) {
+        sourceTypeCounts.set(code, {
+          code,
+          label: POSITION_TYPE_LABELS[code] ?? code,
+          count: 1,
+        })
+      } else {
+        current.count += 1
+      }
+    }
+  }
+
+  return {
+    totalKeywords: data.items.length,
+    rankedKeywords,
+    adKeywords,
+    sourceTypeCounts: [...sourceTypeCounts.values()],
+  }
+}

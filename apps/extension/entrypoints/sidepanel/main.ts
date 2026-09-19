@@ -3,10 +3,9 @@ import { AnalysisObjectStore } from '../../src/analysis-object-store'
 import { createAnalysisObject, DEFAULT_MARKET, type AnalysisObject } from '../../src/analysis-object'
 import { describeAnalysisObject } from '../../src/panel/panel-state'
 import { describeColleagueRecord, describeRecordForOwner, RESEARCH_STATUS_LABELS } from '../../src/panel/research-panel-state'
-import { type KeywordPositionResult } from '../../src/panel/keyword-positions-client'
 import { requestKeywordPositionsCached, type CachedKeywordPositionResult } from '../../src/panel/keyword-position-cache-client'
 import { KeywordPositionCache } from '../../src/panel/keyword-position-cache'
-import type { KeywordPositionRow } from '../../src/panel/keyword-positions'
+import type { KeywordPositionRow, KeywordPositionSummary } from '../../src/panel/keyword-positions'
 import { createResearchRecord, canEditRecord, isResearchStatus, updateResearchRecord, type ResearchRecord, type ResearchStatus } from '../../src/research-record'
 import { ResearchRecordStore } from '../../src/research-record-store'
 import { createViewerIdentity, describeViewer, ViewerIdentityStore, type ViewerIdentity } from '../../src/viewer-identity'
@@ -31,6 +30,11 @@ const inputElement = document.querySelector<HTMLInputElement>('#asin')
 const errorElement = document.querySelector<HTMLParagraphElement>('#error')
 const loadButton = document.querySelector<HTMLButtonElement>('#load-positions')
 const statusElement = document.querySelector<HTMLParagraphElement>('#positions-status')
+const summaryElement = document.querySelector<HTMLElement>('#positions-summary')
+const summaryCardsElement = document.querySelector<HTMLElement>('#positions-summary-cards')
+const sourceTypesElement = document.querySelector<HTMLElement>('#positions-source-types')
+const sourceTypeListElement = document.querySelector<HTMLUListElement>('#positions-source-type-list')
+const detailsElement = document.querySelector<HTMLDetailsElement>('#positions-details')
 const tableWrapElement = document.querySelector<HTMLElement>('#positions-table-wrap')
 const rowsElement = document.querySelector<HTMLTableSectionElement>('#positions-rows')
 const recordSection = document.querySelector<HTMLElement>('#record')
@@ -44,6 +48,9 @@ const recordError = document.querySelector<HTMLParagraphElement>('#record-error'
 let current: AnalysisObject | null = null
 let viewer: ViewerIdentity | null = null
 let loading = false
+let positionsTarget: string | null = null
+
+const positionTargetKey = (target: AnalysisObject): string => target.asin + ':' + target.market
 
 const setError = (message: string | null): void => {
   if (!errorElement) return
@@ -97,17 +104,61 @@ const renderRows = (rows: readonly KeywordPositionRow[]): void => {
   }))
 }
 
+const renderSummary = (summary: KeywordPositionSummary | null): void => {
+  if (summaryElement) summaryElement.hidden = summary === null
+  summaryCardsElement?.replaceChildren()
+  sourceTypeListElement?.replaceChildren()
+  if (sourceTypesElement) sourceTypesElement.hidden = summary === null || summary.sourceTypeCounts.length === 0
+  if (summary === null) return
+
+  const cards = [
+    { label: '关键词总数', value: summary.totalKeywords },
+    { label: '有自然排名', value: summary.rankedKeywords },
+    { label: '有广告排名', value: summary.adKeywords },
+  ]
+  summaryCardsElement?.replaceChildren(...cards.map(({ label, value }) => {
+    const card = document.createElement('div')
+    card.className = 'panel-summary-card'
+    const name = document.createElement('span')
+    name.textContent = label
+    const count = document.createElement('strong')
+    count.textContent = String(value)
+    card.append(name, count)
+    return card
+  }))
+  sourceTypeListElement?.replaceChildren(...summary.sourceTypeCounts.map(({ label, count }) => {
+    const item = document.createElement('li')
+    const name = document.createElement('span')
+    name.textContent = label
+    const value = document.createElement('strong')
+    value.textContent = String(count)
+    item.append(name, value)
+    return item
+  }))
+}
+
 /**
  * 把取数结果翻译成面板上的话。每一种失败都给出下一步该做什么，
  * 而不是把错误码直接甩给用户。
  */
-const describeResult = (result: KeywordPositionResult): string | null => {
+const describeResult = (result: CachedKeywordPositionResult): string | null => {
   if (result.kind === 'rows') {
-    if (tableWrapElement) tableWrapElement.hidden = result.rows.length === 0
+    const hasRows = result.rows.length > 0
+    renderSummary(hasRows ? result.summary : null)
+    if (detailsElement) {
+      detailsElement.hidden = !hasRows
+      if (!hasRows) detailsElement.open = false
+    }
+    if (tableWrapElement) tableWrapElement.hidden = !hasRows
     renderRows(result.rows)
-    return result.rows.length === 0
+    return !hasRows
       ? '这个 ASIN 当前没有可读取的关键词。'
-      : `已读取 ${result.rows.length} 个关键词。`
+      : '已读取 ' + result.rows.length + ' 个关键词。'
+  }
+  renderSummary(null)
+  if (detailsElement) {
+    detailsElement.hidden = true
+    detailsElement.open = false
   }
   if (tableWrapElement) tableWrapElement.hidden = true
   if (result.kind === 'unsupported-market') return `暂不支持 ${result.market} 站的关键词反查，目前只读取美国站。`
@@ -151,6 +202,7 @@ const describeCacheAge = (ageMs: number): string => {
 const loadPositions = async (): Promise<void> => {
   const target = current
   if (target === null || loading) return
+  const targetKey = positionTargetKey(target)
   loading = true
   if (loadButton) loadButton.disabled = true
   setStatus('正在读取…')
@@ -158,11 +210,14 @@ const loadPositions = async (): Promise<void> => {
     const result: CachedKeywordPositionResult = await requestKeywordPositionsCached(
       target.asin, target.market, { cache: positionCache },
     )
+    if (positionsTarget !== targetKey) return
     const message = describeResult(result)
     setStatus(result.cached ? `${message}（${describeCacheAge(result.ageMs)}）` : message)
   } finally {
+    const shouldLoadAnotherTarget = current !== null && positionsTarget !== positionTargetKey(current)
     loading = false
     if (loadButton) loadButton.disabled = false
+    if (shouldLoadAnotherTarget) void loadPositions()
   }
 }
 
@@ -179,21 +234,41 @@ const render = async (): Promise<void> => {
   current = await objectStore.read()
   const state = describeAnalysisObject(current)
   if (state.kind === 'empty') {
+    positionsTarget = null
     if (emptyElement) emptyElement.hidden = false
     if (objectElement) objectElement.hidden = true
     if (recordSection) recordSection.hidden = true
     if (sourceElement) sourceElement.textContent = ''
+    setStatus(null)
+    renderSummary(null)
+    if (detailsElement) {
+      detailsElement.hidden = true
+      detailsElement.open = false
+    }
+    if (tableWrapElement) tableWrapElement.hidden = true
+    renderRows([])
     return
   }
   if (emptyElement) emptyElement.hidden = true
   if (objectElement) objectElement.hidden = false
   if (sourceElement) sourceElement.textContent = `${state.asin} · ${state.market} · ${state.sourceLabel}`
   renderFields(state.fields)
-  // 换了对象就清掉上一个对象的词位，避免把别人的数据留在屏幕上。
-  setStatus(null)
-  if (tableWrapElement) tableWrapElement.hidden = true
-  renderRows([])
+  const nextPositionsTarget = state.asin + ':' + state.market
+  const shouldLoadPositions = positionsTarget !== nextPositionsTarget
+  if (shouldLoadPositions) {
+    // 换了对象就清掉上一个对象的词位，避免把别人的数据留在屏幕上。
+    positionsTarget = nextPositionsTarget
+    setStatus(null)
+    renderSummary(null)
+    if (detailsElement) {
+      detailsElement.hidden = true
+      detailsElement.open = false
+    }
+    if (tableWrapElement) tableWrapElement.hidden = true
+    renderRows([])
+  }
   await renderRecord()
+  if (shouldLoadPositions) void loadPositions()
 }
 
 identityForm?.addEventListener('submit', (event) => {
