@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { requestKeywordPositionsCached } from '../panel/keyword-position-cache-client'
-import { KeywordPositionCache } from '../panel/keyword-position-cache'
+import { KeywordPositionCache, KEYWORD_POSITION_CACHE_STORAGE_KEY, keywordPositionCacheKey } from '../panel/keyword-position-cache'
 import type { StorageArea } from '../remote-config'
 
 const memoryStorage = () => {
@@ -88,5 +88,17 @@ describe('requestKeywordPositionsCached', () => {
     expect(result.kind).toBe('unsupported-market')
     expect(send).not.toHaveBeenCalled()
   })
-})
 
+  it('ignores a corrupt cached payload and refetches instead of throwing', async () => {
+    const { area } = memoryStorage()
+    const key = keywordPositionCacheKey('B07Z82895W', 'US')
+    await area.set({ [KEYWORD_POSITION_CACHE_STORAGE_KEY]: { [key]: { storedAt: Date.now(), data: { items: 'not-an-array' } } } })
+    const send = vi.fn(async () => response('B07Z82895W'))
+    const result = await requestKeywordPositionsCached('B07Z82895W', 'US', {
+      send, cache: new KeywordPositionCache(area),
+    })
+    expect(result.kind).toBe('rows')
+    expect(result.cached).toBe(false)
+    expect(send).toHaveBeenCalledTimes(1)
+  })
+})

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { KeywordPositionCache, keywordPositionCacheKey, CACHE_TTL_MS } from '../panel/keyword-position-cache'
+import { KeywordPositionCache, KEYWORD_POSITION_CACHE_STORAGE_KEY, keywordPositionCacheKey, CACHE_TTL_MS } from '../panel/keyword-position-cache'
 import type { StorageArea } from '../remote-config'
 
 const memoryStorage = (initial: Record<string, unknown> = {}) => {
@@ -63,7 +63,7 @@ describe('KeywordPositionCache', () => {
   it('treats a malformed stored entry as a miss rather than returning junk', async () => {
     const { area } = memoryStorage()
     const key = keywordPositionCacheKey('B07Z82895W', 'US')
-    await area.set({ 'keyword-position-cache:v1': { [key]: { storedAt: 'yesterday', data: payload } } })
+    await area.set({ [KEYWORD_POSITION_CACHE_STORAGE_KEY]: { [key]: { storedAt: 'yesterday', data: payload } } })
     expect(await new KeywordPositionCache(area).read('B07Z82895W', 'US')).toEqual({ hit: false })
   })
 
@@ -91,8 +91,7 @@ describe('KeywordPositionCache', () => {
     await cache.write('B000000000', 'US', payload)
     now += CACHE_TTL_MS + 1
     await cache.write('B0000000000', 'US', payload)
-    const stored = (await area.get('keyword-position-cache:v1'))['keyword-position-cache:v1'] as Record<string, unknown>
+    const stored = (await area.get(KEYWORD_POSITION_CACHE_STORAGE_KEY))[KEYWORD_POSITION_CACHE_STORAGE_KEY] as Record<string, unknown>
     expect(Object.keys(stored)).toHaveLength(1)
   })
 })
-

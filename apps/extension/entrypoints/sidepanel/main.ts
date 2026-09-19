@@ -159,9 +159,7 @@ const loadPositions = async (): Promise<void> => {
       target.asin, target.market, { cache: positionCache },
     )
     const message = describeResult(result)
-    setStatus(result.cached && message !== null
-      ? `${message}（${describeCacheAge(result.ageMs)}）`
-      : message)
+    setStatus(result.cached ? `${message}（${describeCacheAge(result.ageMs)}）` : message)
   } finally {
     loading = false
     if (loadButton) loadButton.disabled = false

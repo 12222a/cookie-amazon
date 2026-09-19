@@ -5,9 +5,16 @@ export const KEYWORD_POSITION_CACHE_STORAGE_KEY = 'keyword-position-cache:v1'
 /** 24 小时。位置数据变了就是变了，超过一天的值不该再冒充现状。 */
 export const CACHE_TTL_MS = 24 * 60 * 60 * 1_000
 
-export type KeywordPositionCacheRead<T> =
+/**
+ * 命中时返回的 payload 是 unknown，不是调用方指定的 T。
+ *
+ * 存储是信任边界：写进去的可能是旧版本、被改过、或另一半代码留下的东西。
+ * 若在这里断言成 T，坏数据要等到很远的展示层才炸；交给调用方用校验函数收窄，
+ * 类型系统就会逼着它处理「数据不可用」这一支。
+ */
+export type KeywordPositionCacheRead =
   | { hit: false }
-  | { hit: true; data: T; ageMs: number }
+  | { hit: true; data: unknown; ageMs: number }
 
 type CacheEntry = { storedAt: number; data: unknown }
 
@@ -45,16 +52,15 @@ export class KeywordPositionCache {
   public constructor(
     private readonly storage: StorageArea,
     private readonly now: () => number = Date.now,
-    private readonly ttlMs: number = CACHE_TTL_MS,
   ) {}
 
-  public async read<T>(asin: string, market: string): Promise<KeywordPositionCacheRead<T>> {
+  public async read(asin: string, market: string): Promise<KeywordPositionCacheRead> {
     const entry = await this.entry(keywordPositionCacheKey(asin, market))
     if (entry === null) return { hit: false }
     const ageMs = this.now() - entry.storedAt
     // 时钟回拨或未来时间戳一律当过期：宁可多拉一次，也不把可疑数据当现状。
-    if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs >= this.ttlMs) return { hit: false }
-    return { hit: true, data: entry.data as T, ageMs }
+    if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs >= CACHE_TTL_MS) return { hit: false }
+    return { hit: true, data: entry.data, ageMs }
   }
 
   public async write(asin: string, market: string, data: unknown): Promise<boolean> {
@@ -62,7 +68,7 @@ export class KeywordPositionCache {
       const stored = await this.allEntries()
       const now = this.now()
       const kept = Object.entries(stored)
-        .filter(([, entry]) => now - entry.storedAt < this.ttlMs)
+        .filter(([, entry]) => now - entry.storedAt < CACHE_TTL_MS)
       const next = Object.fromEntries([...kept, [keywordPositionCacheKey(asin, market), { storedAt: now, data }]])
       await this.storage.set({ [KEYWORD_POSITION_CACHE_STORAGE_KEY]: next })
       return true
@@ -90,4 +96,3 @@ export class KeywordPositionCache {
     return (await this.allEntries())[key] ?? null
   }
 }
-

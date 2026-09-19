@@ -14,10 +14,7 @@ import {
   type SellerSpriteKeywordReverseInput,
 } from '@cookie-amazon/protocol'
 import { EXTENSION_RUNTIME_REQUEST_ACTION } from '../runtime-bridge'
-import {
-  describeKeywordPositions,
-  type KeywordPositionRow,
-} from './keyword-positions'
+import type { KeywordPositionRow } from './keyword-positions'
 
 const SELLERSPRITE_TARGET_ID = 'sellersprite'
 /** 目前只映射美国站（B9 决定）。其他站点在这里就被挡住，不发出请求。 */
@@ -97,17 +94,4 @@ export const fetchKeywordReverse = async (
   }
   if (!response.ok) return failureKind(response.error.code)
   return { kind: 'data', data: response.data as SellerSpriteKeywordReverseData }
-}
-/**
- * 取某个 ASIN 的词位。任何异常都翻译成结果对象，不向调用方抛错——
- * 面板要能一直显示，不能因为一次取数失败就白屏。
- */
-export const requestKeywordPositions = async (
-  asin: string,
-  market: string,
-  options: { send?: SendMessage } = {},
-): Promise<KeywordPositionResult> => {
-  const result = await fetchKeywordReverse(asin, market, options)
-  if (result.kind !== 'data') return result
-  return { kind: 'rows', rows: describeKeywordPositions(result.data) }
 }
