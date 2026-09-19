@@ -10,6 +10,8 @@ import type {
   KeywordPositionSummary,
 } from '../../src/panel/keyword-positions'
 import { renderKeywordTrend } from '../../src/panel/keyword-trend-view'
+import { fetchSellerSpriteReviews, type ReviewCommentsResult } from '../../src/panel/review-comments-client'
+import { analyzeSellerSpriteReviews, type ReviewPanelData } from '../../src/panel/review-analysis'
 import { createResearchRecord, canEditRecord, isResearchStatus, updateResearchRecord, type ResearchRecord, type ResearchStatus } from '../../src/research-record'
 import { ResearchRecordStore } from '../../src/research-record-store'
 import { createViewerIdentity, describeViewer, ViewerIdentityStore, type ViewerIdentity } from '../../src/viewer-identity'
@@ -41,6 +43,12 @@ const sourceTypeListElement = document.querySelector<HTMLUListElement>('#positio
 const detailsElement = document.querySelector<HTMLDetailsElement>('#positions-details')
 const tableWrapElement = document.querySelector<HTMLElement>('#positions-table-wrap')
 const rowsElement = document.querySelector<HTMLTableSectionElement>('#positions-rows')
+const loadReviewsButton = document.querySelector<HTMLButtonElement>('#load-reviews')
+const reviewsStatusElement = document.querySelector<HTMLParagraphElement>('#reviews-status')
+const reviewsSummaryElement = document.querySelector<HTMLElement>('#reviews-summary')
+const reviewsSummaryCardsElement = document.querySelector<HTMLElement>('#reviews-summary-cards')
+const reviewsCoverageElement = document.querySelector<HTMLParagraphElement>('#reviews-coverage')
+const reviewPainPointsElement = document.querySelector<HTMLElement>('#review-pain-points')
 const recordSection = document.querySelector<HTMLElement>('#record')
 const recordOwnerElement = document.querySelector<HTMLSpanElement>('#record-owner')
 const recordNoteElement = document.querySelector<HTMLParagraphElement>('#record-note')
@@ -52,6 +60,8 @@ let current: AnalysisObject | null = null
 let viewer: ViewerIdentity | null = null
 let loading = false
 let positionsTarget: string | null = null
+let reviewsLoading = false
+let reviewsTarget: string | null = null
 
 const positionTargetKey = (target: AnalysisObject): string => target.asin + ':' + target.market
 
@@ -88,6 +98,81 @@ const renderFields = (fields: readonly { label: string; value: string }[]): void
     value.textContent = field.value
     return [term, value]
   }))
+}
+
+const setReviewsStatus = (message: string | null): void => {
+  if (!reviewsStatusElement) return
+  reviewsStatusElement.hidden = message === null
+  reviewsStatusElement.textContent = message ?? ''
+}
+
+const renderReviewData = (data: ReviewPanelData | null): void => {
+  if (reviewsSummaryElement) reviewsSummaryElement.hidden = data === null
+  reviewsSummaryCardsElement?.replaceChildren()
+  if (reviewPainPointsElement) {
+    reviewPainPointsElement.hidden = data === null || data.painPoints.length === 0
+    reviewPainPointsElement.replaceChildren()
+  }
+  if (reviewsCoverageElement) reviewsCoverageElement.textContent = ''
+  if (data === null) return
+
+  const lowStarShare = data.sampled === 0 ? 0 : data.lowStarCount / data.sampled
+  const cards = [
+    { label: '评论样本', value: data.sampled + ' / ' + data.total },
+    { label: '低星样本', value: data.lowStarCount + ' / ' + data.sampled },
+    { label: '痛点主题', value: data.sampleSufficient ? data.painPoints.length : '—' },
+  ]
+  reviewsSummaryCardsElement?.replaceChildren(...cards.map(({ label, value }) => {
+    const card = document.createElement('div')
+    card.className = 'panel-summary-card'
+    const name = document.createElement('span')
+    name.textContent = label
+    const count = document.createElement('strong')
+    count.textContent = String(value)
+    card.append(name, count)
+    return card
+  }))
+  if (reviewsCoverageElement) {
+    reviewsCoverageElement.textContent = data.total > 0
+      ? '覆盖度 ' + (data.coverage * 100).toFixed(1) + '% · 低星占比 ' + (lowStarShare * 100).toFixed(1) + '%'
+      : 'SellerSprite 未返回评论总数，当前只展示已取到的样本。'
+  }
+  if (!reviewPainPointsElement) return
+  for (const pain of data.painPoints) {
+    const details = document.createElement('details')
+    details.className = 'panel-pain-point'
+    const summary = document.createElement('summary')
+    summary.textContent = pain.label + ' · ' + pain.count + ' 次 · 低星 ' + (pain.lowStarShare * 100).toFixed(0) + '%'
+    details.append(summary)
+    const meta = document.createElement('p')
+    meta.className = 'panel-pain-point-meta'
+    meta.textContent = '涉及 ' + pain.asinCount + ' 个 ASIN · 平均 ' + pain.averageStar.toFixed(1) + ' 星'
+    details.append(meta)
+    const excerpts = document.createElement('ul')
+    excerpts.className = 'panel-pain-point-excerpts'
+    for (const excerpt of pain.excerpts) {
+      const item = document.createElement('li')
+      item.textContent = excerpt
+      excerpts.append(item)
+    }
+    if (pain.excerpts.length > 0) details.append(excerpts)
+    reviewPainPointsElement.append(details)
+  }
+}
+
+const describeReviewResult = (result: ReviewCommentsResult): string | null => {
+  if (result.kind === 'data') {
+    const data = analyzeSellerSpriteReviews(result.data)
+    renderReviewData(data)
+    if (!data.sampleSufficient) return '样本不足（' + data.sampled + '/6），暂不生成痛点结论。'
+    if (data.painPoints.length === 0) return '已读取评论，但未形成稳定的低星痛点主题。'
+    return '已读取 ' + data.sampled + ' 条评论，识别 ' + data.painPoints.length + ' 个痛点主题。'
+  }
+  renderReviewData(null)
+  if (result.kind === 'unsupported-market') return '暂不支持 ' + result.market + ' 站的评论分析，目前只读取美国站。'
+  if (result.kind === 'not-logged-in') return '卖家精灵登录已失效，请重新登录后重试。'
+  if (result.kind === 'permission-required') return '尚未授权卖家精灵，请在扩展弹窗中授权后重试。'
+  return '读取失败（' + result.reason + '），请稍后重试。'
 }
 
 /** 空行不渲染，但保留未知列的破折号：表格要能对齐着看。 */
@@ -228,6 +313,23 @@ const loadPositions = async (): Promise<void> => {
   }
 }
 
+const loadReviews = async (): Promise<void> => {
+  const target = current
+  if (target === null || reviewsLoading) return
+  const targetKey = positionTargetKey(target)
+  reviewsLoading = true
+  if (loadReviewsButton) loadReviewsButton.disabled = true
+  setReviewsStatus('正在读取评论…')
+  try {
+    const result = await fetchSellerSpriteReviews(target.asin, target.market)
+    if (reviewsTarget !== targetKey) return
+    setReviewsStatus(describeReviewResult(result))
+  } finally {
+    reviewsLoading = false
+    if (loadReviewsButton) loadReviewsButton.disabled = false
+  }
+}
+
 const renderIdentity = async (): Promise<void> => {
   viewer = await identityStore.read()
   if (viewerElement) viewerElement.textContent = describeViewer(viewer)
@@ -247,6 +349,9 @@ const render = async (): Promise<void> => {
     if (recordSection) recordSection.hidden = true
     if (sourceElement) sourceElement.textContent = ''
     setStatus(null)
+    reviewsTarget = null
+    setReviewsStatus(null)
+    renderReviewData(null)
     renderSummary(null)
     if (detailsElement) {
       detailsElement.hidden = true
@@ -262,6 +367,7 @@ const render = async (): Promise<void> => {
   renderFields(state.fields)
   const nextPositionsTarget = state.asin + ':' + state.market
   const shouldLoadPositions = positionsTarget !== nextPositionsTarget
+  const shouldResetReviews = reviewsTarget !== nextPositionsTarget
   if (shouldLoadPositions) {
     // 换了对象就清掉上一个对象的词位，避免把别人的数据留在屏幕上。
     positionsTarget = nextPositionsTarget
@@ -273,6 +379,11 @@ const render = async (): Promise<void> => {
     }
     if (tableWrapElement) tableWrapElement.hidden = true
     renderRows([])
+  }
+  if (shouldResetReviews) {
+    reviewsTarget = nextPositionsTarget
+    setReviewsStatus(null)
+    renderReviewData(null)
   }
   await renderRecord()
   if (shouldLoadPositions) void loadPositions()
@@ -323,6 +434,7 @@ recordForm?.addEventListener('submit', (event) => {
 })
 
 loadButton?.addEventListener('click', () => { void loadPositions() })
+loadReviewsButton?.addEventListener('click', () => { void loadReviews() })
 
 formElement?.addEventListener('submit', (event) => {
   event.preventDefault()

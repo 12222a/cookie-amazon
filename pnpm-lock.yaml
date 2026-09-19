@@ -42,6 +42,9 @@ importers:
       '@cookie-amazon/remote-config':
         specifier: workspace:*
         version: link:../../packages/remote-config
+      '@cookie-amazon/research-core':
+        specifier: workspace:*
+        version: link:../../packages/research-core
       '@cookie-amazon/sellersprite':
         specifier: workspace:*
         version: link:../../packages/sellersprite

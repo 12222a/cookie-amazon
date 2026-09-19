@@ -89,6 +89,20 @@
             </div>
           </details>
         </section>
+
+        <section class="panel-reviews">
+          <div class="panel-reviews-head">
+            <h2>评论痛点</h2>
+            <button id="load-reviews" type="button">读取评论</button>
+          </div>
+          <p class="panel-hint">从 SellerSprite 读取当前 ASIN 的评论样本，查看反复出现的低星问题。</p>
+          <p id="reviews-status" class="panel-reviews-status" role="status" hidden></p>
+          <section id="reviews-summary" class="panel-review-summary" hidden>
+            <div id="reviews-summary-cards" class="panel-summary-cards"></div>
+            <p id="reviews-coverage" class="panel-review-coverage"></p>
+          </section>
+          <section id="review-pain-points" class="panel-pain-points" hidden></section>
+        </section>
       </section>
 
       <form id="manual" class="panel-manual">

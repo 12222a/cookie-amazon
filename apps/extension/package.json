@@ -6,6 +6,7 @@
   "dependencies": {
     "@cookie-amazon/protocol": "workspace:*",
     "@cookie-amazon/remote-config": "workspace:*",
+    "@cookie-amazon/research-core": "workspace:*",
     "@cookie-amazon/sellersprite": "workspace:*",
     "webext-bridge": "^6.0.1"
   },

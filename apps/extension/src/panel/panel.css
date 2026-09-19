@@ -386,3 +386,94 @@ body {
   color: #8b9794;
   font-size: 10px;
 }
+
+.panel-reviews {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid #29343d;
+}
+
+.panel-reviews-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.panel-reviews-head h2 {
+  margin: 0;
+  color: #f2f5f3;
+  font-size: 13px;
+}
+
+.panel-reviews-head button {
+  padding: 6px 9px;
+  border: 1px solid #44515a;
+  background: transparent;
+  color: #f2f5f3;
+  font: inherit;
+  cursor: pointer;
+}
+
+.panel-reviews-head button:disabled {
+  cursor: default;
+  opacity: .55;
+}
+
+.panel-reviews-status,
+.panel-review-coverage {
+  margin: 0;
+  color: #cdd5d4;
+  font-size: 11px;
+}
+
+.panel-review-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid #29343d;
+  background: #111920;
+}
+
+.panel-pain-points {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.panel-pain-point {
+  border: 1px solid #29343d;
+  background: #111920;
+}
+
+.panel-pain-point summary {
+  padding: 8px 10px;
+  color: #f2f5f3;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.panel-pain-point summary:focus-visible {
+  outline: 2px solid #6ea8a0;
+  outline-offset: -2px;
+}
+
+.panel-pain-point-meta {
+  margin: 0;
+  padding: 0 10px 4px;
+  color: #8b9794;
+  font-size: 10px;
+}
+
+.panel-pain-point-excerpts {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0 10px 10px 26px;
+  color: #cdd5d4;
+  font-size: 11px;
+}

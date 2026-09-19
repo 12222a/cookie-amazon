@@ -49,6 +49,8 @@ const REVIEW_FINGERPRINT_PREFIX_LENGTH = 120
 
 export const reviewFingerprint = (review: ReviewItem): string => {
   const asin = review.asin.trim().toUpperCase()
+  const id = normalizeReviewText(review.id ?? '')
+  if (id) return `${asin}:id:${id}`
   const content = normalizeReviewText(review.content)
   if (content) return `${asin}:content:${content.slice(0, REVIEW_FINGERPRINT_PREFIX_LENGTH)}`
   const title = normalizeReviewText(review.title)

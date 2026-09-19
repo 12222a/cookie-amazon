@@ -158,6 +158,7 @@ export type MarketEvidence = {
 }
 
 export type ReviewItem = {
+  id?: string
   asin: string
   star: number
   title: string
