@@ -11,6 +11,23 @@ export const RESEARCH_STAGE_IDS = [
 export type ResearchStageId = typeof RESEARCH_STAGE_IDS[number]
 export type ResearchStageStatus = 'idle' | 'running' | 'complete' | 'partial' | 'skipped' | 'failed' | 'cancelled'
 export type CandidateTier = 'A' | 'B' | 'C'
+export type CandidateResearchDepth = 'deep' | 'comparison'
+export type CandidateResearchPriority = '重点验证' | '待补充研究' | '暂不优先'
+
+export type CandidateResearchDecision = {
+  asin: string
+  priority: CandidateResearchPriority
+  nextStep: string
+  reasons: string[]
+  missing: string[]
+  scores: {
+    demand: number | null
+    entry: number | null
+    differentiation: number | null
+    confidence: number
+  }
+}
+
 export type ResearchVerdict = 'CONTINUE' | 'WATCH' | 'DROP'
 
 export type ResearchStageError = {
@@ -44,11 +61,15 @@ export type ResearchStageState = {
 
 export type ResearchBudgetKey = 'discovery' | 'reverseKeywords' | 'keywordMining' | 'aba' | 'competitors' | 'market' | 'reviews'
 export type ResearchBudget = Record<ResearchBudgetKey, number>
+export type DiscoveryPageCount = 1 | 3 | 5
+export type ProductDiscoveryProfile = 'strict' | 'expanded'
 
 export type ResearchInput = {
   market: string
   categoryId: string
   categoryLabel?: string
+  discoveryPages?: DiscoveryPageCount
+  discoveryProfile?: ProductDiscoveryProfile
 }
 
 export type ProductCandidate = {
@@ -66,6 +87,7 @@ export type ProductCandidate = {
   listingAgeDays?: number | null
   discoveryScore: number
   tier?: CandidateTier
+  researchDepth?: CandidateResearchDepth
 }
 
 export type KeywordMetric = {
@@ -108,6 +130,7 @@ export type AbaKeywordEvidence = {
   rankGrowthRate: number | null
   clickShareRate: number | null
   conversionShareRate: number | null
+  sourceAsins?: string[]
 }
 
 export type CompetitorEvidence = {
@@ -118,6 +141,7 @@ export type CompetitorEvidence = {
   medianReviews: number | null
   medianListingAgeDays: number | null
   newListingShare: number | null
+  sourceAsins?: string[]
 }
 
 export type MarketEvidence = {
@@ -130,6 +154,7 @@ export type MarketEvidence = {
   brandConcentration: number | null
   sellerConcentration: number | null
   newProductShare: number | null
+  sourceAsins?: string[]
 }
 
 export type ReviewItem = {
@@ -145,6 +170,7 @@ export type ReviewPainPoint = {
   id: string
   label: string
   count: number
+  lowStarCount: number
   asinCount: number
   lowStarShare: number
   averageStar: number
@@ -196,6 +222,7 @@ export type ResearchJob = {
   usedBudget: ResearchBudget
   evidence: ResearchEvidence
   decision: ResearchDecision | null
+  candidateDecisions: CandidateResearchDecision[]
   errors: string[]
   startedAt: number
   completedAt: number | null

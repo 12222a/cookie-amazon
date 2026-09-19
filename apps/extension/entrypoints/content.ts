@@ -20,6 +20,7 @@ import {
   TARGET_ACTIONS,
   isAllowedWebOrigin,
   isContentScriptProbeRequest,
+  isRuntimeBridgeRequest,
   isPingRequest,
   isSellerSpriteCompetitorRequest,
   isSellerSpriteProductSelectionRequest,
@@ -39,6 +40,7 @@ import {
   type SellerSpriteKeywordReverseResponse,
   type TargetResponse,
 } from '@cookie-amazon/protocol'
+import { EXTENSION_RUNTIME_REQUEST_ACTION } from '../src/runtime-bridge'
 
 const invalidMessage = (requestId = 'unknown'): ProtocolError => ({
   namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION,
@@ -125,33 +127,87 @@ const relayKeywordMiningMessage = async ({ data }: { data: unknown }): Promise<i
   try { return await sendMessage(data.action, data, 'background') as unknown as import('@cookie-amazon/protocol').SellerSpriteKeywordMiningResponse } catch { return extensionUnavailable(data.requestId) }
 }
 
+const relayPingMessage = async ({ data }: { data: unknown }): Promise<PingResponse> => {
+  if (!isAllowedWebOrigin(location.origin) || !isPingRequest(data)) return invalidMessage()
+  try {
+    return await sendMessage('PING', data, 'background') as unknown as PingResponse
+  } catch {
+    return extensionUnavailable(data.requestId)
+  }
+}
+
+const RUNTIME_REQUEST_ACTION = 'COOKIE_AMAZON_RUNTIME_REQUEST'
+const RUNTIME_RESPONSE_ACTION = 'COOKIE_AMAZON_RUNTIME_RESPONSE'
+
+const relayRuntimeMessage = async (data: unknown): Promise<unknown> => {
+  if (!isRuntimeBridgeRequest(data)) return invalidMessage()
+  try {
+    return await browser.runtime.sendMessage({
+      action: EXTENSION_RUNTIME_REQUEST_ACTION,
+      request: data,
+    })
+  } catch {
+    return extensionUnavailable(data.requestId)
+  }
+}
 export default defineContentScript({
-  matches: ['http://localhost:5173/*', 'http://127.0.0.1:5173/*'],
+  matches: [
+    'http://localhost:5173/*',
+    'http://127.0.0.1:5173/*',
+    'http://localhost:5174/*',
+    'http://127.0.0.1:5174/*',
+    'https://research.n8nmydomain.com/*',
+  ],
   runAt: 'document_start',
   main() {
+    const bridgeInstanceId = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const bridgeMarker = 'data-cookie-amazon-bridge-instance'
+    document.documentElement.setAttribute(bridgeMarker, bridgeInstanceId)
+    const isCurrentBridge = (): boolean =>
+      document.documentElement.getAttribute(bridgeMarker) === bridgeInstanceId
+
     browser.runtime.onMessage.addListener((message: unknown) =>
-      message === CONTENT_SCRIPT_RUNTIME_PROBE_ACTION
+      message === CONTENT_SCRIPT_RUNTIME_PROBE_ACTION && isCurrentBridge()
         ? Promise.resolve(CONTENT_SCRIPT_RUNTIME_PROBE_RESPONSE)
         : false)
     allowWindowMessaging(MESSAGE_NAMESPACE)
     window.addEventListener('message', (event: MessageEvent<unknown>) => {
-      if (event.source !== window || event.origin !== location.origin || !isAllowedWebOrigin(event.origin)) return
+      if (!isCurrentBridge() || event.source !== window || event.origin !== location.origin || !isAllowedWebOrigin(event.origin)) return
       if (!isContentScriptProbeRequest(event.data)) return
+      let extensionVersion: string
+      try {
+        if (!browser.runtime.id) return
+        extensionVersion = browser.runtime.getManifest().version
+      } catch {
+        // A script left behind by an extension reload must not report itself as available.
+        return
+      }
       window.postMessage({
         namespace: MESSAGE_NAMESPACE,
         action: CONTENT_SCRIPT_PROBE_RESPONSE,
         requestId: event.data.requestId,
-        extensionVersion: browser.runtime.getManifest().version,
+        extensionVersion,
       }, location.origin)
     })
-    onMessage('PING', async ({ data }: { data: unknown }): Promise<PingResponse> => {
-      if (!isAllowedWebOrigin(location.origin) || !isPingRequest(data)) return invalidMessage()
-      try {
-        return await sendMessage('PING', data, 'background') as unknown as PingResponse
-      } catch {
-        return extensionUnavailable(data.requestId)
-      }
+    window.addEventListener('message', (event: MessageEvent<unknown>) => {
+      if (!isCurrentBridge() || event.source !== window || event.origin !== location.origin || !isAllowedWebOrigin(event.origin)) return
+      const envelope = event.data
+      if (typeof envelope !== 'object' || envelope === null
+        || (envelope as { namespace?: unknown }).namespace !== MESSAGE_NAMESPACE
+        || (envelope as { action?: unknown }).action !== RUNTIME_REQUEST_ACTION) return
+      const request = (envelope as { request?: unknown }).request
+      if (!isRuntimeBridgeRequest(request)) return
+      void relayRuntimeMessage(request).then((response) => {
+        if (!isCurrentBridge()) return
+        window.postMessage({
+          namespace: MESSAGE_NAMESPACE,
+          action: RUNTIME_RESPONSE_ACTION,
+          requestId: request.requestId,
+          response,
+        }, location.origin)
+      })
     })
+    onMessage('PING', relayPingMessage)
     for (const action of TARGET_ACTIONS) onMessage(action, relayTargetMessage)
     onMessage(SELLERSPRITE_KEYWORD_REVERSE_ACTION, relayKeywordReverseMessage)
     onMessage(SELLERSPRITE_MONTHLY_ACTION, relayMonthlyMessage)

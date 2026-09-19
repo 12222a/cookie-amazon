@@ -83,7 +83,7 @@ const webSdkErrorMessage = (error: WebSdkError): string => {
     error.code,
     error.httpStatus === undefined ? null : `HTTP ${error.httpStatus}`,
     error.targetCode === undefined ? null : `上游码 ${safeErrorText(String(error.targetCode), 80)}`,
-    error.targetMessage ? safeErrorText(error.targetMessage, 240) : null,
+    error.targetMessage ? safeErrorText(error.targetMessage, 512) : null,
   ].filter((item): item is string => Boolean(item))
   return details.join(' · ')
 }
@@ -111,7 +111,7 @@ const call = async <T>(operation: () => Promise<T>, signal?: AbortSignal): Promi
   }
 }
 
-const mapCandidates = (data: SellerSpriteProductSelectionData) => rankP0Candidates(data.items, 10).map((item) => ({
+const mapCandidates = (data: SellerSpriteProductSelectionData) => rankP0Candidates(data.items, data.items.length).map((item) => ({
   asin: item.asin,
   title: item.title ?? item.asin,
   brand: item.brand,
@@ -231,9 +231,22 @@ export const createSellerSpriteResearchPorts = (
   return {
     products: {
       discover: async (input, options) => mapCandidates(await call(
-        () => sdk.selectProducts(buildP0ProductSelectionInput(input.market, input.categoryId), TIMEOUT),
+        () => sdk.selectProducts(buildP0ProductSelectionInput(input.market, input.categoryId, 1, input.discoveryProfile), TIMEOUT),
         options?.signal,
       )),
+      discoverPage: async (input, page, options) => {
+        const data = await call(
+          () => sdk.selectProducts(buildP0ProductSelectionInput(input.market, input.categoryId, page, input.discoveryProfile), TIMEOUT),
+          options?.signal,
+        )
+        return {
+          page: data.page,
+          pages: data.pages,
+          total: data.total,
+          hasNextPage: data.hasNextPage,
+          items: mapCandidates(data),
+        }
+      },
     },
     reverseKeywords: {
       reverse: async (asin, market, options) => mapReverseKeywords(await call(

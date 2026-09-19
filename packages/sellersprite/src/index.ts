@@ -42,7 +42,7 @@ const webEndpoint = (
 export const SELLERSPRITE_WEB_CAPABILITY_CONTRACTS = Object.freeze([
   Object.freeze({
     capabilityId: 'CHECK_LOGIN', origin: SELLERSPRITE_ORIGIN, status: 'web-endpoint-confirmed', authMode: 'browser-cookie-automatic',
-    endpoints: Object.freeze([webEndpoint('/v2/me', 'GET', 'html')]),
+    endpoints: Object.freeze([webEndpoint('/v3/api/client', 'GET', 'json')]),
   }),
   Object.freeze({
     capabilityId: 'KEYWORD_REVERSE', origin: SELLERSPRITE_ORIGIN, status: 'web-endpoint-confirmed', authMode: 'browser-cookie-automatic',

@@ -47,8 +47,73 @@ import { createTargetAdapter } from './adapter'
 import { TargetClient, TargetClientError } from './client'
 import { createSellerSpriteOperationPolicy } from './policy'
 
+const SELLERSPRITE_AUTH_COOKIE_NAMES = new Set([
+  'Sprite-X-Token',
+  'rank-login-user',
+  'rank-login-user-info',
+])
+
+export const isSellerSpriteAuthenticatedCookie = (name: string, value: string): boolean =>
+  SELLERSPRITE_AUTH_COOKIE_NAMES.has(name) && value.trim().length > 0
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const SELLERSPRITE_SESSION_EXPIRED_CODES = new Set<string>([
+  '2',
+  'ERR_GLOBAL_SESSION_EXPIRED',
+  'UNAUTHORIZED',
+  'NOT_LOGGED_IN',
+  'LOGIN_REQUIRED',
+])
+
+const sellerSpriteErrorDetails = (payload: unknown): { targetCode?: string | number; targetMessage?: string } =>
+  isRecord(payload) ? {
+    ...(typeof payload.code === 'string' || typeof payload.code === 'number' ? { targetCode: payload.code } : {}),
+    ...(typeof payload.message === 'string' ? { targetMessage: payload.message.slice(0, 512) } : {}),
+  } : {}
+
+const isSellerSpriteLoginUrl = (url: string): boolean => {
+  if (!url) return false
+  try {
+    return /\/(?:user\/)?(?:login|signin)(?:\/|$)/i.test(new URL(url).pathname)
+  } catch {
+    return false
+  }
+}
+
+const isSellerSpriteExpiredPayload = (payload: unknown): boolean => {
+  if (!isRecord(payload)) return false
+  const normalizedCode = typeof payload.code === 'string' || typeof payload.code === 'number'
+    ? String(payload.code).trim().toUpperCase()
+    : ''
+  if (SELLERSPRITE_SESSION_EXPIRED_CODES.has(normalizedCode)) return true
+  if (payload.loggedIn === false || payload.authenticated === false) return true
+  const message = typeof payload.message === 'string' ? payload.message : ''
+  return /(?:未登录|登录(?:状态)?(?:已)?失效|会话(?:已)?(?:失效|过期)|请(?:重新|先)?登录|其他设备.*登录|账号.*(?:挤下线|下线))/i.test(message)
+}
+
+const isSellerSpriteLoginHtml = (body: string): boolean => {
+  if (!/<(?:html|form)\b/i.test(body)) return false
+  return /<form\b[^>]*(?:action=["'][^"']*\/(?:user\/)?login|id=["'][^"']*login)/i.test(body)
+    || /(?:请先登录|重新登录|登录已失效|账号密码登录)/i.test(responsePreview(body))
+}
+
+const throwIfSellerSpriteSessionExpired = (
+  response: Response,
+  payload?: unknown,
+  body?: string,
+): void => {
+  if (response.status === 401 || response.status === 403
+    || isSellerSpriteLoginUrl(response.url)
+    || isSellerSpriteExpiredPayload(payload)
+    || (body !== undefined && isSellerSpriteLoginHtml(body))) {
+    throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status, {
+      ...sellerSpriteErrorDetails(payload),
+      targetMessage: 'SellerSprite 登录已失效，账号可能已在其他设备登录，请重新登录。',
+    })
+  }
+}
 
 const readNullableNumber = (value: unknown): number | null | undefined => {
   if (value === null || value === undefined) return null
@@ -59,47 +124,6 @@ const readNullableNumber = (value: unknown): number | null | undefined => {
 }
 
 const readKeywordTrend = (value: unknown): SellerSpriteKeywordTrend | undefined => {
-  if (!isRecord(value)) return undefined
-  const month = typeof value.month === 'string' ? value.month : typeof value.dk === 'string' ? value.dk : undefined
-  if (month === undefined) return undefined
-  const searchRank = readNullableNumber(value.searchRank ?? value.rank)
-  const searches = readNullableNumber(value.searches ?? value.sales)
-  return searchRank === undefined || searches === undefined
-    ? undefined
-    : { month, searchRank, searches }
-}
-
-/**
- * 上游把名次放在一个对象里，字段命名不统一（page/pageNum、position/rank）。
- *
- * position/rank 是跨页的总名次，而 index 是页内位次（如第 2 页第 32 位、总名次 118）。
- * 把 index 当名次读会把一个页内序号冒充全局排名，所以不作回退——宁可报未知。
- *
- * 字段形状不对时返回 null（当作没读到）而不是报契约错误：位置是辅助字段，
- * 一行读不好不应把整个响应扔掉。
- */
-const readKeywordPosition = (value: unknown): SellerSpriteKeywordPosition | null => {
-  if (!isRecord(value)) return null
-  const page = readNullableNumber(value.page ?? value.pageNum)
-  const rank = readNullableNumber(value.position ?? value.rank)
-  if (page === undefined || rank === undefined) return null
-  return { page, rank }
-}
-
-/** 来源类型码列表。缺失或形状不合预期都记 null（显示为未知），不因为一个辅助字段报契约错误。 */
-const readPositionTypes = (value: unknown): string[] | null => {
-  if (!Array.isArray(value) || value.length === 0 || value.length > 20) return null
-  const types: string[] = []
-  for (const item of value) {
-    if (typeof item !== 'string') return null
-    const trimmed = item.trim()
-    if (trimmed.length === 0 || trimmed.length > 64) return null
-    types.push(trimmed)
-  }
-  return types
-}
-
-const readKeywordItem = (value: unknown): SellerSpriteKeywordItem | undefined => {
   if (!isRecord(value)) return undefined
   const month = typeof value.month === 'string' ? value.month : typeof value.dk === 'string' ? value.dk : undefined
   if (month === undefined) return undefined
@@ -272,26 +296,17 @@ export const reverseSellerSpriteKeywords = async (
 }
 
 const readAbaEnvelope = async (response: Response): Promise<Record<string, unknown>> => {
+  throwIfSellerSpriteSessionExpired(response)
   let payload: unknown
   try {
     payload = await response.json()
   } catch {
-    if (response.status === 401 || response.status === 403) {
-      throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status)
-    }
     if (response.status === 429) throw new TargetClientError('TARGET_RATE_LIMITED', response.status)
     if (!response.ok) throw new TargetClientError('TARGET_API_ERROR', response.status)
     throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
   }
-  const details = isRecord(payload)
-    ? {
-        ...(typeof payload.code === 'string' || typeof payload.code === 'number' ? { targetCode: payload.code } : {}),
-        ...(typeof payload.message === 'string' ? { targetMessage: payload.message.slice(0, 512) } : {}),
-      }
-    : {}
-  if (response.status === 401 || response.status === 403) {
-    throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status, details)
-  }
+  throwIfSellerSpriteSessionExpired(response, payload)
+  const details = sellerSpriteErrorDetails(payload)
   if (response.status === 429) throw new TargetClientError('TARGET_RATE_LIMITED', response.status, details)
   if (!response.ok) throw new TargetClientError('TARGET_API_ERROR', response.status, details)
   if (!isRecord(payload)) throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
@@ -416,11 +431,12 @@ const readMonthlyVariation = (value: unknown): SellerSpriteMonthlyVariation | un
 }
 
 const readMonthlyResponse = async (response: Response): Promise<SellerSpriteMonthlyData> => {
-  if (response.status === 401 || response.status === 403) throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status)
+  throwIfSellerSpriteSessionExpired(response)
   if (response.status === 429) throw new TargetClientError('TARGET_RATE_LIMITED', response.status)
   if (!response.ok) throw new TargetClientError('TARGET_API_ERROR', response.status)
   let payload: unknown
   try { payload = await response.json() } catch { throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status) }
+  throwIfSellerSpriteSessionExpired(response, payload)
   if (!isRecord(payload)
     || (payload.code !== 'OK' && payload.code !== 0 && payload.code !== 200)
     || !isRecord(payload.data)
@@ -554,13 +570,51 @@ const coverageRatio = (
   covered: (row: SellerSpriteMarketResearchRow) => boolean,
 ): number => rows.length === 0 ? 0 : rows.filter(covered).length / rows.length
 
+const marketResearchData = (
+  rows: readonly SellerSpriteMarketResearchRow[],
+): SellerSpriteMarketResearchData => ({
+  rows: [...rows],
+  fieldCoverage: {
+    sampleCounts: coverageRatio(rows, (row) => row.sampleProducts !== null && row.sampleBrands !== null && row.sampleSellers !== null),
+    totalSales: coverageRatio(rows, (row) => row.totalSales !== null),
+    averageSales: coverageRatio(rows, (row) => row.averageSales !== null && row.headSales !== null),
+    averageRevenue: coverageRatio(rows, (row) => row.averageRevenue !== null && row.headRevenue !== null),
+    rating: coverageRatio(rows, (row) => row.averageReviews !== null && row.averageRating !== null),
+    bsr: coverageRatio(rows, (row) => row.averageBsr !== null && row.headBsr !== null),
+    price: coverageRatio(rows, (row) => row.averagePrice !== null),
+    sellerTypes: coverageRatio(rows, (row) => row.fbaRatio !== null && row.amzRatio !== null && row.fbmRatio !== null),
+    concentration: coverageRatio(rows, (row) => row.productConcentration !== null && row.brandConcentration !== null && row.sellerConcentration !== null),
+    newProducts: coverageRatio(rows, (row) => row.newProductCount !== null && row.newProductRatio !== null),
+    totalProducts: coverageRatio(rows, (row) => row.totalProducts !== null),
+    profit: 0,
+  },
+  profitStatus: 'not-integrated',
+})
+
 export const parseSellerSpriteMarketResearchHtml = (html: string): SellerSpriteMarketResearchData => {
-  if (html.length > 2_000_000) throw new TargetClientError('TARGET_RESPONSE_INVALID')
+  if (html.length > 8_000_000) {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', undefined, {
+      targetMessage: `市场研究 HTML 超过安全上限（${html.length} 字符）`,
+    })
+  }
   const tableStart = html.search(/<table\b[^>]*\bid=["']table-condition-search["'][^>]*>/i)
-  if (tableStart < 0) throw new TargetClientError('TARGET_RESPONSE_INVALID')
-  const tableEnd = html.indexOf('</table>', tableStart)
-  if (tableEnd < 0) throw new TargetClientError('TARGET_RESPONSE_INVALID')
-  const table = html.slice(tableStart, tableEnd + 8)
+  if (tableStart < 0) {
+    const isRecognizableEmptyResult = /<form\b[^>]*\bid=["']form-condition-search["'][^>]*>/i.test(html)
+      && /<input\b[^>]*\bname=["']marketId["'][^>]*>/i.test(html)
+      && /<input\b[^>]*\bname=["']departmentKeyword["'][^>]*>/i.test(html)
+    if (isRecognizableEmptyResult) return marketResearchData([])
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', undefined, {
+      targetMessage: '市场研究 HTML 缺少结果表和可识别的空结果表单',
+    })
+  }
+  const tableClose = html.slice(tableStart).match(/<\/table\s*>/i)
+  if (!tableClose || tableClose.index === undefined) {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', undefined, {
+      targetMessage: '市场研究结果表缺少闭合标签',
+    })
+  }
+  const tableEnd = tableStart + tableClose.index
+  const table = html.slice(tableStart, tableEnd + tableClose[0].length)
   const rawRows = [...table.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map((match) => match[1] ?? '')
   const rawCells = rawRows.map((row) => [...row.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)]
     .map((match) => match[1] ?? ''))
@@ -572,38 +626,51 @@ export const parseSellerSpriteMarketResearchHtml = (html: string): SellerSpriteM
   ]
   if (headers.length !== expectedHeaderPrefixes.length
     || !expectedHeaderPrefixes.every((prefix, index) => headers[index]?.startsWith(prefix))) {
-    throw new TargetClientError('TARGET_RESPONSE_INVALID')
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', undefined, {
+      targetMessage: `市场研究表头不匹配（列数 ${headers.length}）`,
+    })
   }
   const rows = rawCells.slice(1).map(parseMarketResearchRow)
     .filter((row): row is SellerSpriteMarketResearchRow => row !== undefined)
     .slice(0, 100)
-  return {
-    rows,
-    fieldCoverage: {
-      sampleCounts: coverageRatio(rows, (row) => row.sampleProducts !== null && row.sampleBrands !== null && row.sampleSellers !== null),
-      totalSales: coverageRatio(rows, (row) => row.totalSales !== null),
-      averageSales: coverageRatio(rows, (row) => row.averageSales !== null && row.headSales !== null),
-      averageRevenue: coverageRatio(rows, (row) => row.averageRevenue !== null && row.headRevenue !== null),
-      rating: coverageRatio(rows, (row) => row.averageReviews !== null && row.averageRating !== null),
-      bsr: coverageRatio(rows, (row) => row.averageBsr !== null && row.headBsr !== null),
-      price: coverageRatio(rows, (row) => row.averagePrice !== null),
-      sellerTypes: coverageRatio(rows, (row) => row.fbaRatio !== null && row.amzRatio !== null && row.fbmRatio !== null),
-      concentration: coverageRatio(rows, (row) => row.productConcentration !== null && row.brandConcentration !== null && row.sellerConcentration !== null),
-      newProducts: coverageRatio(rows, (row) => row.newProductCount !== null && row.newProductRatio !== null),
-      totalProducts: coverageRatio(rows, (row) => row.totalProducts !== null),
-      profit: 0,
-    },
-    profitStatus: 'not-integrated',
-  }
+  return marketResearchData(rows)
 }
 
 const readMarketResearchResponse = async (response: Response): Promise<SellerSpriteMarketResearchData> => {
-  if (response.status === 401 || response.status === 403) throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status)
+  throwIfSellerSpriteSessionExpired(response)
   if (response.status === 429) throw new TargetClientError('TARGET_RATE_LIMITED', response.status)
   if (!response.ok) throw new TargetClientError('TARGET_API_ERROR', response.status)
+  const body = await response.text()
+  throwIfSellerSpriteSessionExpired(response, undefined, body)
   const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
-  if (!contentType.includes('text/html')) throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
-  return parseSellerSpriteMarketResearchHtml(await response.text())
+  if (!contentType.includes('text/html')) {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status, {
+      targetMessage: contractDiagnostic(
+        '市场研究 POST /v2/market-research',
+        '市场研究响应类型',
+        response,
+        body,
+        '响应 Content-Type 不是 HTML',
+        responsePreview(body) || '空正文',
+      ),
+    })
+  }
+  try {
+    return parseSellerSpriteMarketResearchHtml(body)
+  } catch (error: unknown) {
+    if (!(error instanceof TargetClientError)) throw error
+    throw new TargetClientError(error.code, response.status, {
+      ...(error.targetCode === undefined ? {} : { targetCode: error.targetCode }),
+      targetMessage: contractDiagnostic(
+        '市场研究 POST /v2/market-research',
+        '市场研究 HTML 合同',
+        response,
+        body,
+        error.targetMessage ?? error.code,
+        responsePreview(body) || '空正文',
+      ),
+    })
+  }
 }
 
 export const researchSellerSpriteMarket = (
@@ -673,9 +740,7 @@ const readKeywordMiningItem = (value: unknown): SellerSpriteKeywordMiningItem | 
 }
 
 const readKeywordMiningResponse = async (response: Response): Promise<SellerSpriteKeywordMiningData> => {
-  if (response.status === 401 || response.status === 403) {
-    throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status)
-  }
+  throwIfSellerSpriteSessionExpired(response)
   if (response.status === 429) throw new TargetClientError('TARGET_RATE_LIMITED', response.status)
   if (!response.ok) throw new TargetClientError('TARGET_API_ERROR', response.status)
   let payload: unknown
@@ -684,12 +749,8 @@ const readKeywordMiningResponse = async (response: Response): Promise<SellerSpri
   } catch {
     throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
   }
-  const details = isRecord(payload)
-    ? {
-        ...(typeof payload.code === 'string' || typeof payload.code === 'number' ? { targetCode: payload.code } : {}),
-        ...(typeof payload.message === 'string' ? { targetMessage: payload.message.slice(0, 512) } : {}),
-      }
-    : {}
+  throwIfSellerSpriteSessionExpired(response, payload)
+  const details = sellerSpriteErrorDetails(payload)
   if (!isRecord(payload)) throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
   if (payload.code !== 'OK' && payload.code !== 0 && payload.code !== 200) {
     throw new TargetClientError('TARGET_API_ERROR', response.status, details)
@@ -743,6 +804,14 @@ const normalizeNullableNumber = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+const normalizeNullableBoolean = (value: unknown): boolean | null | undefined => {
+  if (value === null || value === undefined) return null
+  if (typeof value === 'boolean') return value
+  if (value === 1 || value === '1' || value === 'true') return true
+  if (value === 0 || value === '0' || value === 'false') return false
+  return undefined
+}
+
 const readProductSelectionItem = (value: unknown): import('@cookie-amazon/protocol').SellerSpriteProductSelectionItem | undefined => {
   if (!isRecord(value) || typeof value.asin !== 'string' || value.asin.trim() === '') return undefined
   return {
@@ -782,55 +851,127 @@ const readProductItem = (value: unknown): SellerSpriteCompetitorItem | undefined
   }
 }
 
+const summarizeResponseShape = (value: unknown): string => {
+  if (!isRecord(value)) return Array.isArray(value) ? `array(${value.length})` : typeof value
+  const envelopeKeys = Object.keys(value).slice(0, 16).join(',') || '无'
+  const data = value.data
+  const dataSummary = isRecord(data)
+    ? `object[${Object.keys(data).slice(0, 20).join(',') || '无'}]`
+    : Array.isArray(data) ? `array(${data.length})` : typeof data
+  return `envelope=[${envelopeKeys}] data=${dataSummary}`
+}
+
+const responsePreview = (body: string): string => body
+  .replace(/<(?:script|style)\b[^>]*>[\s\S]*?<\/(?:script|style)>/gi, ' ')
+  .replace(/<[^>]+>/g, ' ')
+  .replace(/(cookie|authorization|token|secret|password)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]')
+  .replace(/[\u0000-\u001F\u007F]+/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim()
+  .slice(0, 100)
+
+const contractDiagnostic = (
+  endpoint: string,
+  stage: string,
+  response: Response,
+  body: string,
+  reason: string,
+  summary: string,
+): string => {
+  const contentType = response.headers.get('content-type') ?? '缺失'
+  return `接口 ${endpoint}；阶段 ${stage}；HTTP ${response.status}；Content-Type ${contentType.slice(0, 80)}；响应长度 ${body.length}；${reason}；摘要 ${summary}`
+    .slice(0, 512)
+}
+
 const readProductPageResponseWith = async <T>(
   response: Response,
   readItem: (value: unknown) => T | undefined,
+  options: { skipInvalidItems?: boolean; contractName: string; endpoint: string },
 ): Promise<{ page: number; pages: number; size: number; total: number; hasNextPage: boolean; items: T[] }> => {
-  if (response.status === 401 || response.status === 403) {
-    throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status)
-  }
+  throwIfSellerSpriteSessionExpired(response)
   if (response.status === 429) throw new TargetClientError('TARGET_RATE_LIMITED', response.status)
   if (!response.ok) throw new TargetClientError('TARGET_API_ERROR', response.status)
+  const body = await response.text()
+  throwIfSellerSpriteSessionExpired(response, undefined, body)
   let payload: unknown
   try {
-    payload = await response.json()
+    payload = JSON.parse(body)
   } catch {
-    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status, {
+      targetMessage: contractDiagnostic(
+        options.endpoint,
+        `${options.contractName} JSON 解析`,
+        response,
+        body,
+        '响应正文不是有效 JSON',
+        responsePreview(body) || '空正文',
+      ),
+    })
   }
-  if (!isRecord(payload)) {
-    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  throwIfSellerSpriteSessionExpired(response, payload)
+  const invalid = (reason: string): TargetClientError => new TargetClientError(
+    'TARGET_RESPONSE_INVALID',
+    response.status,
+    {
+      ...(isRecord(payload) && (typeof payload.code === 'string' || typeof payload.code === 'number')
+        ? { targetCode: payload.code }
+        : {}),
+      targetMessage: contractDiagnostic(
+        options.endpoint,
+        `${options.contractName}响应合同`,
+        response,
+        body,
+        reason,
+        summarizeResponseShape(payload),
+      ),
+    },
+  )
+  if (!isRecord(payload)) throw invalid('响应 envelope 不是对象')
+  const details = {
+    ...(typeof payload.code === 'string' || typeof payload.code === 'number' ? { targetCode: payload.code } : {}),
+    ...(typeof payload.message === 'string' ? { targetMessage: payload.message.slice(0, 512) } : {}),
   }
   const hasValidCode = !Object.hasOwn(payload, 'code')
     || payload.code === 'OK'
     || payload.code === 0
     || payload.code === 200
-  if (!hasValidCode) throw new TargetClientError('TARGET_API_ERROR', response.status)
-  if (!isRecord(payload.data)) {
-    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
-  }
+  if (!hasValidCode) throw new TargetClientError('TARGET_API_ERROR', response.status, details)
+  if (!isRecord(payload.data)) throw invalid('响应字段 data 不是对象')
   const data = payload.data
   const numericKeys = ['page', 'pages', 'size', 'total'] as const
   const numbers = Object.fromEntries(numericKeys.map((key) => [key, readNullableNumber(data[key])])) as Record<(typeof numericKeys)[number], number | null | undefined>
   const rawItems = data.items
-  if (Object.values(numbers).some((item) => item === undefined || item === null)
-    || (data.hasNextPage !== undefined && data.hasNextPage !== null && typeof data.hasNextPage !== 'boolean')
-    || (rawItems !== null && !Array.isArray(rawItems))) {
-    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  const hasNextPage = normalizeNullableBoolean(data.hasNextPage)
+  const invalidNumber = numericKeys.find((key) => numbers[key] === undefined || numbers[key] === null)
+  if (invalidNumber) throw invalid(`响应分页字段 data.${invalidNumber} 缺失或类型无效`)
+  if (hasNextPage === undefined) throw invalid('响应字段 data.hasNextPage 类型无效')
+  if (rawItems !== null && rawItems !== undefined && !Array.isArray(rawItems)) {
+    throw invalid('响应字段 data.items 不是数组或 null')
   }
-  const items = (rawItems ?? []).map(readItem)
-  if (items.some((item) => item === undefined)) throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  const parsedItems = (rawItems ?? []).map(readItem)
+  if (!options.skipInvalidItems && parsedItems.some((item) => item === undefined)) {
+    throw invalid('响应包含无法解析的商品行')
+  }
+  const items = parsedItems.filter((item): item is T => item !== undefined)
   return {
     page: numbers.page!, pages: numbers.pages!, size: numbers.size!, total: numbers.total!,
-    hasNextPage: rawItems !== null && (data.hasNextPage ?? numbers.page! < numbers.pages!),
-    items: items as T[],
+    hasNextPage: rawItems !== null && (hasNextPage ?? numbers.page! < numbers.pages!),
+    items,
   }
 }
 
 const readProductPageResponse = (response: Response): Promise<SellerSpriteCompetitorData> =>
-  readProductPageResponseWith(response, readProductItem)
+  readProductPageResponseWith(response, readProductItem, {
+    contractName: '竞品研究',
+    endpoint: '竞品查询 POST /v3/api/competing-lookup',
+    skipInvalidItems: true,
+  })
 
 const readProductSelectionPageResponse = (response: Response): Promise<SellerSpriteProductSelectionData> =>
-  readProductPageResponseWith(response, readProductSelectionItem)
+  readProductPageResponseWith(response, readProductSelectionItem, {
+    contractName: '产品研究',
+    endpoint: '产品查询 POST /v3/api/product-research',
+  })
 
 export const researchSellerSpriteCompetitors = (
   client: TargetClient,
@@ -879,30 +1020,19 @@ export const selectSellerSpriteProducts = (
 }
 
 const readSellerSpriteJson = async (response: Response): Promise<Record<string, unknown>> => {
-  if (response.url) {
-    try {
-      const finalUrl = new URL(response.url)
-      if (/\/(?:login|signin)(?:\/|$)/i.test(finalUrl.pathname)) {
-        throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status)
-      }
-    } catch (error: unknown) {
-      if (error instanceof TargetClientError) throw error
-    }
-  }
+  throwIfSellerSpriteSessionExpired(response)
+  const body = await response.text()
+  throwIfSellerSpriteSessionExpired(response, undefined, body)
   let payload: unknown
   try {
-    payload = await response.json()
+    payload = JSON.parse(body)
   } catch {
-    if (response.status === 401 || response.status === 403) throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status)
     if (response.status === 429) throw new TargetClientError('TARGET_RATE_LIMITED', response.status)
     if (!response.ok) throw new TargetClientError('TARGET_API_ERROR', response.status)
     throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status, { targetMessage: '响应正文不是有效 JSON' })
   }
-  const details = isRecord(payload) ? {
-    ...(typeof payload.code === 'string' || typeof payload.code === 'number' ? { targetCode: payload.code } : {}),
-    ...(typeof payload.message === 'string' ? { targetMessage: payload.message.slice(0, 512) } : {}),
-  } : {}
-  if (response.status === 401 || response.status === 403) throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status, details)
+  throwIfSellerSpriteSessionExpired(response, payload)
+  const details = sellerSpriteErrorDetails(payload)
   if (response.status === 429) throw new TargetClientError('TARGET_RATE_LIMITED', response.status, details)
   if (!response.ok) throw new TargetClientError('TARGET_API_ERROR', response.status, details)
   if (!isRecord(payload)) {
@@ -922,7 +1052,11 @@ const readCategoryNode = (value: unknown): SellerSpriteCategoryNode | undefined 
   return {
     id: value.id.slice(0, 64),
     label: value.label.slice(0, 256),
-    labelLocale: typeof value.nodeLabelLocale === 'string' ? value.nodeLabelLocale.slice(0, 256) : null,
+    labelLocale: typeof value.nodeLabelLocale === 'string'
+      ? value.nodeLabelLocale.slice(0, 256)
+      : typeof value.labelLocale === 'string' ? value.labelLocale.slice(0, 256) : null,
+    labelPath: typeof value.nodeLabelPath === 'string' ? value.nodeLabelPath.slice(0, 512) : null,
+    labelPathLocale: typeof value.nodeLabelPathLocale === 'string' ? value.nodeLabelPathLocale.slice(0, 512) : null,
     products: normalizeNullableNumber(value.products),
     children,
   }
@@ -955,7 +1089,11 @@ export const listSellerSpriteCategoryNodes = (
   if (!isSellerSpriteCategoryNodesInput(input)) throw new TargetClientError('TARGET_API_ERROR')
   return client.executeJsonGet(
     'SELLERSPRITE_CATEGORY_NODES',
-    { marketld: String(input.marketld), table: input.table },
+    {
+      marketld: String(input.marketld),
+      table: input.table,
+      ...(input.nodeIdPath === undefined ? {} : { nodeIdPath: input.nodeIdPath }),
+    },
     readCategoryNodesResponse,
   )
 }

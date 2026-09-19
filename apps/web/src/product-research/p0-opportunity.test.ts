@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { SELLERSPRITE_RECORDED_LEAF_CATEGORIES } from './sellersprite-category-catalog'
 import {
   buildP0ProductSelectionInput,
   buildP0ReviewCommentsInput,
@@ -16,19 +17,37 @@ const product = (overrides: Record<string, unknown> = {}) => ({
 
 describe('P0 opportunity flow', () => {
   it('builds the observed category selection and review request contracts', () => {
-    expect(buildP0ProductSelectionInput('US', '2619525011')).toEqual({
+    const leafPath = '7141123011:7586165011:14194728011:14194729011:14194730011'
+    expect(buildP0ProductSelectionInput('US', leafPath)).toEqual({
       market: 'US', page: 1, size: 60, symbolFlag: false, monthName: 'bsr_sales_nearly',
       selectType: '2', filterSub: false, weightUnit: 'g',
-      order: { field: 'total_units', desc: true }, productTags: [], nodeIdPaths: ['2619525011'],
-      sellerTypes: [], eligibility: [], pkgDimensionTypeList: [], sellerNationList: [],
+      order: { field: 'total_units', desc: true }, nodeIdPaths: [leafPath],
+      productTags: [], sellerTypes: [], eligibility: [], pkgDimensionTypeList: [], sellerNationList: [],
       minRanking: '10000', maxRanking: '50000', maxSales: '300', maxPrice: '30',
       maxSellers: '1', lowPrice: 'N',
     })
+    expect(() => buildP0ProductSelectionInput('US', '2619525011')).toThrow('INVALID_LEAF_CATEGORY')
+    expect(buildP0ProductSelectionInput('US', leafPath, 3).page).toBe(3)
+    expect(buildP0ProductSelectionInput('US', leafPath, 1, 'expanded')).toMatchObject({
+      nodeIdPaths: [leafPath], minRanking: '', maxRanking: '', maxSales: '', maxPrice: '', maxSellers: '',
+    })
+    expect(() => buildP0ProductSelectionInput('US', leafPath, 0)).toThrow('INVALID_PRODUCT_PAGE')
+    expect(buildP0ProductSelectionInput('US', leafPath).nodeIdPaths)
+      .toEqual([leafPath])
     expect(buildP0ReviewCommentsInput('B08H26Z7D9', 'US')).toEqual({
       asin: 'B08H26Z7D9', keyword: '', market: 'US', pageNum: 1, pageSize: 20,
       reviewEndTime: null, reviewStartTime: null, order: { fieldName: 'date', sort: 1 },
       starList: [], typeList: [], variations: [],
     })
+  })
+
+  it('exposes the recorded leaf category catalog with complete paths', () => {
+    expect(SELLERSPRITE_RECORDED_LEAF_CATEGORIES).toHaveLength(230)
+    expect(new Set(SELLERSPRITE_RECORDED_LEAF_CATEGORIES.map((item) => item.id)).size).toBe(230)
+    expect(SELLERSPRITE_RECORDED_LEAF_CATEGORIES.every((item) => item.children === 0 && /^\d+(?::\d+)+$/.test(item.id))).toBe(true)
+    expect(SELLERSPRITE_RECORDED_LEAF_CATEGORIES).toContainEqual(expect.objectContaining({
+      id: '7141123011:7586165011:14194713011:14194723011', labelLocale: '假发', children: 0,
+    }))
   })
 
   it('limits review candidates and ranks stronger demand with lower barriers first', () => {

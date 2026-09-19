@@ -7,7 +7,7 @@ const bridge = vi.hoisted(() => ({
 
 vi.mock('webext-bridge/window', () => bridge)
 
-import { listSellerSpriteAbaPeriods, listSellerSpriteCategoryNodes, listSellerSpriteReviewComments, mineSellerSpriteKeywords, readSellerSpriteMonthly, researchSellerSpriteAba, researchSellerSpriteMarket, reverseSellerSpriteKeywords, selectSellerSpriteProducts } from '../client'
+import { getExtensionStatus, listSellerSpriteAbaPeriods, listSellerSpriteCategoryNodes, listSellerSpriteReviewComments, mineSellerSpriteKeywords, readSellerSpriteMonthly, researchSellerSpriteAba, researchSellerSpriteCompetitors, researchSellerSpriteMarket, reverseSellerSpriteKeywords, selectSellerSpriteProducts, SELLERSPRITE_SESSION_EXPIRED_EVENT } from '../client'
 
 const input = {
   asin: 'B000000000', marketId: 1, month: '2026-01', forceReStat: false, badges: [], limit: 20,
@@ -27,6 +27,12 @@ const keywordMiningInput = {
   orderBy: 21, pageNum: 1, pageSize: 50,
 }
 
+const competitorInput = {
+  asins: [], keywords: 'phone stand', brand: '', seller: '', lowPrice: 'N' as const,
+  market: 'US', monthName: 'bsr_sales_nearly', nodeIdPaths: [],
+  order: { desc: true, field: 'amz_unit' }, page: 1, size: 20, symbolFlag: false,
+}
+
 describe('SellerSprite web SDK', () => {
   beforeEach(() => {
     bridge.sendMessage.mockReset()
@@ -37,6 +43,7 @@ describe('SellerSprite web SDK', () => {
         location: { origin: 'http://localhost:5173' },
         setTimeout,
         clearTimeout,
+        dispatchEvent: vi.fn(),
       },
     })
   })
@@ -70,6 +77,19 @@ describe('SellerSprite web SDK', () => {
     await expect(reverseSellerSpriteKeywords(input)).rejects.toMatchObject({
       code: 'TARGET_API_ERROR', httpStatus: 400, targetCode: 'INVALID_ASIN', targetMessage: 'ASIN 参数无效',
     })
+  })
+
+  it('notifies the page immediately when a business request reports an expired session', async () => {
+    bridge.sendMessage.mockResolvedValue({
+      namespace: 'cookie-amazon-platform', kind: 'response', protocolVersion: 1,
+      requestId: 'response-id', action: 'SELLERSPRITE_KEYWORD_REVERSE', ok: false,
+      error: { code: 'TARGET_NOT_LOGGED_IN', httpStatus: 200, targetMessage: 'SellerSprite 登录已失效' },
+    })
+
+    await expect(reverseSellerSpriteKeywords(input)).rejects.toMatchObject({ code: 'TARGET_NOT_LOGGED_IN' })
+    const dispatchEvent = window.dispatchEvent as unknown as ReturnType<typeof vi.fn>
+    expect(dispatchEvent).toHaveBeenCalledTimes(1)
+    expect(dispatchEvent.mock.calls[0]?.[0]).toMatchObject({ type: SELLERSPRITE_SESSION_EXPIRED_EVENT })
   })
 
   it('sends monthly ASIN requests through the strict bridge contract', async () => {
@@ -114,6 +134,34 @@ describe('SellerSprite web SDK', () => {
       { action: 'SELLERSPRITE_MARKET_RESEARCH', payload: { targetId: 'sellersprite', input: marketInput } },
       'content-script',
     ])
+  })
+
+  it('preserves competitor and market contract diagnostics across the bridge', async () => {
+    const diagnostic = '接口 竞品查询 POST /v3/api/competing-lookup；阶段 竞品研究响应合同；HTTP 200；Content-Type application/json；响应长度 321；响应分页字段 data.pages 缺失或类型无效；摘要 envelope=[code,data] data=object[page,size,total,items]'
+    bridge.sendMessage.mockResolvedValueOnce({
+      namespace: 'cookie-amazon-platform', kind: 'response', protocolVersion: 1,
+      requestId: 'response-id', ok: false,
+      error: { code: 'TARGET_RESPONSE_INVALID', httpStatus: 200, targetCode: 'OK', targetMessage: diagnostic },
+    })
+
+    await expect(researchSellerSpriteCompetitors(competitorInput)).rejects.toMatchObject({
+      code: 'TARGET_RESPONSE_INVALID', httpStatus: 200, targetCode: 'OK', targetMessage: diagnostic,
+    })
+
+    bridge.sendMessage.mockResolvedValueOnce({
+      namespace: 'cookie-amazon-platform', kind: 'response', protocolVersion: 1,
+      requestId: 'response-id', ok: false,
+      error: {
+        code: 'TARGET_RESPONSE_INVALID', httpStatus: 200,
+        targetMessage: '接口 市场研究 POST /v2/market-research；阶段 市场研究 HTML 合同；HTTP 200；Content-Type text/html；响应长度 861428；市场研究表头不匹配（列数 14）',
+      },
+    })
+    await expect(researchSellerSpriteMarket({
+      marketId: 1, departmentKeyword: 'phone stand', monthName: 'bsr_sales_nearly', newReleaseNum: 3,
+    })).rejects.toMatchObject({
+      code: 'TARGET_RESPONSE_INVALID', httpStatus: 200,
+      targetMessage: expect.stringContaining('市场研究 HTML 合同'),
+    })
   })
 
   it('lists ABA periods and sends strict monthly ABA pagination requests', async () => {
@@ -232,6 +280,11 @@ describe('SellerSprite web SDK', () => {
       action: 'KEYWORD_MINING',
       payload: { targetId: 'sellersprite', input: keywordMiningInput },
     })
+  })
+
+  it('times out when the legacy bridge promise never settles', async () => {
+    bridge.sendMessage.mockReturnValue(new Promise(() => {}))
+    await expect(getExtensionStatus({ timeoutMs: 20 })).rejects.toMatchObject({ code: 'TIMEOUT' })
   })
 
   it('rejects when the extension bridge is unavailable', async () => {

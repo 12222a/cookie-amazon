@@ -14,6 +14,7 @@ import {
   isSellerSpriteNewReleaseMonths,
   createSellerSpriteProductSelectionRequest,
   createSellerSpriteCategoryNodesRequest,
+  isSellerSpriteLeafNodeIdPath,
   createSellerSpriteReviewCommentsRequest,
   isAllowedWebOrigin,
   isPingRequest,
@@ -53,7 +54,7 @@ const competitorInput = {
 
 const productSelectionInput = {
   eligibility: [], filterSub: false, lowPrice: 'N' as const, market: 'US', monthName: 'bsr_sales_nearly',
-  nodeIdPaths: ['2619525011'], order: { desc: true, field: 'total_units' }, page: 1, pkgDimensionTypeList: [],
+  nodeIdPaths: ['7141123011:7586165011:14194728011:14194729011:14194730011'], order: { desc: true, field: 'total_units' }, page: 1, pkgDimensionTypeList: [],
   productTags: [], selectType: '2' as const, sellerNationList: [], sellerTypes: [], size: 60,
   symbolFlag: false, weightUnit: 'g' as const, minRanking: '10000', maxRanking: '50000',
   maxSales: '300', maxPrice: '30', maxSellers: '1',
@@ -279,6 +280,9 @@ describe('protocol', () => {
       ...categoryRequest,
       payload: { ...categoryRequest.payload, input: { marketId: 1, table: 'bsr_sales_nearly' } },
     })).toBe(false)
+    expect(isSellerSpriteLeafNodeIdPath('7141123011:7586165011:14194728011:14194729011:14194730011')).toBe(true)
+    expect(isSellerSpriteLeafNodeIdPath('7141123011')).toBe(false)
+    expect(isSellerSpriteLeafNodeIdPath('7141123011:bad')).toBe(false)
     expect(isSellerSpriteCategoryNodesResponse({
       namespace: 'cookie-amazon-platform', kind: 'response', protocolVersion: 1,
       requestId: 'category-1', action: 'SELLERSPRITE_CATEGORY_NODES', ok: true,
@@ -444,7 +448,38 @@ describe('protocol', () => {
     })).toBe(false)
   })
 
-  it('validates HTML session requests and minimized status responses', () => {
+  it('validates recursive SellerSprite category paths and leaf metadata', () => {
+    const root = createSellerSpriteCategoryNodesRequest('request-category-root', 'sellersprite', {
+      marketld: 1, table: 'bsr_sales_nearly',
+    })
+    expect(isSellerSpriteCategoryNodesRequest(root)).toBe(true)
+    const child = createSellerSpriteCategoryNodesRequest('request-category-child', 'sellersprite', {
+      marketld: 1, table: 'bsr_sales_nearly', nodeIdPath: '7141123011:7586165011:14194728011',
+    })
+    expect(isSellerSpriteCategoryNodesRequest(child)).toBe(true)
+    expect(isSellerSpriteCategoryNodesRequest({
+      ...child,
+      payload: { ...child.payload, input: { ...child.payload.input, nodeIdPath: 'not-a-path' } },
+    })).toBe(false)
+    expect(isSellerSpriteCategoryNodesResponse({
+      namespace: 'cookie-amazon-platform', kind: 'response', protocolVersion: 1,
+      requestId: 'request-category-child', action: 'SELLERSPRITE_CATEGORY_NODES', ok: true,
+      data: {
+        parent: '7141123011:7586165011:14194728011',
+        items: [{
+          id: '7141123011:7586165011:14194728011:14194729011:14194730011',
+          label: 'Clothing, Shoes & Jewelry:Costumes & Accessories:Men:Costumes & Cosplay Apparel:Costumes',
+          labelLocale: '装扮服饰',
+          labelPath: 'Clothing, Shoes & Jewelry:Costumes & Accessories:Men:Costumes & Cosplay Apparel:Costumes',
+          labelPathLocale: '服装、鞋履和珠宝:服装和配饰:男士:装扮服饰和角色扮演服饰:装扮服饰',
+          products: 6322, children: 0,
+        }],
+      },
+    })).toBe(true)
+  })
+
+
+  it('validates HTML session requests and responses', () => {
     const request = createSellerSpriteHtmlSessionRequest('MARKET_SELECTION', 'request-10', 'sellersprite')
     expect(isSellerSpriteHtmlSessionRequest(request)).toBe(true)
     expect(isSellerSpriteHtmlSessionRequest({

@@ -67,7 +67,7 @@ describe('SellerSprite capability catalog', () => {
       && endpoints.length > 0,
     )).toBe(true)
     expect(SELLERSPRITE_WEB_CAPABILITY_CONTRACTS.find(({ capabilityId }) => capabilityId === 'CHECK_LOGIN')?.endpoints).toEqual([
-      { path: '/v2/me', method: 'GET', responseKind: 'html' },
+      { path: '/v3/api/client', method: 'GET', responseKind: 'json' },
     ])
     expect(SELLERSPRITE_WEB_CAPABILITY_CONTRACTS.find(({ capabilityId }) => capabilityId === 'KEYWORD_MINING')?.endpoints.map(({ path }) => path)).toEqual([
       '/v3/api/keyword-miner',

@@ -11,6 +11,9 @@ export type ResearchPolicy = {
   budget: ResearchBudget
 }
 
+export const MAX_COMPARISON_CANDIDATES = 10
+export const MAX_DEEP_CANDIDATES = 3
+
 export const DEFAULT_RESEARCH_POLICY: ResearchPolicy = {
   version: '2026-08-22-v1',
   candidateLimits: { deep: 3, comparison: 10 },

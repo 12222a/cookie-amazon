@@ -6,6 +6,7 @@ export {
   listTargets,
   ping,
   probeContentScript,
+  SELLERSPRITE_SESSION_EXPIRED_EVENT,
   removeTargetPermission,
   requestTargetPermission,
   readSellerSpriteMonthly,

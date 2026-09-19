@@ -1,5 +1,11 @@
 import type { ReviewEvidence, ReviewItem, ReviewPainPoint } from './model'
 
+export const selectStrongPainPoints = (evidence: ReviewEvidence): ReviewPainPoint[] => evidence.painPoints
+  .filter((point) => {
+    const lowStarCount = point.lowStarCount ?? Math.round(point.count * point.lowStarShare)
+    return point.lowStarShare >= 0.5 && lowStarCount >= 2
+  })
+
 interface ThemeRule {
   id: string
   label: string
@@ -29,11 +35,37 @@ interface MutablePainPoint {
   variations: Set<string>
   starTotal: number
   excerpts: string[]
+  excerptKeys: Set<string>
+}
+
+const normalizeReviewText = (value: string): string => value
+  .normalize('NFKC')
+  .replace(/[\u200B-\u200D\uFEFF]/g, '')
+  .replace(/\s+/g, ' ')
+  .trim()
+  .toLowerCase()
+
+const REVIEW_FINGERPRINT_PREFIX_LENGTH = 120
+
+export const reviewFingerprint = (review: ReviewItem): string => {
+  const asin = review.asin.trim().toUpperCase()
+  const content = normalizeReviewText(review.content)
+  if (content) return `${asin}:content:${content.slice(0, REVIEW_FINGERPRINT_PREFIX_LENGTH)}`
+  const title = normalizeReviewText(review.title)
+  return `${asin}:title:${title}:star:${review.star}`
 }
 
 export const analyzeReviews = (items: readonly ReviewItem[]): ReviewEvidence => {
   const points = new Map<string, MutablePainPoint>()
+  const seenReviews = new Set<string>()
+  let sampled = 0
+  let lowStarCount = 0
   for (const review of items) {
+    const fingerprint = reviewFingerprint(review)
+    if (seenReviews.has(fingerprint)) continue
+    seenReviews.add(fingerprint)
+    sampled += 1
+    if (review.star <= 3) lowStarCount += 1
     const text = `${review.title} ${review.content}`.trim()
     if (!text) continue
     for (const rule of THEME_RULES) {
@@ -46,13 +78,21 @@ export const analyzeReviews = (items: readonly ReviewItem[]): ReviewEvidence => 
         variations: new Set<string>(),
         starTotal: 0,
         excerpts: [],
+        excerptKeys: new Set<string>(),
       }
       current.count += 1
-      if (review.star <= 3) current.lowStarCount += 1
+      if (review.star <= 3) {
+        current.lowStarCount += 1
+        const excerpt = text.slice(0, 180)
+        const excerptKey = excerpt.replace(/\s+/g, ' ').trim().toLowerCase()
+        if (current.excerpts.length < 3 && excerptKey && !current.excerptKeys.has(excerptKey)) {
+          current.excerpts.push(excerpt)
+          current.excerptKeys.add(excerptKey)
+        }
+      }
       current.asins.add(review.asin)
       for (const variation of review.variation) if (variation) current.variations.add(variation)
       current.starTotal += review.star
-      if (current.excerpts.length < 3) current.excerpts.push(text.slice(0, 180))
       points.set(rule.id, current)
     }
   }
@@ -61,6 +101,7 @@ export const analyzeReviews = (items: readonly ReviewItem[]): ReviewEvidence => 
     id: point.rule.id,
     label: point.rule.label,
     count: point.count,
+    lowStarCount: point.lowStarCount,
     asinCount: point.asins.size,
     lowStarShare: point.count === 0 ? 0 : point.lowStarCount / point.count,
     averageStar: point.count === 0 ? 0 : point.starTotal / point.count,
@@ -70,8 +111,8 @@ export const analyzeReviews = (items: readonly ReviewItem[]): ReviewEvidence => 
   })).sort((left, right) => right.lowStarShare * right.count - left.lowStarShare * left.count || right.count - left.count)
 
   return {
-    sampled: items.length,
-    lowStarCount: items.filter((item) => item.star <= 3).length,
+    sampled,
+    lowStarCount,
     painPoints,
   }
 }

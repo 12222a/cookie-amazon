@@ -17,11 +17,12 @@ import {
   selectSellerSpriteProducts,
   listSellerSpriteCategoryNodes,
   listSellerSpriteReviewComments,
+  isSellerSpriteAuthenticatedCookie,
 } from '../sellersprite'
 
 const productSelectionInput = {
   eligibility: [], filterSub: false, lowPrice: 'N' as const, market: 'US', monthName: 'bsr_sales_nearly',
-  nodeIdPaths: ['2619525011'], order: { desc: true, field: 'total_units' }, page: 1, pkgDimensionTypeList: [],
+  nodeIdPaths: ['7141123011:7586165011:14194766011:14194769011'], order: { desc: true, field: 'total_units' }, page: 1, pkgDimensionTypeList: [],
   productTags: [], selectType: '2' as const, sellerNationList: [], sellerTypes: [], size: 60,
   symbolFlag: false, weightUnit: 'g' as const, minRanking: '10000', maxRanking: '50000',
   maxSales: '300', maxPrice: '30', maxSellers: '1',
@@ -53,13 +54,22 @@ const htmlResponse = (
 }
 
 describe('SellerSprite session adapter', () => {
+  it('recognizes only non-empty authenticated session cookies', () => {
+    expect(isSellerSpriteAuthenticatedCookie('Sprite-X-Token', 'token')).toBe(true)
+    expect(isSellerSpriteAuthenticatedCookie('rank-login-user', 'user')).toBe(true)
+    expect(isSellerSpriteAuthenticatedCookie('rank-login-user-info', 'info')).toBe(true)
+    expect(isSellerSpriteAuthenticatedCookie('Sprite-X-Token', '   ')).toBe(false)
+    expect(isSellerSpriteAuthenticatedCookie('Hm_lvt_analytics', 'tracking')).toBe(false)
+    expect(isSellerSpriteAuthenticatedCookie('language', 'zh-CN')).toBe(false)
+  })
+
   it('is statically registered with the exact optional origin and login endpoint', () => {
     expect(TARGET_REGISTRY.get('sellersprite')).toBe(SELLERSPRITE_ADAPTER)
     expect(SELLERSPRITE_ADAPTER.origin).toBe('https://www.sellersprite.com')
     expect(SELLERSPRITE_ADAPTER.permissionOrigins).toEqual(['https://www.sellersprite.com/*'])
     expect(SELLERSPRITE_ADAPTER.operations.CHECK_LOGIN).toEqual({
       enabled: true,
-      path: '/v2/me',
+      path: '/v3/api/client',
       method: 'GET',
       timeoutMs: 8_000,
       response: 'html-login-probe',
@@ -67,13 +77,17 @@ describe('SellerSprite session adapter', () => {
     expect(SELLERSPRITE_ADAPTER.operations.GET_PROFILE.enabled).toBe(false)
   })
 
-  it('uses browser-managed credentials without accepting headers or reading HTML', async () => {
+  it('uses browser-managed credentials and accepts the verified JSON session envelope', async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe('https://www.sellersprite.com/v2/me')
+      expect(String(input)).toBe('https://www.sellersprite.com/v3/api/client')
       expect(init).toMatchObject({ method: 'GET', credentials: 'include' })
       expect(init?.headers).toBeUndefined()
       expect(init?.body).toBeUndefined()
-      return htmlResponse('https://www.sellersprite.com/v2/me')
+      const response = new Response(JSON.stringify({
+        code: 'OK', message: '成功', data: { id: 1 }, success: true,
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+      Object.defineProperty(response, 'url', { value: 'https://www.sellersprite.com/v3/api/client' })
+      return response
     })
 
     await expect(new TargetClient(SELLERSPRITE_ADAPTER, fetcher).checkLogin()).resolves.toEqual({ loggedIn: true })
@@ -89,12 +103,12 @@ describe('SellerSprite session adapter', () => {
 
     const unauthorized = new TargetClient(
       SELLERSPRITE_ADAPTER,
-      async () => htmlResponse('https://www.sellersprite.com/v2/me', { status: 401 }),
+      async () => htmlResponse('https://www.sellersprite.com/v3/api/client', { status: 401 }),
     )
     await expect(unauthorized.checkLogin()).resolves.toEqual({ loggedIn: false })
   })
 
-  it('rejects foreign redirects, non-HTML responses, and profile access', async () => {
+  it('accepts SellerSprite JSON session responses and rejects unknown JSON responses', async () => {
     const foreignRedirect = new TargetClient(
       SELLERSPRITE_ADAPTER,
       async () => htmlResponse('https://attacker.example/login'),
@@ -102,15 +116,38 @@ describe('SellerSprite session adapter', () => {
     await expect(foreignRedirect.checkLogin()).rejects.toMatchObject({ code: 'TARGET_RESPONSE_INVALID' })
 
     const jsonResponse = new TargetClient(SELLERSPRITE_ADAPTER, async () => {
+      const response = new Response(JSON.stringify({ code: 1, data: { userId: 'u1' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+      Object.defineProperty(response, 'url', { value: 'https://www.sellersprite.com/v3/api/client' })
+      return response
+    })
+    await expect(jsonResponse.checkLogin()).resolves.toEqual({ loggedIn: true })
+
+    const expiredResponse = new TargetClient(SELLERSPRITE_ADAPTER, async () => {
+      const response = new Response(JSON.stringify({
+        code: 'ERR_GLOBAL_SESSION_EXPIRED',
+        data: '/user/login?callback=/v3/api/client',
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+      Object.defineProperty(response, 'url', { value: 'https://www.sellersprite.com/v3/api/client' })
+      return response
+    })
+    await expect(expiredResponse.checkLogin()).resolves.toEqual({ loggedIn: false })
+
+    const unknownJson = new TargetClient(SELLERSPRITE_ADAPTER, async () => {
       const response = new Response(JSON.stringify({ user: 'private' }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       })
-      Object.defineProperty(response, 'url', { value: 'https://www.sellersprite.com/v2/me' })
+      Object.defineProperty(response, 'url', { value: 'https://www.sellersprite.com/v3/api/client' })
       return response
     })
-    await expect(jsonResponse.checkLogin()).rejects.toMatchObject({ code: 'TARGET_RESPONSE_INVALID' })
-    await expect(SELLERSPRITE_ADAPTER.getProfile(jsonResponse)).rejects.toMatchObject({ code: 'OPERATION_DISABLED' })
+    await expect(unknownJson.checkLogin()).rejects.toMatchObject({ code: 'TARGET_RESPONSE_INVALID' })
+    await expect(SELLERSPRITE_ADAPTER.getProfile(unknownJson)).rejects.toMatchObject({ code: 'OPERATION_DISABLED' })
   })
 
   it('prepares reverse analysis and posts the verified reversing request', async () => {
@@ -126,7 +163,31 @@ describe('SellerSprite session adapter', () => {
           asin: 'B000000000', marketId: 1, month: '', forceReStat: false, badges: [], limit: 20,
         })
         return new Response(JSON.stringify({
-          code: 'OK', data: { statDto: {}, status: null }, privateValue: 'must-not-leak',
+          code: 'OK',
+          message: '成功',
+          data: {
+            market: 'GLOBAL',
+            asin: 'B000000000',
+            statDto: {
+              market: 'GLOBAL',
+              asin: 'B000000000',
+              keywords: 61,
+              ranks: 38,
+              ads: 30,
+              badges: { NATURAL_SEARCHING: 38, ADS: 22, SPONSOR_BRAND: 11 },
+              variations: false,
+              calcTime: 1_787_485_514_643,
+              presents: null,
+              missing: null,
+            },
+            marketId: 1,
+            website: 'https://www.amazon.com',
+            status: 'COMPLETE',
+            analysisTook: 0,
+            writeMode: null,
+          },
+          success: true,
+          privateValue: 'must-not-leak',
         }), { status: 200, headers: { 'content-type': 'application/json' } })
       }
       expect(String(input)).toBe('https://www.sellersprite.com/v3/api/relation/reversing?market=COM')
@@ -144,12 +205,12 @@ describe('SellerSprite session adapter', () => {
             trafficPercentage: 0.5, purchaseRate: null, bid: 1.2, bidMin: null,
             bidMax: 2, avgPrice: 20, avgRating: null, avgReviews: '10',
             searchesTrend: [{ month: '2026-01', searchRank: null, searches: '100' }],
+            privateValue: 'must-not-leak',
             rankPosition: { page: 1, pageSize: 25, index: 6, position: 6 },
-            adPosition: { page: 2, pageSize: 27, index: 11, position: 118 },
+            adPosition: { page: 2, pageSize: 27, index: 32, position: 118 },
             naturalRatio: '0.76',
             adRatio: 0.24,
             positions: ['NT', 'SPONSOR_BRAND'],
-            privateValue: 'must-not-leak',
           }],
           marketId: 1, website: 'https://www.amazon.com', stats: { privateValue: 'must-not-leak' },
         },
@@ -175,6 +236,46 @@ describe('SellerSprite session adapter', () => {
       }],
     })
     expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps readable rows when one row carries an unreadable position object', async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('stat-keywords')) {
+        return new Response(JSON.stringify({ code: 'OK', data: { statDto: {}, status: null } }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({
+        code: 'OK',
+        data: {
+          total: 2,
+          items: [
+            {
+              keywords: 'good row', searches: 100, products: null, supplyDemandRatio: null,
+              trafficPercentage: null, purchaseRate: null, bid: null, bidMin: null, bidMax: null,
+              avgPrice: null, avgRating: null, avgReviews: null, searchesTrend: null,
+              rankPosition: { page: 1, position: 6 }, adPosition: null,
+              naturalRatio: 0.5, adRatio: null, positions: ['NT'],
+            },
+            {
+              keywords: 'broken row', searches: 50, products: null, supplyDemandRatio: null,
+              trafficPercentage: null, purchaseRate: null, bid: null, bidMin: null, bidMax: null,
+              avgPrice: null, avgRating: null, avgReviews: null, searchesTrend: null,
+              rankPosition: 'not-an-object', adPosition: null,
+              naturalRatio: null, adRatio: null, positions: null,
+            },
+          ],
+        },
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    })
+    const result = await reverseSellerSpriteKeywords(new TargetClient(SELLERSPRITE_ADAPTER, fetcher), {
+      asin: 'B000000000', marketId: 1, month: '', forceReStat: false, badges: [], limit: 20,
+    })
+    // 一行坏位置不该让整个响应失败：那一行报未知，可读的行照常返回。
+    expect(result.items).toHaveLength(2)
+    expect(result.items[0]).toMatchObject({ keywords: 'good row', natural: { page: 1, rank: 6 } })
+    expect(result.items[1]).toMatchObject({ keywords: 'broken row', natural: null })
   })
 
   it('maps the US market id to SellerSprite COM and rejects unverified markets', async () => {
@@ -304,11 +405,13 @@ describe('SellerSprite session adapter', () => {
       return new Response(JSON.stringify({
         code: 'OK',
         data: {
-          page: 1, pages: 2, size: 20, total: 21, hasNextPage: null,
+          page: 1, pages: 2, size: 20, total: 21, hasNextPage: 'true',
           items: [{
             asin: 'B000000000', title0: 'Example', brand0: 'Brand', imageSrc: 'https://example.com/image.jpg',
             price: '20', reviews: '10', amzUnit: '1,000',
             totalAmount: 2_000, sellerName: 'private-field-must-not-surface',
+          }, {
+            terminal: true, message: 'non-product placeholder must be ignored',
           }],
         },
       }), { status: 200, headers: { 'content-type': 'application/json' } })
@@ -339,6 +442,24 @@ describe('SellerSprite session adapter', () => {
     }), { status: 200, headers: { 'content-type': 'application/json' } }))
     await expect(researchSellerSpriteCompetitors(apiErrorClient, competitorInput))
       .rejects.toMatchObject({ code: 'TARGET_API_ERROR' })
+  })
+
+  it('reports bounded competitor contract diagnostics with endpoint and response shape', async () => {
+    const body = JSON.stringify({
+      code: 'OK',
+      data: { page: 1, size: 20, total: 1, items: [], privateValue: 'must-not-leak' },
+    })
+    const client = new TargetClient(SELLERSPRITE_ADAPTER, async () => new Response(body, {
+      status: 200,
+      headers: { 'content-type': 'application/json;charset=UTF-8' },
+    }))
+
+    await expect(researchSellerSpriteCompetitors(client, competitorInput)).rejects.toMatchObject({
+      code: 'TARGET_RESPONSE_INVALID',
+      status: 200,
+      targetCode: 'OK',
+      targetMessage: expect.stringMatching(/接口 竞品查询 POST \/v3\/api\/competing-lookup；阶段 竞品研究响应合同；HTTP 200；Content-Type application\/json;charset=UTF-8；响应长度 \d+；响应分页字段 data\.pages 缺失或类型无效；摘要 envelope=\[code,data\] data=object\[page,size,total,items,privateValue\]/),
+    })
   })
 
   it('exposes product selection with the fixed endpoint and minimizes item fields', async () => {
@@ -383,14 +504,17 @@ describe('SellerSprite session adapter', () => {
         parent: null, code: 'OK', size: 1,
         items: [{
           id: '2619525011', label: 'Appliances', nodeLabelLocale: '家电', products: 83290,
-          children: 7, alias: 'must-not-surface', nodeLabelPathLocale: 'must-not-surface',
+          children: 7, alias: 'must-not-surface', nodeLabelPathLocale: '家电',
         }],
       }), { status: 200, headers: { 'content-type': 'application/json;charset=UTF-8' } })
     }))
     await expect(listSellerSpriteCategoryNodes(categoryClient, { marketld: 1, table: 'bsr_sales_nearly' }))
       .resolves.toEqual({
         parent: null,
-        items: [{ id: '2619525011', label: 'Appliances', labelLocale: '家电', products: 83290, children: 7 }],
+        items: [{
+          id: '2619525011', label: 'Appliances', labelLocale: '家电',
+          labelPath: null, labelPathLocale: '家电', products: 83290, children: 7,
+        }],
       })
 
     const childCategoryClient = new TargetClient(SELLERSPRITE_ADAPTER, async () => new Response(JSON.stringify({
@@ -408,7 +532,8 @@ describe('SellerSprite session adapter', () => {
         parent: '468642',
         items: [{
           id: '468642:16227128011', label: 'Video Games:Nintendo Switch',
-          labelLocale: '任天堂开关', products: 10474, children: 4,
+          labelLocale: '任天堂开关', labelPath: null, labelPathLocale: null,
+          products: 10474, children: 4,
         }],
       })
 
@@ -522,9 +647,56 @@ describe('SellerSprite session adapter', () => {
     expect(fetcher).toHaveBeenCalledTimes(1)
   })
 
-  it('rejects market HTML without the exact whitelisted table', () => {
+  it('treats a recognizable market form without a result table as an empty result', () => {
+    const html = `<html><form id="form-condition-search" action="/v2/market-research">
+      <input type="hidden" name="marketId" value="1">
+      <input name="departmentKeyword" value="keyword without matching market">
+    </form></html>`
+    expect(parseSellerSpriteMarketResearchHtml(html)).toEqual({
+      rows: [],
+      fieldCoverage: {
+        sampleCounts: 0, totalSales: 0, averageSales: 0, averageRevenue: 0, rating: 0,
+        bsr: 0, price: 0, sellerTypes: 0, concentration: 0, newProducts: 0,
+        totalProducts: 0, profit: 0,
+      },
+      profitStatus: 'not-integrated',
+    })
+  })
+
+  it('rejects market HTML without the exact whitelisted table or recognizable form', () => {
     expect(() => parseSellerSpriteMarketResearchHtml('<table id="other"><tr><td>secret</td></tr></table>'))
       .toThrowError(expect.objectContaining({ code: 'TARGET_RESPONSE_INVALID' }))
+  })
+
+  it('reports market HTML diagnostics with endpoint, metadata, length, and parser reason', async () => {
+    const body = '<html><title>Market Research</title><table id="other"><tr><td>safe summary</td></tr></table></html>'
+    const client = new TargetClient(SELLERSPRITE_ADAPTER, async () => new Response(body, {
+      status: 200,
+      headers: { 'content-type': 'text/html;charset=UTF-8' },
+    }))
+    await expect(researchSellerSpriteMarket(client, {
+      marketId: 1, departmentKeyword: 'phone stand', monthName: 'bsr_sales_nearly', newReleaseNum: 3,
+    })).rejects.toMatchObject({
+      code: 'TARGET_RESPONSE_INVALID',
+      status: 200,
+      targetMessage: expect.stringMatching(/接口 市场研究 POST \/v2\/market-research；阶段 市场研究 HTML 合同；HTTP 200；Content-Type text\/html;charset=UTF-8；响应长度 \d+；市场研究 HTML 缺少结果表和可识别的空结果表单；摘要 Market Research safe summary/),
+    })
+  })
+
+  it('accepts large legitimate market pages and keeps an upper safety bound', () => {
+    const headers = [
+      '#', '细分市场', '样本数量', '月总销量', '月均销量 头部商品', '月均销售额 头部商品',
+      '平均评分数 平均星级', '平均BSR 头部商品', '平均卖家数 平均价格', '卖家类型',
+      '集中度指标', '新品数量 新品占比', '商品总数', '退货率', '操作',
+    ]
+    const table = `<table id="table-condition-search"><tr>${headers.map((header) => `<th>${header}</th>`).join('')}</tr></table>`
+    expect(parseSellerSpriteMarketResearchHtml(`${'x'.repeat(2_100_000)}${table}`)).toMatchObject({
+      rows: [], profitStatus: 'not-integrated',
+    })
+    expect(() => parseSellerSpriteMarketResearchHtml(`${'x'.repeat(8_000_001)}${table}`))
+      .toThrowError(expect.objectContaining({
+        code: 'TARGET_RESPONSE_INVALID', targetMessage: expect.stringContaining('超过安全上限'),
+      }))
   })
 
   it('gets the verified monthly query and minimizes variation fields', async () => {
@@ -612,6 +784,44 @@ describe('SellerSprite session adapter', () => {
     const disabledClient = new TargetClient(SELLERSPRITE_ADAPTER, fetcher, { KEYWORD_MINING: { enabled: false } })
     await expect(mineSellerSpriteKeywords(disabledClient, keywordMiningInput))
       .rejects.toMatchObject({ code: 'OPERATION_DISABLED' })
+  })
+
+  it('maps protected business API session-expiry signals to an actionable login error', async () => {
+    const expiredJson = new TargetClient(SELLERSPRITE_ADAPTER, async () => new Response(JSON.stringify({
+      code: 'ERR_GLOBAL_SESSION_EXPIRED',
+      message: '账号已在其他设备登录，请重新登录',
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await expect(reverseSellerSpriteKeywords(expiredJson, {
+      asin: 'B000000000', marketId: 1, month: '', forceReStat: false, badges: [], limit: 20,
+    })).rejects.toMatchObject({
+      code: 'TARGET_NOT_LOGGED_IN',
+      targetMessage: 'SellerSprite 登录已失效，账号可能已在其他设备登录，请重新登录。',
+    })
+
+    const forbidden = new TargetClient(SELLERSPRITE_ADAPTER, async () => new Response('', { status: 403 }))
+    await expect(selectSellerSpriteProducts(forbidden, productSelectionInput))
+      .rejects.toMatchObject({ code: 'TARGET_NOT_LOGGED_IN', status: 403 })
+  })
+
+  it('recognizes a 200 login page but keeps rate limits and server errors distinct', async () => {
+    const loginHtmlClient = new TargetClient(SELLERSPRITE_ADAPTER, async () => {
+      const response = new Response('<html><form id="login-form" action="/user/login">请重新登录</form></html>', {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      })
+      Object.defineProperty(response, 'url', { value: 'https://www.sellersprite.com/v2/market-research' })
+      return response
+    })
+    await expect(researchSellerSpriteMarket(loginHtmlClient, {
+      marketId: 1, departmentKeyword: 'phone stand', monthName: 'bsr_sales_nearly', newReleaseNum: 3,
+    })).rejects.toMatchObject({ code: 'TARGET_NOT_LOGGED_IN' })
+
+    const limited = new TargetClient(SELLERSPRITE_ADAPTER, async () => new Response('', { status: 429 }))
+    await expect(selectSellerSpriteProducts(limited, productSelectionInput))
+      .rejects.toMatchObject({ code: 'TARGET_RATE_LIMITED' })
+    const serverError = new TargetClient(SELLERSPRITE_ADAPTER, async () => new Response('', { status: 503 }))
+    await expect(selectSellerSpriteProducts(serverError, productSelectionInput))
+      .rejects.toMatchObject({ code: 'TARGET_API_ERROR', status: 503 })
   })
 
   it('returns only minimal completion status for HTML session capabilities', async () => {

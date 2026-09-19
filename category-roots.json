@@ -1,0 +1,47 @@
+[
+  {
+    "id": "7141123011:7586165011",
+    "label": "Clothing, Shoes & Jewelry:Costumes & Accessories",
+    "nodeLabel": null,
+    "nodeLabelLocale": "服装和配饰",
+    "nodeLabelPathLocale": "服装、鞋履和珠宝:服装和配饰",
+    "products": 71086,
+    "children": 5
+  },
+  {
+    "id": "7141123011:15607776011",
+    "label": "Clothing, Shoes & Jewelry:Scary Halloween Costumes",
+    "nodeLabel": null,
+    "nodeLabelLocale": "恐怖的万圣节服装",
+    "nodeLabelPathLocale": "服装、鞋履和珠宝:恐怖的万圣节服装",
+    "products": 1,
+    "children": 0
+  },
+  {
+    "id": "7141123011:21393261011",
+    "label": "Clothing, Shoes & Jewelry:Women's Costumes - Superheroes",
+    "nodeLabel": null,
+    "nodeLabelLocale": "女性超级英雄服装",
+    "nodeLabelPathLocale": "服装、鞋履和珠宝:女性超级英雄服装",
+    "products": 1,
+    "children": 0
+  },
+  {
+    "id": "7141123011:7586166011",
+    "label": "Clothing, Shoes & Jewelry:Traditional & Cultural Wear",
+    "nodeLabel": null,
+    "nodeLabelLocale": "传统文化服装",
+    "nodeLabelPathLocale": "服装、鞋履和珠宝:传统文化服装",
+    "products": 9,
+    "children": 1
+  },
+  {
+    "id": "7141123011:7147445011",
+    "label": "Clothing, Shoes & Jewelry:Novelty & More",
+    "nodeLabel": null,
+    "nodeLabelLocale": "新颖性及更多",
+    "nodeLabelPathLocale": "服装、鞋履和珠宝:新颖性及更多",
+    "products": 124755,
+    "children": 2
+  }
+]

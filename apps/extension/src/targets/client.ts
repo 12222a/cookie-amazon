@@ -59,7 +59,33 @@ const readHtmlLoginProbe = async (
   if (!response.ok) throw new TargetClientError('TARGET_API_ERROR', response.status)
 
   const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
-  if (!contentType.includes('text/html')) {
+  if (!contentType.includes('text/html') && !contentType.includes('json')) {
+    throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  }
+
+  if (contentType.includes('json')) {
+    let body: unknown
+    try {
+      body = await response.json()
+    } catch {
+      throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+    }
+    if (!isRecord(body)) throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+    const normalizedCode = typeof body.code === 'string' || typeof body.code === 'number'
+      ? String(body.code).trim().toUpperCase()
+      : ''
+    const message = typeof body.message === 'string' ? body.message : ''
+    if (['2', 'ERR_GLOBAL_SESSION_EXPIRED', 'UNAUTHORIZED', 'NOT_LOGGED_IN', 'LOGIN_REQUIRED'].includes(normalizedCode)
+      || body.loggedIn === false || body.authenticated === false
+      || /(?:未登录|登录(?:状态)?(?:已)?失效|会话(?:已)?(?:失效|过期)|请(?:重新|先)?登录|其他设备.*登录)/i.test(message)) {
+      return { loggedIn: false }
+    }
+    if (typeof body.loggedIn === 'boolean' || typeof body.authenticated === 'boolean') {
+      return { loggedIn: typeof body.loggedIn === 'boolean' ? body.loggedIn : body.authenticated === true }
+    }
+    if (body.code === 'OK' || body.code === 0 || body.code === 1 || body.code === '1' || body.code === 200) {
+      return { loggedIn: true }
+    }
     throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
   }
 
@@ -72,12 +98,13 @@ const readHtmlLoginProbe = async (
   if (finalUrl.origin !== requestUrl.origin || finalUrl.username || finalUrl.password) {
     throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
   }
+  if (/\/(?:user\/)?(?:login|signin)(?:\/|$)/i.test(finalUrl.pathname)) return { loggedIn: false }
 
-  return {
-    loggedIn: finalUrl.pathname === requestUrl.pathname
-      && finalUrl.search === ''
-      && finalUrl.hash === '',
-  }
+  const body = await response.text()
+  const looksLikeLoginPage = /<form\b[^>]*(?:action=["'][^"']*\/(?:user\/)?login|id=["'][^"']*login)/i.test(body)
+    || /(?:请先登录|重新登录|登录已失效|账号密码登录)/i.test(body.replace(/<[^>]+>/g, ' ').slice(0, 20_000))
+  if (looksLikeLoginPage) return { loggedIn: false }
+  throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
 }
 
 const readProfile = async (response: Response): Promise<TargetProfile> => {
@@ -125,6 +152,11 @@ const readHtmlSessionMetadata = async (
   }
   if (finalUrl.origin !== requestUrl.origin || finalUrl.username || finalUrl.password) {
     throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status)
+  }
+  if (/\/(?:user\/)?(?:login|signin)(?:\/|$)/i.test(finalUrl.pathname)) {
+    throw new TargetClientError('TARGET_NOT_LOGGED_IN', response.status, {
+      targetMessage: 'SellerSprite 登录已失效，账号可能已在其他设备登录，请重新登录。',
+    })
   }
   return { status: response.status, contentType, finalPathname: finalUrl.pathname }
 }

@@ -12,8 +12,17 @@ import type {
 
 export type PortOptions = { signal?: AbortSignal }
 
+export interface ProductDiscoveryPage {
+  page: number
+  pages: number
+  total: number
+  hasNextPage: boolean
+  items: ProductCandidate[]
+}
+
 export interface ProductDiscoveryPort {
   discover(input: ResearchInput, options?: PortOptions): Promise<ProductCandidate[]>
+  discoverPage?(input: ResearchInput, page: number, options?: PortOptions): Promise<ProductDiscoveryPage>
 }
 
 export interface KeywordReversePort {

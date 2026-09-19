@@ -1,10 +1,8 @@
-import { useEffect, useMemo, useState, type ReactElement } from 'react'
+import { useMemo, useState, type ReactElement } from 'react'
 import {
-  listSellerSpriteCategoryNodes,
   listSellerSpriteReviewComments,
   selectSellerSpriteProducts,
   WebSdkError,
-  type SellerSpriteCategoryNode,
   type SellerSpriteProductSelectionData,
 } from '@cookie-amazon/web-sdk'
 import {
@@ -16,6 +14,7 @@ import {
   type P0Candidate,
   type P0ReviewSummary,
 } from './p0-opportunity'
+import { SELLERSPRITE_RECORDED_LEAF_CATEGORIES } from './sellersprite-category-catalog'
 
 type CandidateReviewState = {
   status: 'queued' | 'loading' | 'complete' | 'failed'
@@ -24,62 +23,41 @@ type CandidateReviewState = {
 }
 
 const formatNumber = (value: number | null | undefined): string => value == null ? '—' : value.toLocaleString('en-US', { maximumFractionDigits: 1 })
+const leafCategoryLabel = (item: (typeof SELLERSPRITE_RECORDED_LEAF_CATEGORIES)[number]): string => {
+  const englishLabel = item.label.split(':').pop()?.trim() || item.label
+  const chineseLabel = item.labelLocale?.trim()
+  return chineseLabel && englishLabel && chineseLabel !== englishLabel
+    ? `${englishLabel} · ${chineseLabel}`
+    : chineseLabel || englishLabel
+}
 const errorText = (reason: unknown): string => reason instanceof WebSdkError
   ? reason.code
   : reason instanceof Error ? reason.message : 'P0_REQUEST_FAILED'
 
 export function P0OpportunityPanel({ targetReady }: { targetReady: boolean }): ReactElement {
   const [market, setMarket] = useState('US')
-  const [categories, setCategories] = useState<SellerSpriteCategoryNode[]>([])
-  const [categoryId, setCategoryId] = useState('')
-  const [categoryStatus, setCategoryStatus] = useState<'idle' | 'loading' | 'failed'>('idle')
-  const [categoryError, setCategoryError] = useState<string | null>(null)
+  const [selectedCategoryId, setSelectedCategoryId] = useState('')
   const [selection, setSelection] = useState<SellerSpriteProductSelectionData | null>(null)
   const [candidates, setCandidates] = useState<P0Candidate[]>([])
   const [reviews, setReviews] = useState<Record<string, CandidateReviewState>>({})
   const [discovering, setDiscovering] = useState(false)
   const [discoveryError, setDiscoveryError] = useState<string | null>(null)
 
-  useEffect(() => {
-    let active = true
-    if (!targetReady || market !== 'US') {
-      setCategories([])
-      setCategoryId('')
-      setCategoryStatus('idle')
-      setCategoryError(null)
-      return () => { active = false }
-    }
-    setCategoryStatus('loading')
-    setCategoryError(null)
-    void listSellerSpriteCategoryNodes({ marketld: 1, table: 'bsr_sales_nearly' }, { timeoutMs: 15_000 })
-      .then((data) => {
-        if (!active) return
-        setCategories(data.items)
-        setCategoryId((current) => data.items.some((item) => item.id === current) ? current : data.items[0]?.id ?? '')
-        setCategoryStatus('idle')
-      })
-      .catch((reason: unknown) => {
-        if (!active) return
-        setCategoryStatus('failed')
-        setCategoryError(errorText(reason))
-      })
-    return () => { active = false }
-  }, [market, targetReady])
-
   const selectedCategory = useMemo(
-    () => categories.find((item) => item.id === categoryId) ?? null,
-    [categories, categoryId],
+    () => SELLERSPRITE_RECORDED_LEAF_CATEGORIES.find((item) => item.id === selectedCategoryId) ?? null,
+    [selectedCategoryId],
   )
+  const selectedCategoryPath = selectedCategory?.id ?? ''
 
   const discover = async (): Promise<void> => {
-    if (!targetReady || categoryId === '') return
+    if (!targetReady || selectedCategory?.children !== 0 || selectedCategoryPath === '') return
     setDiscovering(true)
     setDiscoveryError(null)
     setSelection(null)
     setCandidates([])
     setReviews({})
     try {
-      const data = await selectSellerSpriteProducts(buildP0ProductSelectionInput(market, categoryId), { timeoutMs: 20_000 })
+      const data = await selectSellerSpriteProducts(buildP0ProductSelectionInput(market, selectedCategoryPath), { timeoutMs: 20_000 })
       const ranked = rankP0Candidates(data.items)
       setSelection(data)
       setCandidates(ranked)
@@ -117,18 +95,18 @@ export function P0OpportunityPanel({ targetReady }: { targetReady: boolean }): R
     <div className="pr-section-heading">
       <div><span className="pr-section-index">P0</span><h3>类目机会发现</h3><span className="pr-count">自动发现 ASIN</span></div>
     </div>
-    <p className="p0-intro">选择站点和一级类目后，按已验证的选产品合同发现候选商品；只对初筛 Top 3 串行读取评论，避免对全部 ASIN 发起昂贵请求。</p>
+    <p className="p0-intro">从已记录的 230 个末级叶子类目中选择后，按已验证的选产品合同发现候选商品；只对初筛 Top 3 串行读取评论，避免对全部 ASIN 发起昂贵请求。</p>
     <div className="p0-controls">
       <label><span>站点</span><select value={market} onChange={(event) => setMarket(event.target.value)}><option value="US">美国 · US</option></select></label>
-      <label><span>一级类目</span><select value={categoryId} disabled={!targetReady || categoryStatus === 'loading'} onChange={(event) => setCategoryId(event.target.value)}>
-        {categories.length === 0 ? <option value="">{categoryStatus === 'loading' ? '加载类目中…' : '等待类目数据'}</option> : categories.map((item) => <option key={item.id} value={item.id}>{item.labelLocale || item.label} · {formatNumber(item.products)}</option>)}
+      <label className="p0-category-select"><span>已记录末级类目（230）</span><select aria-label="已记录末级类目" value={selectedCategoryId} disabled={!targetReady} onChange={(event) => setSelectedCategoryId(event.target.value)}>
+        <option value="">请选择要研究的末级类目</option>
+        {SELLERSPRITE_RECORDED_LEAF_CATEGORIES.map((item) => <option key={item.id} value={item.id}>{leafCategoryLabel(item)}</option>)}
       </select></label>
-      <button type="button" className="pr-search-button" disabled={!targetReady || categoryId === '' || discovering} onClick={() => { void discover() }}>
+      <button type="button" className="pr-search-button" disabled={!targetReady || selectedCategory === null || discovering} onClick={() => { void discover() }}>
         {!targetReady ? '需要连接扩展' : discovering ? '发现并分析中…' : '发现候选产品 →'}
       </button>
     </div>
-    {selectedCategory ? <div className="p0-contract-note">当前类目：<strong>{selectedCategory.labelLocale || selectedCategory.label}</strong>（节点 {selectedCategory.id}）；筛选采用抓包中的 BSR 10,000–50,000、月销量上限 300、价格上限 30、卖家数上限 1。</div> : null}
-    {categoryError ? <div className="pr-error" role="alert"><strong>类目加载失败</strong><span>{categoryError}</span></div> : null}
+    {selectedCategory ? <div className="p0-contract-note">当前类目路径：<strong>{selectedCategory.labelPathLocale || selectedCategory.labelPath || selectedCategory.labelLocale || selectedCategory.label}</strong>（完整 nodeIdPath：<code>{selectedCategoryPath}</code>）；已确认是记录中的叶子类目。筛选采用抓包中的 BSR 10,000–50,000、月销量上限 300、价格上限 30、卖家数上限 1。</div> : null}
     {discoveryError ? <div className="pr-error" role="alert"><strong>候选发现失败</strong><span>{discoveryError}</span></div> : null}
     {selection ? <div className="p0-summary">接口命中 <strong>{selection.total.toLocaleString()}</strong> 个商品，本页返回 {selection.items.length} 个；评论分析仅覆盖初筛 Top {candidates.length}。</div> : null}
     {candidates.length > 0 ? <div className="p0-candidate-grid">{candidates.map((candidate, index) => {

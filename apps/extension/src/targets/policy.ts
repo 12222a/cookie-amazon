@@ -185,14 +185,14 @@ export const createAmazonOperationPolicy = (): Readonly<Record<TargetOperation, 
 export const createSellerSpriteOperationPolicy = (): Readonly<Record<TargetOperation, TargetOperationPolicy>> => Object.freeze({
   CHECK_LOGIN: Object.freeze({
     enabled: true,
-    path: '/v2/me',
+    path: '/v3/api/client',
     method: 'GET',
     timeoutMs: 8_000,
     response: 'html-login-probe',
   }),
   GET_PROFILE: Object.freeze({
     enabled: false,
-    path: '/v2/me',
+    path: '/v3/api/client',
     method: 'GET',
     timeoutMs: 8_000,
     response: 'profile',

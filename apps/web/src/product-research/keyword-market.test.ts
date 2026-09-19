@@ -20,6 +20,11 @@ const keyword = (
   avgPrice: 25,
   avgRating: 4.4,
   avgReviews: 500,
+  natural: null,
+  ad: null,
+  naturalRatio: null,
+  adRatio: null,
+  positionTypes: null,
   searchesTrend: trend.map((value, index) => ({ month: `20260${index + 1}`, searches: value, searchRank: null })),
 })
 

@@ -7,3 +7,12 @@ apps/web/dist/
 cloudflare/config-worker/.wrangler/
 *.tsbuildinfo
 .env*
+# 会话/调试产物：不属于源码，也不该进历史
+*.log
+*.exit
+*.tmp
+.cursor-*
+.codegraph/
+artifacts/
+chrome-mv3.zip
+tsconfig.b-track.json

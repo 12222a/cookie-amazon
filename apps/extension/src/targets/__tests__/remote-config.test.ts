@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createDefaultRemoteConfig } from '@cookie-amazon/remote-config'
+import { REMOTE_CONFIG_ORIGIN } from '@cookie-amazon/protocol'
 import {
   ExtensionRemoteConfigManager,
   STORAGE_KEY,
@@ -30,7 +31,7 @@ describe('ExtensionRemoteConfigManager', () => {
     const { storage, values } = storageFixture()
     const config = { ...createDefaultRemoteConfig(), configVersion: 1 }
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe('http://localhost:8787/api/extension/config')
+      expect(String(input)).toBe(`${REMOTE_CONFIG_ORIGIN}/api/extension/config`)
       expect(init?.credentials).toBe('omit')
       return response(config)
     })

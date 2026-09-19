@@ -1,8 +1,14 @@
 export const PROTOCOL_VERSION = 1 as const
 export const MESSAGE_NAMESPACE = 'cookie-amazon-platform' as const
 export const WEB_ORIGIN = 'http://localhost:5173' as const
-export const WEB_ORIGINS = [WEB_ORIGIN, 'http://127.0.0.1:5173'] as const
-export const REMOTE_CONFIG_ORIGIN = 'http://localhost:8787' as const
+export const WEB_ORIGINS = [
+  WEB_ORIGIN,
+  'http://127.0.0.1:5173',
+  'http://localhost:5174',
+  'http://127.0.0.1:5174',
+  'https://research.n8nmydomain.com',
+] as const
+export const REMOTE_CONFIG_ORIGIN = 'https://research.n8nmydomain.com' as const
 export const PING_ACTION = 'PING' as const
 export const CONTENT_SCRIPT_PROBE_ACTION = 'COOKIE_AMAZON_CONTENT_SCRIPT_PROBE' as const
 export const CONTENT_SCRIPT_PROBE_RESPONSE = 'COOKIE_AMAZON_CONTENT_SCRIPT_READY' as const
@@ -104,6 +110,9 @@ export type ContentScriptProbeResponse = {
   extensionVersion: string
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null
+
 export const isContentScriptProbeRequest = (value: unknown): value is ContentScriptProbeRequest =>
   isRecord(value)
   && value.namespace === MESSAGE_NAMESPACE
@@ -123,8 +132,24 @@ export const isContentScriptProbeResponse = (value: unknown): value is ContentSc
 export const isAllowedWebOrigin = (origin: string): boolean =>
   WEB_ORIGINS.some((allowedOrigin) => origin === allowedOrigin)
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null
+export type RuntimeBridgeRequest = {
+  namespace: typeof MESSAGE_NAMESPACE
+  kind: 'request'
+  protocolVersion: typeof PROTOCOL_VERSION
+  action: string
+  requestId: string
+  payload?: unknown
+}
+
+export const isRuntimeBridgeRequest = (value: unknown): value is RuntimeBridgeRequest =>
+  isRecord(value)
+  && value.namespace === MESSAGE_NAMESPACE
+  && value.kind === 'request'
+  && value.protocolVersion === PROTOCOL_VERSION
+  && typeof value.action === 'string'
+  && value.action.length > 0
+  && typeof value.requestId === 'string'
+  && value.requestId.length > 0
 
 const isProtocolErrorDetails = (value: unknown): value is ProtocolError['error'] => {
   if (!isRecord(value) || typeof value.code !== 'string') return false
@@ -494,6 +519,9 @@ const isBoundedString = (value: unknown, max: number): value is string =>
 const isBoundedOptionalString = (value: unknown, max: number): value is string =>
   typeof value === 'string' && value.length <= max
 
+const isNullableBoundedString = (value: unknown, max: number): value is string | null | undefined =>
+  value === null || value === undefined || (typeof value === 'string' && value.length <= max)
+
 const isJsonPrimitive = (value: unknown): value is JsonPrimitive =>
   value === null
   || typeof value === 'string'
@@ -577,17 +605,12 @@ const isKeywordItem = (value: unknown): value is SellerSpriteKeywordItem =>
   && isNullableFiniteNumber(value.avgRating)
   && isNullableFiniteNumber(value.avgReviews)
   && (value.searchesTrend === null
-    || (Array.isArray(value.searchesTrend) && value.searchesTrend.every(isKeywordTrend)))  && (value.natural === null || isKeywordPosition(value.natural))
+    || (Array.isArray(value.searchesTrend) && value.searchesTrend.every(isKeywordTrend)))
+  && (value.natural === null || isKeywordPosition(value.natural))
   && (value.ad === null || isKeywordPosition(value.ad))
   && isNullableFiniteNumber(value.naturalRatio)
   && isNullableFiniteNumber(value.adRatio)
   && (value.positionTypes === null || isPositionTypes(value.positionTypes))
-
-const isKeywordPosition = (value: unknown): value is SellerSpriteKeywordPosition =>
-  isRecord(value)
-  && Object.keys(value).length === 2
-  && isNullableFiniteNumber(value.page)
-  && isNullableFiniteNumber(value.rank)
 
 const isKeywordPosition = (value: unknown): value is SellerSpriteKeywordPosition =>
   isRecord(value)
@@ -864,6 +887,12 @@ const PRODUCT_SELECTION_INPUT_KEYS = [
 const isStrictPrimitiveArray = (value: unknown): value is JsonPrimitive[] =>
   Array.isArray(value) && value.length <= 100 && value.every(isJsonPrimitive)
 
+export const isSellerSpriteLeafNodeIdPath = (value: unknown): value is string =>
+  typeof value === 'string'
+  && value.length >= 2
+  && value.length <= 512
+  && /^\d+(?::\d+)+$/.test(value)
+
 export const isSellerSpriteProductSelectionInput = (
   value: unknown,
 ): value is SellerSpriteProductSelectionInput => {
@@ -880,6 +909,7 @@ export const isSellerSpriteProductSelectionInput = (
     && isBoundedOptionalString(value.minRanking, 32)
     && isBoundedString(value.monthName, 32)
     && isStrictPrimitiveArray(value.nodeIdPaths)
+    && value.nodeIdPaths.every(isSellerSpriteLeafNodeIdPath)
     && isRecord(value.order)
     && Object.keys(value.order).length === 2
     && typeof value.order.desc === 'boolean'
@@ -974,11 +1004,14 @@ export const SELLERSPRITE_CATEGORY_NODES_ACTION = 'SELLERSPRITE_CATEGORY_NODES' 
 export type SellerSpriteCategoryNodesInput = {
   marketld: number
   table: 'bsr_sales_nearly'
+  nodeIdPath?: string
 }
 export type SellerSpriteCategoryNode = {
   id: string
   label: string
   labelLocale: string | null
+  labelPath?: string | null
+  labelPathLocale?: string | null
   products: number | null
   children: number
 }
@@ -1005,14 +1038,20 @@ export type SellerSpriteCategoryNodesSuccess = {
 }
 export type SellerSpriteCategoryNodesResponse = SellerSpriteCategoryNodesSuccess | ProtocolError
 
-export const isSellerSpriteCategoryNodesInput = (value: unknown): value is SellerSpriteCategoryNodesInput =>
-  isRecord(value)
-  && Object.keys(value).length === 2
-  && Number.isInteger(value.marketld)
-  && typeof value.marketld === 'number'
-  && value.marketld > 0
-  && value.marketld <= 1000
-  && value.table === 'bsr_sales_nearly'
+export const isSellerSpriteCategoryNodesInput = (value: unknown): value is SellerSpriteCategoryNodesInput => {
+  if (!isRecord(value) || (Object.keys(value).length !== 2 && Object.keys(value).length !== 3)) return false
+  if (!Object.hasOwn(value, 'marketld') || !Object.hasOwn(value, 'table')) return false
+  if (!Number.isInteger(value.marketld)
+    || typeof value.marketld !== 'number'
+    || value.marketld <= 0
+    || value.marketld > 1000
+    || value.table !== 'bsr_sales_nearly') return false
+  return value.nodeIdPath === undefined
+    || (typeof value.nodeIdPath === 'string'
+      && value.nodeIdPath.length > 0
+      && value.nodeIdPath.length <= 512
+      && /^\d+(?::\d+)*$/.test(value.nodeIdPath))
+}
 
 export const createSellerSpriteCategoryNodesRequest = (
   requestId: string,
@@ -1037,10 +1076,12 @@ export const isSellerSpriteCategoryNodesRequest = (value: unknown): value is Sel
 
 const isCategoryNode = (value: unknown): value is SellerSpriteCategoryNode =>
   isRecord(value)
-  && Object.keys(value).length === 5
+  && (Object.keys(value).length === 5 || Object.keys(value).length === 7)
   && isBoundedString(value.id, 64)
   && isBoundedString(value.label, 256)
   && isNullableBoundedString(value.labelLocale, 256)
+  && isNullableBoundedString(value.labelPath, 512)
+  && isNullableBoundedString(value.labelPathLocale, 512)
   && isNullableFiniteNumber(value.products)
   && typeof value.children === 'number'
   && Number.isInteger(value.children)
@@ -1455,9 +1496,6 @@ const MONTHLY_VARIATION_KEYS = [
   'asin', 'availableDate', 'availableDays', 'bsrLabel', 'bsrRank', 'currency', 'price',
   'rating', 'reviews', 'reviewsRate', 'station', 'title',
 ] as const
-
-const isNullableBoundedString = (value: unknown, max: number): value is string | null =>
-  value === null || (typeof value === 'string' && value.length <= max)
 
 const isMonthlyVariation = (value: unknown): value is SellerSpriteMonthlyVariation => {
   if (!isRecord(value) || Object.keys(value).length !== MONTHLY_VARIATION_KEYS.length

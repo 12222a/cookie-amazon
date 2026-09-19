@@ -1,5 +1,5 @@
 import { createBudgetTracker } from './budget'
-import { createDecision } from './decision'
+import { createCandidateDecisions, createDecision } from './decision'
 import { aggregateKeywords, selectAbaKeywords, selectRepresentativeKeywords, selectSeedKeywords } from './keywords'
 import type {
   AbaPeriod,
@@ -17,9 +17,9 @@ import type {
   ResearchStageStatus,
   ReviewItem,
 } from './model'
-import { DEFAULT_RESEARCH_POLICY } from './policy'
+import { DEFAULT_RESEARCH_POLICY, MAX_COMPARISON_CANDIDATES, MAX_DEEP_CANDIDATES } from './policy'
 import type { ResearchPipelineOptions, ResearchPorts } from './ports'
-import { analyzeReviews } from './reviews'
+import { analyzeReviews, reviewFingerprint } from './reviews'
 
 const STAGES: readonly ResearchStageId[] = [
   'discovery', 'reverseKeywords', 'keywordMining', 'abaValidation',
@@ -56,7 +56,7 @@ const normalizeError = (error: unknown): ResearchStageError => {
   const original = error instanceof Error ? error.message : typeof error === 'string' ? error : 'Unknown research error'
   const message = original
     .replace(/(cookie|authorization|token|secret|password)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]')
-    .slice(0, 240)
+    .slice(0, 700)
   return {
     kind,
     message,
@@ -67,7 +67,17 @@ const normalizeError = (error: unknown): ResearchStageError => {
 
 const validAsin = (asin: string): boolean => /^[A-Z0-9]{10}$/.test(asin.trim().toUpperCase())
 
-const prepareCandidates = (items: readonly ProductCandidate[], limit: number): ProductCandidate[] => {
+const uniqueReviews = (reviews: readonly ReviewItem[], seen: Set<string>): ReviewItem[] => reviews.filter((review) => {
+  const fingerprint = reviewFingerprint(review)
+  if (seen.has(fingerprint)) return false
+  seen.add(fingerprint)
+  return true
+})
+
+const prepareCandidates = (
+  items: readonly ProductCandidate[],
+  deepLimit: number,
+): ProductCandidate[] => {
   const unique = new Map<string, ProductCandidate>()
   for (const item of items) {
     const asin = item.asin.trim().toUpperCase()
@@ -77,8 +87,11 @@ const prepareCandidates = (items: readonly ProductCandidate[], limit: number): P
   return [...unique.values()]
     .sort((left, right) => right.discoveryScore - left.discoveryScore
       || (right.estimatedSales ?? -1) - (left.estimatedSales ?? -1))
-    .slice(0, limit)
-    .map((item, index) => ({ ...item, tier: index === 0 ? 'A' : index < 3 ? 'B' : 'C' }))
+    .map((item, index) => ({
+      ...item,
+      tier: index === 0 ? 'A' : index < MAX_DEEP_CANDIDATES ? 'B' : 'C',
+      researchDepth: index < deepLimit ? 'deep' : 'comparison',
+    }))
 }
 
 const chooseAbaPeriod = (periods: readonly AbaPeriod[]): AbaPeriod | null => {
@@ -102,15 +115,27 @@ export const runResearchPipeline = async (
   options: ResearchPipelineOptions = {},
 ): Promise<ResearchJob> => {
   const policy = options.policy ?? DEFAULT_RESEARCH_POLICY
+  const requestedDiscoveryPages = input.discoveryPages === 1 || input.discoveryPages === 5 ? input.discoveryPages : 3
+  const discoveryPages = ports.products.discoverPage ? requestedDiscoveryPages : 1
+  const comparisonTarget = Math.min(MAX_COMPARISON_CANDIDATES, Math.max(0, policy.candidateLimits.comparison))
+  const deepLimit = Math.min(MAX_DEEP_CANDIDATES, Math.max(0, policy.candidateLimits.deep))
+  const maximumDiscoveryCalls = discoveryPages * 2
+  const effectivePolicy = {
+    ...policy,
+    budget: {
+      ...policy.budget,
+      discovery: policy.budget.discovery === 0 ? 0 : Math.max(policy.budget.discovery, maximumDiscoveryCalls),
+    },
+  }
   const now = options.now ?? Date.now
-  const budget = createBudgetTracker(policy)
+  const budget = createBudgetTracker(effectivePolicy)
   const job: ResearchJob = {
     id: options.jobId ?? `${input.market}:${input.categoryId}:${now()}`,
-    input,
+    input: { ...input, discoveryPages: requestedDiscoveryPages },
     status: 'idle',
     currentStage: null,
     stages: createStages(),
-    budget: { ...policy.budget },
+    budget: { ...effectivePolicy.budget },
     usedBudget: budget.used(),
     evidence: {
       candidates: [],
@@ -124,6 +149,7 @@ export const runResearchPipeline = async (
       reviews: { sampled: 0, lowStarCount: 0, painPoints: [] },
     },
     decision: null,
+    candidateDecisions: [],
     errors: [],
     startedAt: now(),
     completedAt: null,
@@ -210,26 +236,159 @@ export const runResearchPipeline = async (
   const portOptions = { signal: options.signal }
 
   try {
-    start('discovery', input, 1)
-    if (!consume('discovery')) {
-      finish('discovery', 'failed', null, [{ kind: 'unavailable', message: 'Discovery budget is exhausted', fatal: false, retryable: false }], 0, 0)
-    } else {
-      try {
-        trace('discovery', 'request', '候选发现', input.categoryLabel ?? input.categoryId, `请求 ${input.market} 站点一级类目候选`, { calls: 1 })
-        const candidates = await ports.products.discover(input, portOptions)
+    start('discovery', { ...input, discoveryPages: requestedDiscoveryPages }, discoveryPages + 1)
+    const discovered: ProductCandidate[] = []
+    const errors: ResearchStageError[] = []
+    const attempts: Array<{
+      profile: 'strict' | 'expanded'
+      attemptedPages: number
+      successfulPages: number
+      fetchedItems: number
+      reportedTotal: number | null
+      stoppedReason: 'requested-pages-complete' | 'no-next-page' | 'empty-page' | 'page-error' | 'budget-exhausted'
+    }> = []
+    let calls = 0
+    let completed = 0
+    let reportedTotal: number | null = null
+    let availablePages: number | null = null
+    let filterProfile: 'strict' | 'expanded' = 'strict'
+    let fallbackTriggered = false
+    let fallbackReason: 'empty' | 'sparse' | null = null
+    let strictUniqueCandidateCount = 0
+    const candidateTarget = comparisonTarget
+    let stoppedReason: 'requested-pages-complete' | 'no-next-page' | 'empty-page' | 'page-error' | 'budget-exhausted' = 'requested-pages-complete'
+
+    const discoverWithProfile = async (profile: 'strict' | 'expanded'): Promise<typeof stoppedReason> => {
+      const beforeItems = discovered.length
+      const beforeCalls = calls
+      const beforeCompleted = completed
+      let profileTotal: number | null = null
+      let profileStoppedReason: typeof stoppedReason = 'requested-pages-complete'
+      for (let page = 1; page <= discoveryPages; page += 1) {
         assertActive()
-        job.evidence.candidates = prepareCandidates(candidates, policy.candidateLimits.comparison)
-        trace('discovery', 'response', '候选发现', input.categoryLabel ?? input.categoryId, `收到 ${candidates.length} 条，清洗后保留 ${job.evidence.candidates.length} 条`, { calls: 1, completed: 1 })
-        finish('discovery', 'complete', { candidates: job.evidence.candidates }, [], 1, 1)
-      } catch (error) {
-        const normalized = normalizeError(error)
-        remoteBlocked = normalized.fatal
-        trace('discovery', 'error', '候选发现', input.categoryLabel ?? input.categoryId, normalized.message, { calls: 1 })
-        finish('discovery', 'failed', null, [normalized], 1, 0)
+        if (!consume('discovery')) {
+          profileStoppedReason = 'budget-exhausted'
+          break
+        }
+        calls += 1
+        trace(
+          'discovery',
+          'request',
+          profile === 'strict' ? '候选发现（机会筛选）' : '候选发现（类目扩展扫描）',
+          input.categoryLabel ?? input.categoryId,
+          `正在读取叶子类目第 ${page}/${discoveryPages} 页`,
+          { calls, completed },
+        )
+        try {
+          const profileInput = { ...input, discoveryProfile: profile }
+          const result = ports.products.discoverPage
+            ? await ports.products.discoverPage(profileInput, page, portOptions)
+            : {
+                page: 1,
+                pages: 1,
+                total: 0,
+                hasNextPage: false,
+                items: await ports.products.discover(profileInput, portOptions),
+              }
+          assertActive()
+          reportedTotal = result.total
+          profileTotal = result.total
+          availablePages = result.pages
+          discovered.push(...result.items)
+          completed += 1
+          trace(
+            'discovery',
+            'response',
+            profile === 'strict' ? '候选发现（机会筛选）' : '候选发现（类目扩展扫描）',
+            input.categoryLabel ?? input.categoryId,
+            `第 ${page} 页收到 ${result.items.length} 条，累计 ${discovered.length} 条`,
+            { calls, completed },
+          )
+          if (result.items.length === 0) {
+            profileStoppedReason = 'empty-page'
+            break
+          }
+          if (!result.hasNextPage || page >= result.pages) {
+            profileStoppedReason = 'no-next-page'
+            break
+          }
+        } catch (error) {
+          const normalized = normalizeError(error)
+          errors.push(normalized)
+          profileStoppedReason = 'page-error'
+          trace('discovery', 'error', profile === 'strict' ? '候选发现（机会筛选）' : '候选发现（类目扩展扫描）', input.categoryLabel ?? input.categoryId, `第 ${page} 页失败：${normalized.message}`, { calls, completed })
+          if (calls === 1) remoteBlocked = normalized.fatal
+          break
+        }
       }
+      attempts.push({
+        profile,
+        attemptedPages: calls - beforeCalls,
+        successfulPages: completed - beforeCompleted,
+        fetchedItems: discovered.length - beforeItems,
+        reportedTotal: profileTotal,
+        stoppedReason: profileStoppedReason,
+      })
+      return profileStoppedReason
     }
 
-    const deepCandidates = job.evidence.candidates.slice(0, policy.candidateLimits.deep)
+    stoppedReason = await discoverWithProfile('strict')
+    strictUniqueCandidateCount = new Set(
+      discovered.map((candidate) => candidate.asin.trim().toUpperCase()).filter(validAsin),
+    ).size
+    const shouldExpandSparseResults = strictUniqueCandidateCount < candidateTarget
+      && errors.length === 0
+      && completed > 0
+      && budget.remaining('discovery') > 0
+    if (shouldExpandSparseResults) {
+      fallbackTriggered = true
+      fallbackReason = strictUniqueCandidateCount === 0 ? 'empty' : 'sparse'
+      filterProfile = 'expanded'
+      trace(
+        'discovery',
+        'request',
+        '启用类目扩展扫描',
+        input.categoryLabel ?? input.categoryId,
+        strictUniqueCandidateCount === 0
+          ? '机会筛选没有返回商品，保留完整叶子类目路径并移除销量、价格、BSR 和卖家数限制后重试'
+          : `机会筛选仅返回 ${strictUniqueCandidateCount} 个有效 ASIN，低于候选目标 ${candidateTarget} 个；保留已有结果并使用类目扩展扫描补充候选`,
+        { calls, completed },
+      )
+      stoppedReason = await discoverWithProfile('expanded')
+    }
+
+    const uniqueCandidateCount = new Set(
+      discovered.map((candidate) => candidate.asin.trim().toUpperCase()).filter(validAsin),
+    ).size
+    job.evidence.candidates = prepareCandidates(discovered, deepLimit)
+    const discoveryOutput = {
+      candidates: job.evidence.candidates,
+      requestedPages: requestedDiscoveryPages,
+      attemptedPages: calls,
+      successfulPages: completed,
+      availablePages,
+      reportedTotal,
+      fetchedItems: discovered.length,
+      uniqueCandidateCount,
+      retainedCandidates: job.evidence.candidates.length,
+      filterProfile,
+      fallbackTriggered,
+      fallbackReason,
+      strictUniqueCandidateCount,
+      candidateTarget,
+      attempts,
+      stoppedReason,
+    }
+    if (completed === 0) {
+      const failureErrors = errors.length > 0
+        ? errors
+        : [{ kind: 'unavailable' as const, message: 'Discovery budget is exhausted', fatal: false, retryable: false }]
+      finish('discovery', 'failed', discoveryOutput, failureErrors, calls, 0)
+    } else {
+      finish('discovery', errors.length > 0 || stoppedReason === 'budget-exhausted' ? 'partial' : 'complete', discoveryOutput, errors, calls, completed)
+    }
+
+    const deepCandidates = job.evidence.candidates.filter((candidate) => candidate.researchDepth === 'deep')
     if (remoteBlocked || deepCandidates.length === 0) {
       skip('reverseKeywords', remoteBlocked ? 'remote-capabilities-blocked' : 'no-candidates')
     } else {
@@ -287,7 +446,11 @@ export const runResearchPipeline = async (
         trace('keywordMining', 'request', '关键词挖掘', seed.normalized, `正在扩展第 ${calls}/${seeds.length} 个种子词`, { calls, completed })
         try {
           const result = await ports.keywordMining.mine(seed.normalized, input.market, portOptions)
-          mined.push(...result)
+          mined.push(...result.map((item) => ({
+            ...item,
+            sourceAsins: [...new Set([...(item.sourceAsins ?? []), ...seed.sourceAsins])],
+            sourceTiers: [...new Set([...(item.sourceTiers ?? []), ...seed.sourceTiers])] as CandidateTier[],
+          })))
           assertActive()
           completed += 1
           trace('keywordMining', 'response', '关键词挖掘', seed.normalized, `收到 ${result.length} 个扩展词`, { calls, completed })
@@ -339,7 +502,12 @@ export const runResearchPipeline = async (
           try {
             const evidence = await ports.aba.research(keyword.normalized, input.market, period, portOptions)
             assertActive()
-            if (evidence) job.evidence.aba.push(evidence)
+            if (evidence) {
+              job.evidence.aba.push({
+                ...evidence,
+                sourceAsins: selected.find((item) => item.normalized === keyword.normalized)?.sourceAsins ?? [],
+              })
+            }
             completed += 1
             trace('abaValidation', 'response', 'ABA 关键词验证', keyword.normalized, evidence ? `搜索排名 ${evidence.searchRank ?? '—'}，搜索量 ${evidence.searches ?? '—'}` : '请求成功，但没有匹配记录', { calls, completed })
           } catch (error) {
@@ -374,7 +542,12 @@ export const runResearchPipeline = async (
             try {
               const evidence = await ports.competitors.research(keyword.normalized, input.market, portOptions)
               assertActive()
-              if (evidence) job.evidence.competitors.push(evidence)
+              if (evidence) {
+                job.evidence.competitors.push({
+                  ...evidence,
+                  sourceAsins: keyword.sourceAsins,
+                })
+              }
               completed += 1
               trace('marketStructure', 'response', '竞品结构', keyword.normalized, evidence ? `收到 ${evidence.productCount} 个竞品样本` : '请求成功，但没有竞品证据', { calls, completed })
             } catch (error) {
@@ -394,7 +567,12 @@ export const runResearchPipeline = async (
             try {
               const evidence = await ports.market.research(keyword.normalized, input.market, portOptions)
               assertActive()
-              if (evidence) job.evidence.markets.push(evidence)
+              if (evidence) {
+                job.evidence.markets.push({
+                  ...evidence,
+                  sourceAsins: keyword.sourceAsins,
+                })
+              }
               completed += 1
               trace('marketStructure', 'response', '市场结构', keyword.normalized, evidence ? `总商品 ${evidence.totalProducts ?? '—'}，品牌集中度 ${evidence.brandConcentration ?? '—'}` : '请求成功，但没有市场证据', { calls, completed })
             } catch (error) {
@@ -418,6 +596,7 @@ export const runResearchPipeline = async (
       start('reviewAnalysis', { asins: deepCandidates.map((item) => item.asin) }, deepCandidates.length)
       const errors: ResearchStageError[] = []
       const items: ReviewItem[] = []
+      const seenReviews = new Set<string>()
       let calls = 0
       let completed = 0
       let exhausted = false
@@ -429,16 +608,16 @@ export const runResearchPipeline = async (
         try {
           const recent = await ports.reviews.list(candidate.asin, input.market, { page: 1, pageSize: 20 }, portOptions)
           assertActive()
-          items.push(...recent)
-          trace('reviewAnalysis', 'response', '近期评论', candidate.asin, `收到 ${recent.length} 条评论`, { calls, completed })
-          if (recent.filter((item) => item.star <= 3).length < 3 && budget.remaining('reviews') > 0) {
+          const uniqueRecent = uniqueReviews(recent, seenReviews)
+          items.push(...uniqueRecent)
+          trace('reviewAnalysis', 'response', '近期评论', candidate.asin, `收到 ${recent.length} 条，去重后新增 ${uniqueRecent.length} 条`, { calls, completed })
+          if (uniqueRecent.filter((item) => item.star <= 3).length < 3 && budget.remaining('reviews') > 0) {
             consume('reviews')
             calls += 1
             trace('reviewAnalysis', 'request', '低星评论补样', candidate.asin, '低星样本不足，补充读取 1–3 星评论', { calls, completed })
             const lowStars = await ports.reviews.list(candidate.asin, input.market, { page: 1, pageSize: 20, stars: [1, 2, 3] }, portOptions)
             assertActive()
-            const seen = new Set(items.map((item) => `${item.asin}:${item.title}:${item.content}`))
-            const uniqueLowStars = lowStars.filter((item) => !seen.has(`${item.asin}:${item.title}:${item.content}`))
+            const uniqueLowStars = uniqueReviews(lowStars, seenReviews)
             items.push(...uniqueLowStars)
             trace('reviewAnalysis', 'response', '低星评论补样', candidate.asin, `收到 ${lowStars.length} 条，去重后新增 ${uniqueLowStars.length} 条`, { calls, completed })
           }
@@ -465,11 +644,17 @@ export const runResearchPipeline = async (
     }, 1)
     trace('decision', 'request', '综合评分', null, '汇总需求、进入条件、差异化和证据覆盖度')
     job.decision = createDecision(job)
-    trace('decision', 'response', '综合评分', null, `结论：${job.decision.label}；可信度 ${job.decision.scores.confidence}%`, { completed: 1 })
+    job.candidateDecisions = createCandidateDecisions(job)
+    trace('decision', 'response', 'ASIN 优先级', null, `生成 ${job.candidateDecisions.length} 个 ASIN 级研究优先级；${job.decision.label}为兼容性汇总字段`, { completed: 1 })
     finish('decision', 'complete', job.decision, [], 0, 1)
 
+    const noCandidateOutcome = job.stages.discovery.status === 'complete' && job.evidence.candidates.length === 0
     const degraded = STAGES.filter((stage) => stage !== 'decision')
-      .some((stage) => ['partial', 'failed', 'skipped'].includes(job.stages[stage].status))
+      .some((stage) => {
+        const status = job.stages[stage].status
+        if (status === 'partial' || status === 'failed') return true
+        return status === 'skipped' && !noCandidateOutcome
+      })
     job.status = job.stages.discovery.status === 'failed' && job.evidence.candidates.length === 0
       ? 'failed'
       : degraded ? 'partial' : 'complete'

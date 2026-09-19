@@ -1,5 +1,12 @@
-import type { ResearchDecision, ResearchJob, ResearchStageId } from './model'
+import type {
+  CandidateResearchDecision,
+  ProductCandidate,
+  ResearchDecision,
+  ResearchJob,
+  ResearchStageId,
+} from './model'
 import { summarizeMarketStructure } from './market'
+import { selectStrongPainPoints, analyzeReviews } from './reviews'
 
 const clamp = (value: number): number => Math.round(Math.max(0, Math.min(100, value)))
 const average = (values: readonly number[]): number => values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length
@@ -36,8 +43,11 @@ export const createDecision = (job: ResearchJob): ResearchDecision => {
   const newcomer = market.newProductShare === null ? 50 : Math.min(100, market.newProductShare * 200)
   const entry = clamp(average([concentrationEntry, reviewBarrier, newcomer]))
 
-  const strongPainPoints = job.evidence.reviews.painPoints.filter((point) => point.lowStarShare >= 0.5 && point.count >= 2)
-  const painPointScore = Math.min(100, strongPainPoints.length * 18 + strongPainPoints.reduce((sum, point) => sum + point.count * 3, 0))
+  const strongPainPoints = selectStrongPainPoints(job.evidence.reviews)
+  const painPointScore = Math.min(100, strongPainPoints.length * 18 + strongPainPoints.reduce((sum, point) => {
+    const lowStarCount = point.lowStarCount ?? Math.round(point.count * point.lowStarShare)
+    return sum + lowStarCount * 3
+  }, 0))
   const scenarioScore = usefulKeywords.some((item) => item.kind === 'intent' || item.kind === 'attribute') ? 60 : 30
   const differentiation = clamp(average([
     job.evidence.reviews.sampled > 0 ? painPointScore : 35,
@@ -74,7 +84,6 @@ export const createDecision = (job: ResearchJob): ResearchDecision => {
   if (confidence >= 55 && demand >= 55 && entry >= 45 && differentiation >= 35 && !market.extremeConcentration) verdict = 'CONTINUE'
   else if (confidence >= 50 && demand < 30 && entry < 40 && differentiation < 40) verdict = 'DROP'
   else if (confidence >= 55 && demand < 40 && market.extremeConcentration && differentiation < 35) verdict = 'DROP'
-
   return {
     verdict,
     label: verdict === 'CONTINUE' ? '继续验证' : verdict === 'DROP' ? '放弃' : '观察',
@@ -82,6 +91,68 @@ export const createDecision = (job: ResearchJob): ResearchDecision => {
     reasons,
     risks,
     missing: [...new Set(missing)],
-    boundary: '该结论仅用于决定是否继续验证产品机会，不代表可直接采购、上架或保证盈利。',
+    boundary: '该汇总字段只用于兼容现有调用；ASIN 级优先级和下一步建议以 candidateDecisions 为准，不代表可直接采购、上架或保证盈利。',
   }
 }
+
+const candidateEvidence = (job: ResearchJob, candidate: ProductCandidate): ResearchJob => {
+  const asin = candidate.asin
+  const reverseKeywords = job.evidence.reverseKeywords.filter((item) => item.sourceAsins.includes(asin))
+  const seedKeywords = job.evidence.seedKeywords.filter((item) => item.sourceAsins.includes(asin))
+  const minedKeywords = job.evidence.minedKeywords.filter((item) => item.sourceAsins.includes(asin))
+  const aba = job.evidence.aba.filter((item) => item.sourceAsins?.includes(asin))
+  const competitors = job.evidence.competitors.filter((item) => item.sourceAsins?.includes(asin))
+  const markets = job.evidence.markets.filter((item) => item.sourceAsins?.includes(asin))
+  const reviewItems = job.evidence.reviewItems.filter((item) => item.asin === asin)
+  return {
+    ...job,
+    evidence: {
+      ...job.evidence,
+      candidates: [candidate],
+      reverseKeywords,
+      seedKeywords,
+      minedKeywords,
+      aba,
+      competitors,
+      markets,
+      reviewItems,
+      reviews: analyzeCandidateReviews(reviewItems),
+    },
+    candidateDecisions: [],
+  }
+}
+
+const analyzeCandidateReviews = (items: ResearchJob['evidence']['reviewItems']) => analyzeReviews(items)
+
+export const createCandidateDecisions = (job: ResearchJob): CandidateResearchDecision[] => job.evidence.candidates.map((candidate) => {
+  if (candidate.researchDepth !== 'deep') {
+    return {
+      asin: candidate.asin,
+      priority: '暂不优先',
+      nextStep: '保留为横向对比样本；先比较 Top 3 的价格、销量、评论壁垒，再决定是否升级研究。',
+      reasons: ['当前轮次研究资源优先用于 Top 3，未为该 ASIN 调用深度研究接口'],
+      missing: ['关键词需求、市场结构和评论证据尚未单独验证'],
+      scores: { demand: null, entry: null, differentiation: null, confidence: 0 },
+    }
+  }
+
+  const individual = createDecision(candidateEvidence(job, candidate))
+  const priority: CandidateResearchDecision['priority'] = individual.verdict === 'CONTINUE'
+    ? '重点验证'
+    : individual.verdict === 'DROP'
+      ? '暂不优先'
+      : '待补充研究'
+  const nextStep = priority === '重点验证'
+    ? '进入采购、成本、合规和差异化验证；继续核对证据对应的具体 ASIN。'
+    : priority === '待补充研究'
+      ? '补齐标记为缺失的关键词、ABA、市场或评论证据后，再决定是否推进。'
+      : '暂不投入深度研究资源；保留当前证据，等待新的真实数据或下一轮发现。'
+  return {
+    asin: candidate.asin,
+    priority,
+    nextStep,
+    reasons: individual.reasons,
+    missing: individual.missing,
+    scores: individual.scores,
+  }
+})

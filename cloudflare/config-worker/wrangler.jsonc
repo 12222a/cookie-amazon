@@ -3,12 +3,35 @@
   "name": "cookie-amazon-config-worker",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-16",
+  "workers_dev": false,
   "assets": { "directory": "../../apps/web/dist", "binding": "ASSETS" },
+  "routes": [
+    { "pattern": "research.n8nmydomain.com", "custom_domain": true }
+  ],
   "kv_namespaces": [
     { "binding": "EXTENSION_CONFIG", "id": "d9f3925ced4f4d49bd8aca0522a67c81" }
   ],
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+  "d1_databases": [
+    {
+      "binding": "FASHION_DB",
+      "database_name": "cookie-amazon-fashion",
+      "database_id": "8635cfdf-6476-4f13-b6b4-02b3fe6cf9c4",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "FASHION_IMAGES",
+      "bucket_name": "cookie-amazon-fashion-images"
+    }
+  ],
   "vars": {
     "CONFIG_ENVIRONMENT": "production",
-    "CONFIG_TTL_MS": "1800000"
+    "CONFIG_TTL_MS": "1800000",
+    "IMAGE_OUTPUT_COUNT": "2",
+    "DAILY_REFERENCE_COUNT": "1"
   }
 }

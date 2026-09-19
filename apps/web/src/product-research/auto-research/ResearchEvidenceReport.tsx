@@ -1,19 +1,29 @@
 import { useId, useMemo, useState, type ReactNode } from 'react'
-import type { AggregatedKeyword, ResearchJob } from '@cookie-amazon/research-core'
+import { RESEARCH_STAGE_IDS, selectStrongPainPoints, type AggregatedKeyword, type ResearchJob } from '@cookie-amazon/research-core'
 import {
   EVIDENCE_TABS,
   STAGE_LABELS,
   STATUS_LABELS,
+  STATUS_SYMBOLS,
+  type CandidateFilter,
   type EvidenceTab,
+  buildCandidateCsv,
+  buildCandidateEvidenceSummary,
+  buildFinalDecisionSnapshot,
+  buildFinalDecisionList,
+  currentReviewEvidence,
+  filterResearchCandidates,
   formatResearchNumber,
   formatResearchRatio,
   executionEventLabel,
   explainExecutionMessage,
   formatEventTime,
   primaryResearchError,
+  painPointEvidenceStrength,
   researchErrorExplanation,
   stageDescription,
 } from './research-view-model'
+import { downloadCsv } from '../csv'
 
 type ResearchEvidenceReportProps = {
   job: ResearchJob
@@ -54,25 +64,146 @@ const OverviewPanel = ({ job }: { job: ResearchJob }) => {
 }
 
 const CandidatesPanel = ({ job }: { job: ResearchJob }) => {
-  if (job.evidence.candidates.length === 0) return <EmptyEvidence>没有获得候选商品证据。</EmptyEvidence>
+  const [filter, setFilter] = useState<CandidateFilter>('all')
+  const [selectedAsin, setSelectedAsin] = useState(job.evidence.candidates[0]?.asin ?? '')
+  const filteredCandidates = useMemo(
+    () => filterResearchCandidates(job.evidence.candidates, filter),
+    [filter, job.evidence.candidates],
+  )
+  const selectedCandidate = filteredCandidates.find((candidate) => candidate.asin === selectedAsin)
+    ?? filteredCandidates[0]
+    ?? job.evidence.candidates[0]
+  const selectedSummary = selectedCandidate ? buildCandidateEvidenceSummary(job, selectedCandidate) : null
+  const fileCategory = (job.input.categoryLabel ?? job.input.categoryId).replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]+/g, '-')
+  const discovery = job.stages.discovery.output as Partial<{
+    requestedPages: number
+    successfulPages: number
+    fetchedItems: number
+    uniqueCandidateCount: number
+    retainedCandidates: number
+    reportedTotal: number | null
+    filterProfile: 'strict' | 'expanded'
+    fallbackTriggered: boolean
+    fallbackReason: 'empty' | 'sparse' | null
+    strictUniqueCandidateCount: number
+    candidateTarget: number
+  }> | null
+  const discoveryModeDescription = discovery?.fallbackReason === 'sparse'
+    ? `严格机会筛选仅获得 ${discovery.strictUniqueCandidateCount ?? '少量'} 个有效 ASIN，已自动执行类目扩展扫描并合并去重。`
+    : discovery?.fallbackReason === 'empty'
+      ? '严格机会筛选为空，已自动执行类目扩展扫描。'
+      : '使用严格机会筛选。'
+
+  if (job.evidence.candidates.length === 0) return <EmptyEvidence>{discovery?.fallbackTriggered
+    ? '机会筛选为空后已自动执行类目扩展扫描，但仍未发现有效 ASIN。类目路径有效；SellerSprite 当前可能没有可用商品数据。'
+    : '没有获得候选商品证据。请查看候选发现阶段的请求记录和错误原因。'}</EmptyEvidence>
+
+  const selectCandidate = (asin: string) => setSelectedAsin(asin)
+  const exportCandidates = () => downloadCsv(
+    `US-${fileCategory}-候选ASIN.csv`,
+    buildCandidateCsv(filteredCandidates, job.candidateDecisions ?? []),
+  )
+
   return (
-    <div className="pr-auto-table-scroll">
-      <table className="pr-auto-table">
-        <thead><tr><th>层级</th><th>商品 / ASIN</th><th>发现分</th><th>预估销量</th><th>价格</th><th>评分</th><th>评论数</th><th>Listing Age</th><th>卖家数</th></tr></thead>
-        <tbody>{job.evidence.candidates.map((item) => (
-          <tr key={item.asin}>
-            <td><span className="pr-auto-tier">{item.tier ?? '—'}</span></td>
-            <td><strong>{item.title || '未命名商品'}</strong><small>{item.asin}</small></td>
-            <td>{formatResearchNumber(item.discoveryScore)}</td>
-            <td>{formatResearchNumber(item.estimatedSales)}</td>
-            <td>{item.price == null ? '—' : `$${formatResearchNumber(item.price)}`}</td>
-            <td>{formatResearchNumber(item.rating)}</td>
-            <td>{formatResearchNumber(item.reviews)}</td>
-            <td>{item.listingAgeDays == null ? '—' : `${formatResearchNumber(item.listingAgeDays)} 天`}</td>
-            <td>{formatResearchNumber(item.sellers)}</td>
-          </tr>
-        ))}</tbody>
-      </table>
+    <div className="pr-auto-candidate-workspace">
+      <header className="pr-auto-candidate-head">
+        <div>
+          <span>01 · THIS ROUND</span>
+          <h3>本轮候选 ASIN <small>{filteredCandidates.length} / {job.evidence.candidates.length}</small></h3>
+          <p>数据源：每轮最多读取 {discovery?.requestedPages ?? job.input.discoveryPages ?? 3} 页，实际成功请求 {discovery?.successfulPages ?? '—'} 页，累计 {discovery?.fetchedItems ?? '—'} 条，去重后 {discovery?.uniqueCandidateCount ?? '—'} 个 ASIN；{discoveryModeDescription}最终保留 {job.evidence.candidates.length} 个候选，只有 Top 3 进入深度研究。</p>
+        </div>
+        <div className="pr-auto-candidate-actions" aria-label="候选筛选与导出">
+          {([
+            ['all', '全部候选'],
+            ['deep', '仅 Top 3'],
+            ['high-score', '发现分 75+'],
+          ] as const).map(([id, label]) => (
+            <button
+              aria-pressed={filter === id}
+              className={filter === id ? 'is-active' : ''}
+              key={id}
+              onClick={() => setFilter(id)}
+              type="button"
+            >{label}</button>
+          ))}
+          <button className="is-export" disabled={filteredCandidates.length === 0} onClick={exportCandidates} type="button">导出当前 CSV ↧</button>
+        </div>
+      </header>
+
+      {filteredCandidates.length === 0 ? <EmptyEvidence>当前筛选条件没有匹配候选。切换到“全部候选”可查看完整清单。</EmptyEvidence> : <>
+        <div className="pr-auto-table-scroll pr-auto-candidate-table-shell">
+          <table className="pr-auto-table pr-auto-candidate-table">
+            <thead><tr><th>层级 / 排名</th><th>商品 / ASIN</th><th>发现分</th><th>预估月销量</th><th>价格</th><th>评分 / 评论</th><th>Listing Age</th><th>卖家数</th><th>ASIN 建议</th><th>证据状态</th></tr></thead>
+            <tbody>{filteredCandidates.map((item) => {
+              const summary = buildCandidateEvidenceSummary(job, item)
+              const isSelected = selectedCandidate?.asin === item.asin
+              return (
+                <tr
+                  aria-label={`选择候选 ${item.asin}`}
+                  aria-selected={isSelected}
+                  className={`${isSelected ? 'is-selected' : ''} ${summary.isDeepResearch ? 'is-deep' : ''}`}
+                  key={item.asin}
+                  onClick={() => selectCandidate(item.asin)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      selectCandidate(item.asin)
+                    }
+                  }}
+                  tabIndex={0}
+                >
+                  <td><span className={`pr-auto-tier is-${(item.tier ?? 'c').toLowerCase()}`}>{item.tier ?? '—'}</span><small>#{summary.rank}</small></td>
+                  <td>
+                    <div className="pr-auto-candidate-product">
+                      {item.imageUrl ? <img alt="" loading="lazy" src={item.imageUrl} /> : <span className="pr-auto-candidate-image">ASIN</span>}
+                      <div><strong title={item.title}>{item.title || '未命名商品'}</strong><small>{item.brand ?? '品牌未知'}</small><a href={`https://www.amazon.com/dp/${item.asin}`} onClick={(event) => event.stopPropagation()} rel="noreferrer" target="_blank">{item.asin} ↗</a></div>
+                    </div>
+                  </td>
+                  <td><span className="pr-auto-candidate-score">{formatResearchNumber(item.discoveryScore)}</span></td>
+                  <td>{formatResearchNumber(item.estimatedSales)}</td>
+                  <td>{item.price == null ? '—' : `$${formatResearchNumber(item.price)}`}</td>
+                  <td><span className="pr-auto-candidate-rating">★ {formatResearchNumber(item.rating)}</span><small>{formatResearchNumber(item.reviews)} 条</small></td>
+                  <td>{item.listingAgeDays == null ? '—' : `${formatResearchNumber(item.listingAgeDays)} 天`}</td>
+                  <td>{formatResearchNumber(item.sellers)}</td>
+                  <td><span className={`pr-auto-priority is-${summary.priority === '重点验证' ? 'focus' : summary.priority === '待补充研究' ? 'pending' : 'defer'}`}>{summary.priority}</span><small>{summary.isDeepResearch ? 'Top 3 深度研究' : '横向对比'}</small></td>
+                  <td><span className={`pr-auto-evidence-status ${summary.isDeepResearch ? 'is-complete' : 'is-pending'}`}>{summary.tags.filter((tag) => tag.state === 'available').length} / {summary.tags.length} 已采集</span></td>
+                </tr>
+              )
+            })}</tbody>
+          </table>
+        </div>
+        <div className="pr-auto-candidate-foot"><span>点击或按 Enter 选择商品并查看对应证据。</span><span>CSV 只导出当前筛选结果，包含 UTF-8 BOM 和稳定列头。</span></div>
+
+        {selectedSummary && <section className="pr-auto-candidate-detail" aria-live="polite">
+          <article className="pr-auto-candidate-evidence">
+            <header>
+              <div><span>TRACEABLE EVIDENCE</span><h3>候选证据摘要</h3></div>
+              <strong>{selectedSummary.tags.filter((tag) => tag.state === 'available').length} / {selectedSummary.tags.length} 项有证据</strong>
+            </header>
+            <div className="pr-auto-evidence-tag-list">
+              {selectedSummary.tags.map((tag) => <span className={`is-${tag.state}`} key={tag.label}>{tag.label}</span>)}
+            </div>
+            {selectedSummary.isDeepResearch ? <div className="pr-auto-selected-signals">
+              <article><span>反查关键词</span><strong>{formatResearchNumber(selectedSummary.reverseKeywordCount)}</strong><small>仅统计来源包含当前 ASIN 的反查词。</small></article>
+              <article><span>评论样本</span><strong>{formatResearchNumber(selectedSummary.reviewSampleCount)}</strong><small>低星评论 {formatResearchNumber(selectedSummary.lowStarReviewCount)} 条。</small></article>
+              <article><span>高频低星痛点</span><strong>{formatResearchNumber(selectedSummary.painPoints.length)}</strong><small>{selectedSummary.painPoints.map((pain) => pain.label).join('、') || '尚未形成稳定主题'}</small></article>
+            </div> : <p className="pr-auto-comparison-note">该商品保留为横向对比候选，当前流程不会为其调用关键词反查和评论深研接口；这不代表相关证据为零。</p>}
+          </article>
+
+          <aside className="pr-auto-selected-candidate">
+            <header><div><span>SELECTED ASIN · #{selectedSummary.rank}</span><h3>{selectedSummary.candidate.title}</h3><a href={`https://www.amazon.com/dp/${selectedSummary.candidate.asin}`} rel="noreferrer" target="_blank">{selectedSummary.candidate.asin} ↗</a></div><b>{selectedSummary.priority}</b></header>
+            <dl>
+              <div><dt>发现分</dt><dd>{formatResearchNumber(selectedSummary.candidate.discoveryScore)}</dd></div>
+              <div><dt>预估月销量</dt><dd>{formatResearchNumber(selectedSummary.candidate.estimatedSales)}</dd></div>
+              <div><dt>价格</dt><dd>{selectedSummary.candidate.price == null ? '—' : `$${formatResearchNumber(selectedSummary.candidate.price)}`}</dd></div>
+              <div><dt>评分</dt><dd>{formatResearchNumber(selectedSummary.candidate.rating)}</dd></div>
+              <div><dt>评论数</dt><dd>{formatResearchNumber(selectedSummary.candidate.reviews)}</dd></div>
+              <div><dt>Listing Age</dt><dd>{selectedSummary.candidate.listingAgeDays == null ? '—' : `${formatResearchNumber(selectedSummary.candidate.listingAgeDays)} 天`}</dd></div>
+            </dl>
+            <div className="pr-auto-candidate-direction"><strong>下一步建议</strong><span>{selectedSummary.nextStep}</span></div>
+          </aside>
+        </section>}
+      </>}
     </div>
   )
 }
@@ -150,16 +281,17 @@ const MarketPanel = ({ job }: { job: ResearchJob }) => {
 }
 
 const ReviewsPanel = ({ job }: { job: ResearchJob }) => {
-  const reviews = job.evidence.reviews
-  if (reviews.painPoints.length === 0) return <EmptyEvidence>本次分析了 {reviews.sampled} 条评论，但未形成稳定的差评痛点主题。</EmptyEvidence>
+  const reviews = currentReviewEvidence(job)
+  const painPoints = selectStrongPainPoints(reviews)
+  if (painPoints.length === 0) return <EmptyEvidence>本次分析了 {reviews.sampled} 条评论，其中低星评论 {reviews.lowStarCount} 条，但去重后未形成稳定的高频低星痛点。</EmptyEvidence>
   return (
     <div className="pr-auto-pain-list">
-      <p className="pr-auto-panel-summary">评论样本 {reviews.sampled} 条，其中低星评论 {reviews.lowStarCount} 条。</p>
-      {reviews.painPoints.map((pain) => (
+      <p className="pr-auto-panel-summary">评论样本 {reviews.sampled} 条，其中低星评论 {reviews.lowStarCount} 条；形成 {painPoints.length} 个可验证的高频低星痛点。</p>
+      {painPoints.map((pain) => (
         <article className="pr-auto-pain" key={pain.id}>
-          <div><h3>{pain.label}</h3><small>{pain.count} 条 · {pain.asinCount} 个 ASIN · 低星占比 {formatResearchRatio(pain.lowStarShare)}</small></div>
+          <div><h3>{pain.label}</h3><small>{pain.count} 条主题命中 · 其中 {pain.lowStarCount ?? Math.round(pain.count * pain.lowStarShare)} 条低星 · {pain.asinCount} 个 ASIN · 低星占比 {formatResearchRatio(pain.lowStarShare)}</small></div>
           <div>
-            {pain.excerpts.length > 0 ? <blockquote>{pain.excerpts.slice(0, 3).map((excerpt) => <p key={excerpt}>“{excerpt}”</p>)}</blockquote> : <p>没有可展示的评论摘录。</p>}
+            {pain.excerpts.length > 0 ? <blockquote>{pain.excerpts.slice(0, 3).map((excerpt) => <p key={excerpt}>低星原文：“{excerpt}”</p>)}</blockquote> : <p>没有可展示的低星评论摘录。</p>}
             <strong>建议验证：{pain.direction}</strong>
             <small>平均评分 {formatResearchNumber(pain.averageStar)} · 变体 {pain.variations.length > 0 ? pain.variations.join('、') : '—'}</small>
           </div>
@@ -210,29 +342,116 @@ export const ResearchEvidenceReport = ({ job, onRestart }: ResearchEvidenceRepor
   const [activeTab, setActiveTab] = useState<EvidenceTab>('overview')
   const tabIdPrefix = useId()
   const decision = job.decision
+  const noCandidateOutcome = job.stages.discovery.status === 'complete' && job.evidence.candidates.length === 0
+  const discoveryOutput = job.stages.discovery.output as Partial<{ fallbackTriggered: boolean }> | null
   const degradedStages = (Object.keys(job.stages) as Array<keyof typeof job.stages>)
-    .filter((stageId) => ['partial', 'failed', 'skipped'].includes(job.stages[stageId].status))
+    .filter((stageId) => {
+      const status = job.stages[stageId].status
+      if (status === 'partial' || status === 'failed') return true
+      return status === 'skipped' && !noCandidateOutcome
+    })
   const primaryError = primaryResearchError(job)
   const primaryExplanation = primaryError ? researchErrorExplanation(primaryError.error) : null
+  const snapshot = buildFinalDecisionSnapshot(job)
+  const finalDecisionList = buildFinalDecisionList(job)
+  const topCandidateDecision = finalDecisionList[0]
   const title = primaryError && primaryExplanation
     ? `${STAGE_LABELS[primaryError.stageId]}失败：${primaryExplanation.reason}`
-    : degradedStages.length > 0
-      ? `${degradedStages.length} 个阶段存在执行缺口，当前结论仅供参考`
-      : decision?.reasons[0] ?? (decision ? `本次研究建议“${decision.label}”` : '本次任务未生成可用结论')
+    : noCandidateOutcome
+      ? discoveryOutput?.fallbackTriggered
+        ? '已完成两档类目扫描，本轮仍未发现可用 ASIN 候选'
+        : '已完成类目扫描，本轮未发现可用 ASIN 候选'
+      : degradedStages.length > 0
+        ? '部分证据未返回，请优先补充对应 ASIN 的研究阶段'
+        : finalDecisionList.length > 0
+          ? '每个 ASIN 独立判断，不对整个类目下结论'
+          : '本轮没有生成可用的 ASIN 候选'
 
   return (
-    <section className="pr-auto-report-grid" aria-live="polite">
-      <article className={`pr-auto-card pr-auto-decision is-${decision?.verdict.toLowerCase() ?? 'failed'}`}>
-        <span className="pr-auto-kicker">FINAL DECISION</span>
-        <div className="pr-auto-decision-label">{decision ? decision.label : '结论不可用'}</div>
+    <>
+      <section className="pr-auto-completed-stages" id="stages" aria-label="研究阶段">
+        {RESEARCH_STAGE_IDS.map((stageId) => {
+          const stage = job.stages[stageId]
+          const stageCount = stage.total > 0 ? `${stage.completed} / ${stage.total}` : stage.status === 'complete' ? '完成' : STATUS_LABELS[stage.status]
+          return <button className={`pr-auto-completed-stage is-${stage.status}`} key={stageId} onClick={() => setActiveTab('execution')} type="button"><span>{STATUS_SYMBOLS[stage.status]}</span><strong>{STAGE_LABELS[stageId]}</strong><small>{stageCount} · {STATUS_LABELS[stage.status]}</small></button>
+        })}
+      </section>
+      <section className="pr-auto-report-grid" aria-live="polite">
+      <article className={`pr-auto-card pr-auto-decision is-${topCandidateDecision?.priority === '重点验证' ? 'focus' : topCandidateDecision?.priority === '待补充研究' ? 'pending' : 'defer'}`}>
+        <span className="pr-auto-kicker">CANDIDATE RESEARCH RESULTS</span>
+        <div className="pr-auto-decision-label">本轮 ASIN 候选结果</div>
         <h3>{title}</h3>
-        <p>{decision?.reasons.slice(1).join('；') || decision?.boundary || '请查看执行详情，确认失败阶段和错误原因。'}</p>
+        <p>{noCandidateOutcome
+          ? discoveryOutput?.fallbackTriggered
+            ? '完整叶子类目路径已被正常接受。系统先执行机会筛选，空结果后自动移除销量、价格、BSR 和卖家数上限再扫描；两档均无有效 ASIN，因此后续按 ASIN 研究阶段无需执行。'
+            : '完整叶子类目路径已被正常接受，但本轮没有返回有效 ASIN，因此后续按 ASIN 研究阶段无需执行。'
+          : primaryError || degradedStages.length > 0
+            ? topCandidateDecision?.nextStep ?? decision?.boundary ?? '请查看执行详情，确认失败阶段和错误原因。'
+            : '本次只反映研究时间点发现的具体商品。Top 3 已进入深度研究；其余候选保留在池中，待后续补充证据。类目新品需要在下一轮运行时重新发现。'}</p>
         <div className="pr-auto-decision-meta">
-          <span>可信度 {decision ? `${decision.scores.confidence}%` : '—'}</span>
+          <span>候选级证据独立记录</span>
           <span>{job.status === 'partial' ? '任务部分完成' : job.status === 'failed' ? '任务失败' : '任务完成'}</span>
           <span>{job.input.market} · {job.input.categoryLabel ?? job.input.categoryId}</span>
+          <span>{job.evidence.candidates.length} 个候选 / {filterResearchCandidates(job.evidence.candidates, 'deep').length} 个深度研究</span>
           <span>{job.completedAt == null ? '完成时间 —' : `完成于 ${new Date(job.completedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`}</span>
         </div>
+        <section className="pr-auto-qualified-asins" aria-label="本轮 ASIN 研究清单">
+          <header>
+            <div><span>RESEARCHED ASINS</span><strong>按发现分排序，逐个显示 ASIN 级判断</strong></div>
+            <small>共 {finalDecisionList.length} 个</small>
+          </header>
+          {finalDecisionList.length > 0 ? <div className="pr-auto-qualified-asin-list">
+            {finalDecisionList.map((item) => {
+              const priorityClass = item.priority === '重点验证' ? 'focus' : item.priority === '待补充研究' ? 'pending' : 'defer'
+              return (
+                <article className={`is-${priorityClass}`} key={item.asin}>
+                  <div className="pr-auto-qualified-asin-main">
+                    <strong>{item.asin}</strong>
+                    <span>排名 #{item.rank} · 发现分 {formatResearchNumber(item.candidate.discoveryScore)} · 可信度 {item.scores.confidence}%</span>
+                  </div>
+                  <span className={`pr-auto-priority is-${priorityClass}`}>{item.priority}</span>
+                  <p>{item.nextStep}</p>
+                </article>
+              )
+            })}
+          </div> : <p className="pr-auto-qualified-empty">{noCandidateOutcome
+            ? '本轮没有获得有效 ASIN。候选发现已经正常完成，这不代表类目路径格式错误。'
+            : '本轮没有获得真实 ASIN 候选，请先查看候选发现阶段的请求记录和错误原因。'}</p>}
+        </section>
+        <section className="pr-auto-decision-pains" aria-label="高频低星痛点摘要">
+          <header>
+            <div><span>REVIEW SIGNALS</span><strong>具体是哪几个痛点</strong></div>
+            <button type="button" onClick={() => setActiveTab('reviews')}>查看评论摘录与痛点详情 →</button>
+          </header>
+          {snapshot.painPoints.length > 0 ? <div className="pr-auto-decision-pain-list">
+            {snapshot.painPoints.map((pain, index) => (
+              <article key={pain.id}>
+                <b>0{index + 1}</b>
+                <div>
+                  <h4>{pain.label}</h4>
+                  <p>{pain.count} 条主题命中 · 其中 {pain.lowStarCount ?? Math.round(pain.count * pain.lowStarShare)} 条低星 · 涉及 {pain.asinCount} 个 ASIN · 低星占比 {formatResearchRatio(pain.lowStarShare)} · 证据强度 {painPointEvidenceStrength(pain)} · 平均 {formatResearchNumber(pain.averageStar)} 星</p>
+                  {pain.excerpts.length > 0 ? <div className="pr-auto-decision-excerpts">
+                    <span>代表性低星评论原文（仅 1–3 星）</span>
+                    <blockquote>{pain.excerpts.slice(0, 2).map((excerpt) => <p key={excerpt}>“{excerpt}”</p>)}</blockquote>
+                  </div> : <small className="pr-auto-decision-no-excerpt">该主题有计数证据，但上游未保留可展示的评论原文。</small>}
+                  <strong>建议验证：{pain.direction}</strong>
+                </div>
+              </article>
+            ))}
+          </div> : <p className="pr-auto-decision-empty">本次评论样本尚未形成稳定的高频低星主题。</p>}
+        </section>
+        <section className="pr-auto-decision-metrics" aria-label="关键研究数据">
+          <header><span>KEY METRICS</span><strong>本次决策依据的重要数据</strong></header>
+          <div>
+            {snapshot.metrics.map((metric) => (
+              <article key={metric.id}>
+                <span>{metric.label}</span>
+                <strong>{metric.value}</strong>
+                <small>{metric.detail}</small>
+              </article>
+            ))}
+          </div>
+        </section>
         {degradedStages.length > 0 && <div className="pr-auto-result-warning" role="alert">
           <strong>{primaryError ? `首个根因：${STAGE_LABELS[primaryError.stageId]}` : '这不是一次完整成功的研究'}</strong>
           {primaryError && primaryExplanation
@@ -243,14 +462,21 @@ export const ResearchEvidenceReport = ({ job, onRestart }: ResearchEvidenceRepor
         <button className="pr-auto-secondary" type="button" onClick={onRestart}>重新运行研究</button>
       </article>
       <aside className="pr-auto-card pr-auto-score-card" aria-label="四维研究评分">
-        <h3>四维研究评分</h3>
-        <Score label="需求质量 Demand" value={decision?.scores.demand ?? null} />
-        <Score label="进入条件 Entry" value={decision?.scores.entry ?? null} />
-        <Score label="差异化空间" value={decision?.scores.differentiation ?? null} />
-        <Score label="证据可信度" value={decision?.scores.confidence ?? null} />
+        <h3>候选筛选维度</h3>
+        <Score label="需求质量 Demand" value={topCandidateDecision?.scores.demand ?? null} />
+        <Score label="进入条件 Entry" value={topCandidateDecision?.scores.entry ?? null} />
+        <Score label="差异化空间" value={topCandidateDecision?.scores.differentiation ?? null} />
+        <Score label="证据可信度" value={topCandidateDecision?.scores.confidence ?? null} />
       </aside>
+      <section className="pr-auto-card pr-auto-report-candidates" id="candidates" aria-labelledby={`${tabIdPrefix}-candidate-title`}>
+        <header className="pr-auto-report-candidate-head">
+          <div><span className="pr-auto-kicker">CANDIDATE RESEARCH RESULTS</span><h3 id={`${tabIdPrefix}-candidate-title`}>本轮 ASIN 候选</h3><p>按发现分和预估月销量排序；Top 3 进入深度研究，其余候选保留用于横向对比。</p></div>
+          <span className="pr-auto-report-candidate-count">{job.evidence.candidates.length} 个候选</span>
+        </header>
+        <CandidatesPanel job={job} />
+      </section>
 
-      <section className="pr-auto-card pr-auto-evidence-shell">
+      <section className="pr-auto-card pr-auto-evidence-shell" id="evidence">
         <div className="pr-auto-evidence-tabs" role="tablist" aria-label="研究证据">
           {EVIDENCE_TABS.map((tab) => (
             <button
@@ -282,5 +508,6 @@ export const ResearchEvidenceReport = ({ job, onRestart }: ResearchEvidenceRepor
       </section>
       {decision?.boundary && <p className="pr-auto-boundary">{decision.boundary}</p>}
     </section>
+    </>
   )
 }

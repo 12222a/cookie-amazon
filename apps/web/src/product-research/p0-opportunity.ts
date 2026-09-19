@@ -1,38 +1,49 @@
-import type {
-  SellerSpriteProductSelectionInput,
-  SellerSpriteProductSelectionItem,
-  SellerSpriteReviewCommentsData,
-  SellerSpriteReviewCommentsInput,
+import {
+  isSellerSpriteLeafNodeIdPath,
+  type SellerSpriteProductSelectionInput,
+  type SellerSpriteProductSelectionItem,
+  type SellerSpriteReviewCommentsData,
+  type SellerSpriteReviewCommentsInput,
 } from '@cookie-amazon/protocol'
 
 export const P0_REVIEW_CANDIDATE_LIMIT = 3
 
+export type P0ProductSelectionProfile = 'strict' | 'expanded'
+
 export const buildP0ProductSelectionInput = (
   market: string,
   categoryId: string,
-): SellerSpriteProductSelectionInput => ({
-  market,
-  page: 1,
-  size: 60,
-  symbolFlag: false,
-  monthName: 'bsr_sales_nearly',
-  selectType: '2',
-  filterSub: false,
-  weightUnit: 'g',
-  order: { field: 'total_units', desc: true },
-  productTags: [],
-  nodeIdPaths: [categoryId],
-  sellerTypes: [],
-  eligibility: [],
-  pkgDimensionTypeList: [],
-  sellerNationList: [],
-  minRanking: '10000',
-  maxRanking: '50000',
-  maxSales: '300',
-  maxPrice: '30',
-  maxSellers: '1',
-  lowPrice: 'N',
-})
+  page = 1,
+  profile: P0ProductSelectionProfile = 'strict',
+): SellerSpriteProductSelectionInput => {
+  const nodeIdPath = categoryId.trim()
+  if (!isSellerSpriteLeafNodeIdPath(nodeIdPath)) throw new Error('INVALID_LEAF_CATEGORY')
+  if (!Number.isInteger(page) || page < 1) throw new Error('INVALID_PRODUCT_PAGE')
+  const expanded = profile === 'expanded'
+  return {
+    market,
+    page,
+    size: 60,
+    symbolFlag: false,
+    monthName: 'bsr_sales_nearly',
+    selectType: '2',
+    filterSub: false,
+    weightUnit: 'g',
+    order: { field: 'total_units', desc: true },
+    productTags: [],
+    nodeIdPaths: [nodeIdPath],
+    sellerTypes: [],
+    eligibility: [],
+    pkgDimensionTypeList: [],
+    sellerNationList: [],
+    minRanking: expanded ? '' : '10000',
+    maxRanking: expanded ? '' : '50000',
+    maxSales: expanded ? '' : '300',
+    maxPrice: expanded ? '' : '30',
+    maxSellers: expanded ? '' : '1',
+    lowPrice: 'N',
+  }
+}
 
 export const buildP0ReviewCommentsInput = (
   asin: string,

@@ -7,7 +7,9 @@ import {
   type RemoteConfig,
 } from '@cookie-amazon/remote-config'
 
-interface Env {
+import { handleFashionApi, isFashionApiPath, runScheduledGeneration, type FashionEnv } from './fashion-api'
+
+interface Env extends FashionEnv {
   ASSETS: Fetcher
   EXTENSION_CONFIG: KVNamespace
   CONFIG_ENVIRONMENT?: string
@@ -76,14 +78,18 @@ const hasForbiddenCredentialHeaders = (request: Request): boolean =>
   || request.headers.has('x-csrf-token')
 
 export default {
+  async scheduled(_controller: ScheduledController, env: Env, _context: ExecutionContext): Promise<void> {
+    await runScheduledGeneration(env)
+  },
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
-    if (url.pathname === '/api/health') return json({ ok: true, service: 'config-worker', phase: 2 })
+    if (url.pathname === '/api/health') return json({ ok: true, service: 'cookie-amazon-business-api', sharedLibrary: true, collaboration: true })
     if (url.pathname === CONFIG_PATH) {
       if (request.method !== 'GET') return json({ ok: false, error: 'METHOD_NOT_ALLOWED' }, 405)
       if (hasForbiddenCredentialHeaders(request)) return json({ ok: false, error: 'CREDENTIAL_HEADERS_FORBIDDEN' }, 400)
       return configResponse(await getConfigCache(env).load(), request)
     }
+    if (isFashionApiPath(url.pathname)) return handleFashionApi(request, env)
     if (request.method !== 'GET') return json({ ok: false, error: 'METHOD_NOT_ALLOWED' }, 405)
     return env.ASSETS.fetch(request)
   },
