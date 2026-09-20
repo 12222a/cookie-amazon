@@ -226,17 +226,19 @@ const renderByType = (document: Document, type: AnalysisViewType, evidence: Anal
  * 数据抽屉的分区：与内嵌视图同一套组件、同一份证据包，因此两处不可能出现不同的数字。
  *
  * 分区集合由证据包决定，未知类型在 normalizeAnalysisViewSpec 里就被丢掉，这里拿到的
- * 只会是固定类型。研究记录分区不在这里渲染——那是抽屉里可写的表单，由面板自己维护。
+ * 只会是固定类型。研究记录默认不在这里渲染——侧边栏把那一格做成可写的表单，由面板自己维护；
+ * 只读的一侧（页面内浮层）用 includeRecord 要回同一个组件渲染的记录，两处显示同一份结论。
  */
 export const renderDrawerPartitions = (
   document: Document,
   container: HTMLElement,
   evidence: AnalysisEvidence,
+  options: { includeRecord?: boolean } = {},
 ): void => {
   // 逐个请求全部固定类型，由同一份可用性规则筛掉证据里没有的：抽屉与回答里的内嵌视图
   // 因此对「哪些类型可用」只有一套判断，未读到的数据不会在抽屉里占一个空分区。
   const types = normalizeAnalysisViewSpec({ schemaVersion: ANALYSIS_SCHEMA_VERSION, views: [...ANALYSIS_VIEW_TYPES] }, evidence).views
-    .filter((type) => type !== 'research-record')
+    .filter((type) => type !== 'research-record' || options.includeRecord === true)
   const views = types.map((type) => renderOne(document, type, evidence)).filter((view): view is HTMLElement => view !== null)
   container.replaceChildren(...views)
 }
@@ -251,6 +253,27 @@ const ENTRY_TYPES: readonly AnalysisViewType[] = ['keyword-table']
 const entryLabel = (type: AnalysisViewType, evidence: AnalysisEvidence): string => type === 'keyword-table'
   ? '查看' + viewTitle[type] + '（' + (evidence.keyword?.rows.length ?? 0) + ' 条）'
   : '查看' + viewTitle[type]
+
+/**
+ * 把抽屉里的某个分区带到眼前：按视图类型找到它，聚焦并滚进视野。
+ *
+ * 「哪个入口对应哪个分区」只有这一处映射：分区身份就是视图类型，由 renderDrawerPartitions 产出，
+ * 所以这里只按 dataset.view 查找，不新增第二套对应表。两壳各自写一遍，就会各自漂移出
+ * 「找不到时怎么办」的第二套语义。
+ *
+ * 返回分区在不在。找不到时怎么收场由调用方决定：侧边栏会说明「这份数据已经不是提问时的了」
+ * 并滚到抽屉本身，浮层展开抽屉本身就是交代——两种都是「点了要有反应」，不该一边静默一边提示。
+ */
+export const revealDrawerPartition = (container: HTMLElement, view: AnalysisViewType): boolean => {
+  const partition = [...container.children]
+    .find((child) => (child as HTMLElement).dataset.view === view) as HTMLElement | undefined
+  if (partition === undefined) return false
+  // 调用方负责先展开抽屉：收起状态下分区没有布局，滚到它身上等于没滚。
+  partition.tabIndex = -1
+  partition.focus({ preventScroll: true })
+  partition.scrollIntoView({ block: 'nearest' })
+  return true
+}
 
 /**
  * 气泡里的内嵌视图：摘要类就地渲染，宽表退成一个指向数据抽屉的入口。

@@ -16,9 +16,6 @@
 .ca-card .ca-head { cursor: grab; }
 .ca-asin { color: var(--ca-ink); font-weight: 600; }
 .ca-meta { color: var(--ca-ink-muted); font-size: var(--ca-font-xs); margin-left: auto; }
-/* 浮层窄，气泡靠外的那道缩进在这里会让可读宽度更窄，所以少缩一点；其余尺寸仍在共享来源里。 */
-.ca-card .panel-bubble-question { margin-left: var(--ca-space-14); }
-.ca-card .panel-bubble-answer { margin-right: 0; }
 .ca-actions { display: flex; gap: var(--ca-space-6); margin-top: var(--ca-space-10); }
 .ca-actions button { flex: 1; padding: var(--ca-space-5) var(--ca-space-8); border: 1px solid var(--ca-line-control); background: transparent;
   color: var(--ca-ink); font: inherit; cursor: pointer; }

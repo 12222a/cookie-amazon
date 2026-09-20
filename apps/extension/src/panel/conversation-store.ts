@@ -1,5 +1,6 @@
 import { isAnalysisAskResponse, type AnalysisAskSuccess, type AnalysisEvidence } from '@cookie-amazon/protocol'
 import type { StorageArea } from '../remote-config'
+import type { ConversationTurn } from './conversation-view'
 
 /**
  * 对话快照的存放处，是「两套外壳显示同一条对话」的交接处（ADR-0004、#22）。
@@ -14,15 +15,8 @@ import type { StorageArea } from '../remote-config'
  */
 export const CONVERSATION_STORAGE_KEY = 'conversation:v1'
 
-/**
- * 一轮问答。回答里留着**当轮**的证据包：回答里的内嵌视图按提问时的数据渲染，
- * 之后又读了词位或换了研究记录，也不该改写已经说出口的那句话。
- */
-export type ConversationTurn = {
-  question: string
-  /** 一轮失败时留着 null：提问还在对话串里，与侧边栏那条气泡一致。 */
-  answer: { response: AnalysisAskSuccess; evidence: AnalysisEvidence } | null
-}
+/** 一轮问答的形状由渲染层定义：发布出去的就是对话串本身，两处各定义一份迟早会分叉。 */
+export type { ConversationTurn } from './conversation-view'
 
 export type PublishedConversation = {
   /** 快照属于哪个分析对象。与浮层当前对象不符时不予显示，绝不把上一个对象的问答留在页面上。 */
@@ -36,15 +30,23 @@ export type PublishedConversation = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-const sameTarget = (left: { asin: string; market: string }, right: { asin: string; market: string }): boolean =>
-  left.asin === right.asin && left.market.toUpperCase() === right.market.toUpperCase()
+/**
+ * 一份快照属于哪个分析对象。
+ *
+ * 「同一个对象」只有这一处判断：发布端与读取端各写一遍大小写归一，就会出现
+ * 一侧认、另一侧不认的情况——浮层要么显示上一个对象的问答，要么什么都不显示。
+ */
+export const sameAnalysisTarget = (
+  left: { asin: string; market: string },
+  right: { asin: string; market: string },
+): boolean => left.asin === right.asin && left.market.toUpperCase() === right.market.toUpperCase()
 
 /** 证据包必须是这个对象的：别的对象的证据包混进来，就是屏幕上两个不同的东西。 */
 const isEvidenceOf = (value: unknown, target: { asin: string; market: string }): value is AnalysisEvidence =>
   isRecord(value)
   && typeof value.asin === 'string'
   && typeof value.market === 'string'
-  && sameTarget({ asin: value.asin, market: value.market }, target)
+  && sameAnalysisTarget({ asin: value.asin, market: value.market }, target)
 
 /**
  * 回答的校验交给协议自己的校验函数，不在这里重写一遍：

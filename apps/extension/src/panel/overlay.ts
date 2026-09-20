@@ -1,11 +1,12 @@
 import type { AnalysisViewType } from '@cookie-amazon/protocol'
 import type { AnalysisObject } from '../analysis-object'
+import { describeAnalysisObject } from './panel-state'
 import type { OverlayMode, OverlayPosition } from './overlay-state'
 import { clampOverlayPosition } from './overlay-state'
 import { renderConversationThread } from './conversation-view'
-import { renderDrawerPartitions } from './analysis-view'
+import { renderDrawerPartitions, revealDrawerPartition } from './analysis-view'
 import { buildAnalysisEvidence } from './analysis-evidence'
-import type { PublishedConversation } from './conversation-store'
+import { sameAnalysisTarget, type PublishedConversation } from './conversation-store'
 // 浮层在 shadow DOM 里，拿不到侧边栏那份外部样式，所以这里读同一份 CSS 文本再内联进去。
 // shell-style.css 是两套外壳共用的配色、字号与间距；overlay.css 只是浮层自己的布局。
 import shellStyle from './shell-style.css?raw'
@@ -53,9 +54,7 @@ const conversationOf = (
   snapshot: PublishedConversation | null,
   object: AnalysisObject,
 ): PublishedConversation | null =>
-  snapshot !== null && snapshot.asin === object.asin && snapshot.market.toUpperCase() === object.market.toUpperCase()
-    ? snapshot
-    : null
+  snapshot !== null && sameAnalysisTarget(snapshot, object) ? snapshot : null
 
 /**
  * 把浮层挂到页面上，内容放进 Shadow DOM。
@@ -86,7 +85,7 @@ export const mountOverlay = (
 
     // 对话串与抽屉都用共享来源里的类名：渲染的是同一批节点，样式也只该有一份。
     const thread = element(document, 'div', 'panel-thread')
-    // 数据抽屉：与侧边栏同样默认收起，展开状态只活在这次会话里。
+    // 数据抽屉：与侧边栏同样默认收起，展开状态只活在这次对话里。
     const drawer = element(document, 'section', 'panel-drawer')
     const drawerToggle = element(document, 'button', 'panel-drawer-toggle', '数据抽屉')
     drawerToggle.type = 'button'
@@ -118,30 +117,27 @@ export const mountOverlay = (
       place()
     }
 
+    /**
+     * 抽屉的开合只有这一个来源：内容与 aria 状态都由它落下去。
+     * 三处各写一遍 hidden 与 aria-expanded，迟早有一处忘记跟上——那正是「收起收不起来」的来源。
+     */
     let open = false
-    drawerToggle.addEventListener('click', () => {
-      open = !open
-      drawerViews.hidden = !open
-      drawerToggle.setAttribute('aria-expanded', open ? 'true' : 'false')
-    })
+    const setDrawerOpen = (next: boolean): void => {
+      open = next
+      drawerViews.hidden = !next
+      drawerToggle.setAttribute('aria-expanded', next ? 'true' : 'false')
+    }
+    drawerToggle.addEventListener('click', () => { setDrawerOpen(!open) })
 
     /**
      * 气泡里的内嵌视图入口：展开抽屉并把对应分区带到眼前。
      *
-     * 与侧边栏同一套语义——分区身份就是视图类型（两侧的分区都由 renderDrawerPartitions 产出），
-     * 所以这里只在抽屉里按 dataset.view 找那一个分区，不新增第二套「哪个入口对应哪个分区」的映射。
+     * 展开与定位都走与侧边栏同一条路（revealDrawerPartition）：分区身份就是视图类型，
+     * 两侧的分区都由 renderDrawerPartitions 产出，所以不存在第二套对应表。
      */
     const openDrawerAt = (view: AnalysisViewType): void => {
-      open = true
-      drawerViews.hidden = false
-      drawerToggle.setAttribute('aria-expanded', 'true')
-      const partition = [...drawerViews.children]
-        .find((child) => (child as HTMLElement).dataset.view === view) as HTMLElement | undefined
-      if (partition === undefined) return
-      // 先展开再定位：收起状态下分区没有布局，滚到它身上等于没滚。
-      partition.tabIndex = -1
-      partition.focus({ preventScroll: true })
-      partition.scrollIntoView({ block: 'nearest' })
+      setDrawerOpen(true)
+      revealDrawerPartition(drawerViews, view)
     }
 
     pin.addEventListener('click', () => {
@@ -196,17 +192,17 @@ export const mountOverlay = (
         thread.hidden = isPill
         drawer.hidden = isPill
         actions.hidden = isPill
-        asin.textContent = object.asin
-        meta.textContent = isPill ? '' : object.market
+        // 站点与来源仍是用户判断「我现在看的是哪来的对象」的依据，收起时才让位给药丸。
+        const header = describeAnalysisObject(object)
+        asin.textContent = header.kind === 'ready' ? header.asin : object.asin
+        meta.textContent = isPill || header.kind !== 'ready' ? '' : header.market + ' · ' + header.sourceLabel
         // 收起态就是一颗药丸：对话串不留在 DOM 里，展开时再按当时的数据重建一遍。
         if (isPill) {
           thread.replaceChildren()
           drawerViews.replaceChildren()
           // 展开状态也不跨收起保留：药丸上那点位置藏不住一个展开的抽屉，
           // 再展开时回到默认收起，与侧边栏「抽屉默认收起」的语义一致。
-          open = false
-          drawerViews.hidden = true
-          drawerToggle.setAttribute('aria-expanded', 'false')
+          setDrawerOpen(false)
         } else {
           /**
            * 读发布的那一份要兜住异常：它来自扩展存储，浮层所在的页面必须照常可用。
@@ -220,7 +216,13 @@ export const mountOverlay = (
            * 用同一个 buildAnalysisEvidence 就当前对象现建一份——同一个纯函数、同一个对象，
            * 得到的还是抽屉里那个前台信息分区，不会多出第二套数字。
            */
-          renderDrawerPartitions(document, drawerViews, snapshot?.evidence ?? buildAnalysisEvidence({ object }))
+          renderDrawerPartitions(
+            document,
+            drawerViews,
+            snapshot?.evidence ?? buildAnalysisEvidence({ object }),
+            // 浮层不写研究记录，所以把那一格也要回来：两处的抽屉显示同一批分区。
+            { includeRecord: true },
+          )
         }
         clampInView()
       },

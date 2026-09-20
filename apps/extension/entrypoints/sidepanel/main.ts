@@ -3,7 +3,7 @@ import { AnalysisObjectStore, ANALYSIS_OBJECT_STORAGE_KEY } from '../../src/anal
 import { createAnalysisObject, DEFAULT_MARKET, type AnalysisObject } from '../../src/analysis-object'
 import { askAnalysis, type AnalysisResult } from '../../src/panel/analysis-client'
 import { buildAnalysisEvidence } from '../../src/panel/analysis-evidence'
-import { renderDrawerPartitions } from '../../src/panel/analysis-view'
+import { renderDrawerPartitions, revealDrawerPartition } from '../../src/panel/analysis-view'
 import { renderConversationThread } from '../../src/panel/conversation-view'
 import { ConversationStore, CONVERSATION_STORAGE_KEY } from '../../src/panel/conversation-store'
 import { describeAnalysisObject } from '../../src/panel/panel-state'
@@ -184,27 +184,16 @@ const setDrawerOpen = (open: boolean): void => {
 /**
  * 从气泡里的内嵌视图入口打开抽屉并定位到对应分区。
  *
- * 定位就是分区身份本身（视图类型）：抽屉的分区与内嵌视图由同一份类型表生成，
- * 所以这里只要把焦点摆到那个分区上，不新增第二套「哪个入口对应哪个分区」的映射。
- *
- * 抽屉现在没有这个分区时（这个入口指的是提问时的数据，那之后数据被换掉了），
- * 退到抽屉本身并把这一点告诉用户——点下去毫无反应比落到别处更让人困惑。
+ * 查找与定位走共享的 revealDrawerPartition（页面内浮层用的是同一条路径），
+ * 这里只补上侧边栏特有的一步：抽屉现在没有这个分区时（入口指的是提问时的数据，
+ * 那之后数据被换掉了），退到抽屉本身并把这一点告诉用户——点下去毫无反应比落到别处更让人困惑。
  */
 const openDrawerAt = (view: AnalysisViewType): void => {
   setDrawerOpen(true)
-  // 分区身份就是视图类型：气泡入口与抽屉分区都由 renderDrawerPartitions 这一条路径产出，所以只在这一处找。
-  const partition = drawerViewsElement === null
-    ? undefined
-    : [...drawerViewsElement.children].find((child) => (child as HTMLElement).dataset.view === view) as HTMLElement | undefined
-  if (partition === undefined) {
+  if (drawerViewsElement === null || !revealDrawerPartition(drawerViewsElement, view)) {
     setAnalysisStatus('抽屉里现在没有这个分区：这份数据已经不是提问时的了。')
     drawerElement?.scrollIntoView({ block: 'start' })
-    return
   }
-  // 先展开再定位：收起状态下分区没有布局，滚动到它身上等于没滚。
-  partition.tabIndex = -1
-  partition.focus({ preventScroll: true })
-  partition.scrollIntoView({ block: 'start' })
 }
 
 /**
@@ -254,8 +243,8 @@ const element = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: stri
  * 发布的是**同一个对象、同一条对话串、同一份证据包**：浮层不另取数、也不另问一次，
  * 所以屏幕上不会出现两个版本。浮层读不到或读坏了就什么都不显示，功能仍在侧边栏可用。
  *
- * 主题变了才算更新：每问一句都写一次存储本可以，但切对象时那一份要先清掉，
- * 否则浮层会在读完新对象之前先显示上一个对象的问答。
+ * 每次对话或证据包变化就写一次：浮层读到的永远是侧边栏此刻显示的那一条。
+ * 切对象时这里会连同新对象一起写下，不会留上一个对象的问答给浮层。
  */
 const publishConversation = (): void => {
   if (current === null) {

@@ -110,6 +110,9 @@ describe('浮层里的对话串', () => {
     handle!.render(object, 'card')
     expect(bubbles(shadow, 'question')).toHaveLength(0)
     expect(shadow.textContent).toContain('B07Z82895W')
+    // 来源与站点仍然写着：这是用户判断「我现在看的是哪来的对象」的依据，去掉它等于丢信息。
+    expect(shadow.textContent).toContain('US')
+    expect(shadow.textContent).toContain('搜索页选中')
   })
 
   it('发布的那一份读不出来时不崩、不影响页面，只是没有对话', () => {
@@ -158,6 +161,24 @@ describe('浮层里的数据抽屉', () => {
     drawerToggle(shadow).click()
     // 侧边栏发布时只读了前台信息，所以只有前台基础信息这一个分区。
     expect(partitions(shadow).map((node) => node.dataset.view)).toEqual(['object-summary'])
+  })
+
+  it('证据里有研究记录时，浮层的抽屉也带上它——两处的抽屉显示同一批分区', () => {
+    const withRecord = {
+      ...evidence,
+      record: { owner: 'Alice', status: 'verified' as const, summary: '自然位只在前 3 页，先观察', updatedAt: 1_700_000_000_000 },
+    }
+    const shadow = mount(() => ({
+      ...publish(),
+      evidence: withRecord,
+      turns: publish().turns.map((turn) => turn.answer === null ? turn : { ...turn, answer: { ...turn.answer, evidence: withRecord } }),
+    }))
+    handle!.render(object, 'card')
+    drawerToggle(shadow).click()
+    expect(partitions(shadow).map((node) => node.dataset.view)).toEqual(['object-summary', 'research-record'])
+    // 浮层不写记录，只把同组已经写下的结论显示出来——数据一致，可写的那份仍在侧边栏。
+    expect(shadow.textContent).toContain('自然位只在前 3 页，先观察')
+    expect(shadow.querySelector('[data-view=research-record] input, [data-view=research-record] textarea')).toBeNull()
   })
 
   it('抽屉显示的是发布的那份数据，因此与侧边栏是同一个数', () => {
@@ -215,6 +236,39 @@ describe('浮层里的数据抽屉', () => {
     expect(partitions(shadow).map((node) => node.dataset.view)).toContain('keyword-table')
     // 与侧边栏同一套语义：展开之后那个分区被带到眼前，用户不用自己在抽屉里找。
     expect(partitionScrolled(shadow, 'keyword-table')).toBe(true)
+  })
+
+  it('入口指向的分区已经不在抽屉里时，抽屉照样展开，用户不会点了没反应', () => {
+    // 回答那一轮读了词位（所以气泡里有词位表入口），但此后数据被换掉，
+    // 抽屉按当前证据重建时已经没有那个分区了——侧边栏会退到抽屉本身，浮层也要一样。
+    const asked = {
+      ...evidence,
+      keyword: {
+        summary: { totalKeywords: 1, rankedKeywords: 1, adKeywords: 0, sourceTypeCounts: [] },
+        rows: [{
+          keyword: '长尾词', natural: '第 1 页 · 12', ad: '—', naturalShare: '4.2%', adShare: '—',
+          types: '自然搜索词', trend: { kind: 'unavailable' as const },
+        }],
+      },
+    }
+    const shadow = mount(() => ({
+      ...publish(),
+      turns: publish().turns.map((turn) => turn.answer === null ? turn : {
+        ...turn,
+        answer: {
+          ...turn.answer,
+          evidence: asked,
+          response: { ...turn.answer.response, view: { schemaVersion: 1 as const, views: ['keyword-table' as const] } },
+        },
+      }),
+    }))
+    handle!.render(object, 'card')
+    const entry = shadow.querySelector<HTMLButtonElement>('[data-entry=keyword-table]')
+    expect(entry, '宽表仍退成入口').not.toBeNull()
+    entry!.click()
+    // 分区没了，但点击仍然把抽屉打开——与侧边栏一样，用户至少能看到抽屉本身。
+    expect(drawerBody(shadow).hidden).toBe(false)
+    expect(partitionScrolled(shadow, 'keyword-table')).toBe(false)
   })
 
   it('收起成药丸再展开时抽屉回到收起，且不留上一次展开的痕迹', () => {

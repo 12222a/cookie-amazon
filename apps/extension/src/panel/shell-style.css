@@ -173,7 +173,7 @@
   outline-offset: 1px;
 }
 
-/* 数据抽屉的外壳：两壳都是默认收起的一层，展开状态各活在自己的会话里。 */
+/* 数据抽屉的外壳：两壳都是默认收起的一层，展开状态各活在自己的这次对话里。 */
 .panel-drawer {
   display: flex;
   flex-direction: column;
