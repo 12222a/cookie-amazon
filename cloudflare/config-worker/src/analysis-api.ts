@@ -2,6 +2,7 @@ import {
   isAnalysisAskRequest,
   isAnalysisAskResponse,
   normalizeAnalysisViewSpec,
+  type AnalysisHistory,
   type AnalysisAskResponse,
   type AnalysisAnswer,
   type AnalysisCitation,
@@ -169,6 +170,18 @@ export const isInScopeText = (value: string): boolean => {
 
 export const forbiddenQuestion = (question: string): boolean => !isInScopeText(question)
 
+/**
+ * 历史里的每一段文字都要重新跑一遍越界判断。
+ *
+ * 上一轮的回答进了这一轮就是输入：不重跑的话，模型可以借自己的旧输出
+ * 把「利润 30%」这类越界内容带过输入侧检查——旧输出是它自己写的，它当然写得出。
+ * 任何一段不合规就整次请求拒绝，语义与问题本身越界一致（UNSUPPORTED_SCOPE）。
+ */
+export const forbiddenHistory = (history: AnalysisHistory): boolean => history.turns.some((turn) =>
+  !isInScopeText(turn.question)
+  || !turn.facts.every(isInScopeText)
+  || !turn.inferences.every(isInScopeText))
+
 const SYSTEM_PROMPT = '你是亚马逊美国站单个 ASIN 的研究助手。你只能根据用户提供的证据回答，不得补造数据。\n'
   + '把可直接从证据读出的内容放进 facts，把带有比较、原因、风险或下一步判断的内容放进 inferences。\n'
   + '每条回答至少引用一个真实的 citation ID；citation ID 必须逐字取自证据列表。数据缺失或冲突时，要在 facts 中明确写出“数据不足”或“字段冲突”，不要给确定结论。\n'
@@ -176,6 +189,18 @@ const SYSTEM_PROMPT = '你是亚马逊美国站单个 ASIN 的研究助手。你
   + '只输出 JSON，不要 Markdown。\n'
   + 'JSON 格式：{"facts":["..."],"inferences":["..."],"citations":["object.asin"],"views":["object-summary","keyword-table"]}。\n'
   + 'views 只能从 object-summary、keyword-summary、keyword-table、keyword-trend、review-summary、review-pain-points、research-record 中选择；它们只是固定组件的选择，不是代码。'
+
+const TRUNCATION_NOTICE = '更早的对话轮次因为轮数上限已被截断，你没有那部分上下文。用户的问题可能与更早的轮次有关，遇到指代不明时按当前证据包回答并说明这一点。'
+
+/**
+ * 历史只作为问答文本进 message：证据包副本、引用对象与视图规格一个都不带。
+ * 于是请求体不随轮数线性膨胀，逐轮越界校验也只需对文本跑。
+ */
+const historyMessages = (history: AnalysisHistory): Array<{ role: 'user'; content: string }> =>
+  history.turns.map((turn) => ({
+    role: 'user' as const,
+    content: JSON.stringify({ question: turn.question, facts: turn.facts, inferences: turn.inferences }),
+  }))
 
 const modelContent = (payload: unknown): string => {
   if (!isObject(payload) || !Array.isArray(payload.choices)) return ''
@@ -255,7 +280,7 @@ export const handleAnalysisApi = async (
     return json({ ok: false, error: 'BAD_REQUEST', message }, 400)
   }
   if (!isAnalysisAskRequest(parsed)) return json({ ok: false, error: 'BAD_REQUEST', message: '分析请求字段无效' }, 400)
-  if (forbiddenQuestion(parsed.question)) return json({ ok: false, error: 'UNSUPPORTED_SCOPE', message: '当前只能分析前台、词位、评论和研究记录，无法回答成本、利润或合规问题。' }, 422)
+  if (forbiddenQuestion(parsed.question) || forbiddenHistory(parsed.history)) return json({ ok: false, error: 'UNSUPPORTED_SCOPE', message: '当前只能分析前台、词位、评论和研究记录，无法回答成本、利润或合规问题。' }, 422)
   if (!env.ANALYSIS_API_BASE_URL || !env.ANALYSIS_API_KEY) return aiFailure('AI 分析服务尚未配置')
 
   const facts = buildFacts(parsed.evidence)
@@ -271,7 +296,8 @@ export const handleAnalysisApi = async (
         temperature: 0,
         max_tokens: 1_400,
         messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'system', content: parsed.history.truncated ? SYSTEM_PROMPT + '\n' + TRUNCATION_NOTICE : SYSTEM_PROMPT },
+          ...historyMessages(parsed.history),
           { role: 'user', content: JSON.stringify({ question: parsed.question, facts }) },
         ],
       }),

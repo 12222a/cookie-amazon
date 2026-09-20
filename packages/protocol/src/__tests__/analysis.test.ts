@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   isAnalysisAskRequest,
   normalizeAnalysisViewSpec,
+  toAnalysisHistory,
+  MAX_HISTORY_TEXT_TOTAL,
   type AnalysisEvidence,
 } from '../analysis'
 
@@ -52,16 +54,61 @@ describe('analysis protocol', () => {
 
   it('accepts a bounded evidence request and rejects mismatched ASIN evidence', () => {
     const request = {
-      schemaVersion: 1 as const,
+      schemaVersion: 2 as const,
       asin: 'B0ABCDEFGH',
       market: 'US',
       question: '这个 ASIN 的词位情况怎么样？',
       evidence: evidence(),
+      history: { truncated: false, turns: [] },
     }
     expect(isAnalysisAskRequest(request)).toBe(true)
     expect(isAnalysisAskRequest({ ...request, evidence: { ...request.evidence, reviews: { sampled: 10, total: 50000, coverage: 0.0002, lowStarCount: 2, sampleSufficient: true, painPoints: [] } } })).toBe(true)
     expect(isAnalysisAskRequest({ ...request, evidence: { ...request.evidence, asin: 'B0ZZZZZZZZ' } })).toBe(false)
     expect(isAnalysisAskRequest({ ...request, question: 'x'.repeat(1_001) })).toBe(false)
+  })
+
+  it('drops the oldest turns until the history fits both caps, and says it dropped them', () => {
+    const turn = (question: string, length = 4) => ({ question, facts: ['x'.repeat(length)], inferences: [] })
+    // 条数上限：第 4 轮进来时最老的一轮出局。
+    expect(toAnalysisHistory([turn('一'), turn('二'), turn('三'), turn('四')])).toEqual({
+      truncated: true,
+      turns: [turn('二'), turn('三'), turn('四')],
+    })
+    expect(toAnalysisHistory([turn('一'), turn('二'), turn('三')]).truncated).toBe(false)
+    // 总长上限：逐条都合法，合起来擦着上限也会把整条请求顶出字节上限，所以也要让位。
+    // 三轮看着都在条数上限内，但总长放不下：最老的那轮让位。
+    const heavy = turn('重', MAX_HISTORY_TEXT_TOTAL / 2)
+    expect(toAnalysisHistory([turn('一'), heavy, heavy]).turns).toEqual([heavy])
+    expect(toAnalysisHistory([turn('一'), heavy, heavy]).truncated).toBe(true)
+    // 单独一轮就超总长时不带它：带上就等于发一条注定被字节上限拒掉的请求。
+    expect(toAnalysisHistory([turn('一'), turn('重', MAX_HISTORY_TEXT_TOTAL)]).turns).toEqual([])
+  })
+
+  it('takes only bounded question and answer text as history, and rejects anything else', () => {
+    const request = {
+      schemaVersion: 2 as const,
+      asin: 'B0ABCDEFGH',
+      market: 'US',
+      question: '那长尾词呢？',
+      evidence: evidence(),
+      history: { truncated: false, turns: [] },
+    }
+    const turn = { question: '它主要靠广告撑着吗？', facts: ['广告位占比 20%。'], inferences: ['自然位是主要入口。'] }
+    expect(isAnalysisAskRequest({ ...request, history: { truncated: false, turns: [turn] } })).toBe(true)
+    // 契约版本升级：旧版本号与历史字段对不上，不能按新契约解释。
+    expect(isAnalysisAskRequest({ ...request, schemaVersion: 1 })).toBe(false)
+    // 上限 3 轮：第 4 轮该由发送端从最早处截断，服务端见到就拒绝，不静默丢弃。
+    expect(isAnalysisAskRequest({ ...request, history: { truncated: true, turns: [turn, turn, turn, turn] } })).toBe(false)
+    // 超长度同样拒绝：让它自己变短，比替它裁掉一句话更安全。
+    expect(isAnalysisAskRequest({ ...request, history: { truncated: false, turns: [{ ...turn, question: 'x'.repeat(1_001) }] } })).toBe(false)
+    expect(isAnalysisAskRequest({ ...request, history: { truncated: false, turns: [{ ...turn, facts: ['x'.repeat(1_001)] }] } })).toBe(false)
+    expect(isAnalysisAskRequest({ ...request, history: { truncated: false, turns: [{ ...turn, facts: [] }] } })).toBe(false)
+    // 缺字段、多字段都拒：多出来的那一个就是证据包副本或视图规格混进历史的地方。
+    expect(isAnalysisAskRequest({ ...request, history: { truncated: false, turns: [{ question: turn.question }] } })).toBe(false)
+    expect(isAnalysisAskRequest({ ...request, history: { truncated: false, turns: [{ ...turn, views: ['keyword-table'] }] } })).toBe(false)
+    expect(isAnalysisAskRequest({ ...request, history: { truncated: false, turns: [], evidence } })).toBe(false)
+    expect(isAnalysisAskRequest({ ...request, history: { truncated: false } })).toBe(false)
+    expect(isAnalysisAskRequest({ ...request, history: { turns: [] } })).toBe(false)
   })
 
   it('discards unknown views, orders stable views, and falls back to a table when trend data is unavailable', () => {

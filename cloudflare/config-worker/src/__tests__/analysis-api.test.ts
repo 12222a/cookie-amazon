@@ -25,11 +25,12 @@ const request = (overrides: Record<string, unknown> = {}, init: RequestInit = {}
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 2,
       asin: evidence.asin,
       market: evidence.market,
       question: '当前最需要关注什么？',
       evidence,
+      history: { truncated: false, turns: [] },
       ...overrides,
     }),
     ...init,
@@ -222,7 +223,7 @@ describe('analysis worker api', () => {
   })
 
   it('maps validated model citations back to real evidence and normalizes views', async () => {
-    const fetcher = vi.fn(async () => modelResponse())
+    const fetcher = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => modelResponse())
     const response = await handleAnalysisApi(request(), env, fetcher as typeof fetch)
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({
@@ -252,5 +253,77 @@ describe('analysis worker api', () => {
     const response = await handleAnalysisApi(request(), env, fetcher as typeof fetch)
     expect(response.status).toBe(503)
     expect(await response.json()).toEqual({ ok: false, error: 'AI_UNAVAILABLE', message: 'AI 分析服务暂时不可用' })
+  })
+})
+describe('analysis history', () => {
+  const turn = (question: string, facts: string[], inferences: string[] = []) => ({ question, facts, inferences })
+
+  it('sends each earlier turn as its own message before the current one', async () => {
+    const fetcher = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => modelResponse())
+    const history = {
+      truncated: false,
+      turns: [
+        turn('它主要靠广告撑着吗？', ['广告位占比 20%。']),
+        turn('那长尾词呢？', ['长尾词自然位在第 1 页。'], ['长尾词是主要入口。']),
+      ],
+    }
+    const response = await handleAnalysisApi(request({ history }), env, fetcher as typeof fetch)
+    expect(response.status).toBe(200)
+    const sent = JSON.parse(String(fetcher.mock.calls[0]![1]!.body))
+    expect(sent.messages.map((message: { role: string }) => message.role)).toEqual(['system', 'user', 'user', 'user'])
+    // 历史只带问答文本：证据包副本、引用对象与视图规格都不在历史里。
+    expect(sent.messages[1].content).toBe(JSON.stringify({ question: '它主要靠广告撑着吗？', facts: ['广告位占比 20%。'], inferences: [] }))
+    expect(sent.messages[2].content).toBe(JSON.stringify({ question: '那长尾词呢？', facts: ['长尾词自然位在第 1 页。'], inferences: ['长尾词是主要入口。'] }))
+    expect(JSON.parse(sent.messages[3].content)).toEqual({ question: '当前最需要关注什么？', facts: buildFacts(evidence) })
+  })
+
+  it('tells the model when earlier turns were dropped, and says nothing when none were', async () => {
+    const fetcher = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => modelResponse())
+    await handleAnalysisApi(request({ history: { truncated: false, turns: [turn('第一问？', ['事实'])] } }), env, fetcher as typeof fetch)
+    const withoutTruncation = JSON.parse(String(fetcher.mock.calls[0]![1]!.body)).messages[0].content
+    fetcher.mockClear()
+    await handleAnalysisApi(request({ history: { truncated: true, turns: [turn('第一问？', ['事实'])] } }), env, fetcher as typeof fetch)
+    const withTruncation = JSON.parse(String(fetcher.mock.calls[0]![1]!.body)).messages[0].content
+    // 只在截断过时说这句：模型据此知道上下文不完整，不会以为自己看全了。
+    expect(withTruncation).toContain('更早的对话轮次因为轮数上限已被截断')
+    expect(withoutTruncation).not.toContain('截断')
+  })
+
+  it('re-runs the scope check on every historical turn: a previous answer cannot smuggle out-of-scope text in', async () => {
+    const fetcher = vi.fn()
+    for (const field of ['question', 'facts', 'inferences'] as const) {
+      const bad = turn('它主要靠广告撑着吗？', ['广告位占比 20%。'], ['利润大概 30%。'])
+      const history = { truncated: false, turns: [{ ...bad, [field]: field === 'question' ? '这个品能不能做？' : ['预计利润率为 30%。'] }] }
+      const response = await handleAnalysisApi(request({ history }), env, fetcher as typeof fetch)
+      expect(response.status, field + ' 越界应被拒').toBe(422)
+      expect(await response.json()).toMatchObject({ ok: false, error: 'UNSUPPORTED_SCOPE' })
+    }
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  it('keeps a standalone scope disclaimer from an earlier turn readable', async () => {
+    const fetcher = vi.fn(async () => modelResponse({ inferences: [boundaryStatement] }))
+    const history = { truncated: false, turns: [turn('它主要靠广告撑着吗？', ['广告位占比 20%。'], [boundaryStatement])] }
+    const response = await handleAnalysisApi(request({ history }), env, fetcher as typeof fetch)
+    expect(response.status).toBe(200)
+  })
+
+  it('rejects illegal history instead of silently dropping it', async () => {
+    const fetcher = vi.fn()
+    const turn = { question: '那长尾词呢？', facts: ['长尾词自然位在第 1 页。'], inferences: [] }
+    const cases: Array<[string, unknown]> = [
+      ['缺少历史字段', undefined],
+      ['版本不匹配', { truncated: false, turns: [], schemaVersion: 1 }],
+      ['超过条数上限', { truncated: false, turns: [turn, turn, turn, turn] }],
+      ['缺字段', { truncated: false, turns: [{ question: turn.question }] }],
+      ['多字段', { truncated: false, turns: [{ ...turn, evidence }] }],
+      ['回答超长', { truncated: false, turns: [{ ...turn, facts: ['x'.repeat(1_001)] }] }],
+    ]
+    for (const [label, history] of cases) {
+      const response = await handleAnalysisApi(request(history === undefined ? { history: undefined } : { history }), env, fetcher as typeof fetch)
+      expect(response.status, label).toBe(400)
+      expect(await response.json(), label).toMatchObject({ ok: false, error: 'BAD_REQUEST' })
+    }
+    expect(fetcher).not.toHaveBeenCalled()
   })
 })

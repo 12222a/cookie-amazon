@@ -681,3 +681,64 @@ describe('真实标记下的对话串', () => {
     }
   })
 })
+describe('追问带上文', () => {
+  it('carries the earlier questions and answers as history, and leaves the evidence out of it', async () => {
+    mocks.ask.mockResolvedValue(citedAnswer)
+    node('#analysis-question').value = '它主要靠广告撑着吗？'
+    node('#analysis-form').dispatch('submit')
+    await settle()
+    node('#analysis-question').value = '那长尾词呢？'
+    node('#analysis-form').dispatch('submit')
+    await settle()
+
+    // 第一问没有上文可带。
+    expect(mocks.ask.mock.calls[0]![2]).toEqual({ history: [] })
+    // 第二问带上第一轮的问答文本：只有事实与判断，证据包不在里面。
+    expect(mocks.ask.mock.calls[1]![2]).toEqual({ history: [{
+      question: '它主要靠广告撑着吗？',
+      facts: citedAnswer.response.answer.facts,
+      inferences: citedAnswer.response.answer.inferences,
+    }] })
+    // 每轮请求仍只发当前证据包，历史里没有第二个证据包。
+    expect(JSON.stringify(mocks.ask.mock.calls[1]![2])).not.toContain('asin')
+  })
+
+  it('grows the history in conversation order as each turn is answered', async () => {
+    mocks.ask.mockResolvedValue(citedAnswer)
+    for (const question of ['第一问？', '第二问？']) {
+      node('#analysis-question').value = question
+      node('#analysis-form').dispatch('submit')
+      await settle()
+    }
+    // 面板按对话串的顺序给出各轮，条数上限由客户端那一侧统一裁（那里才知道出站请求的形状）。
+    expect((mocks.ask.mock.calls[1]![2] as { history: Array<{ question: string }> }).history.map((turn) => turn.question))
+      .toEqual(['第一问？'])
+  })
+
+  it('does not carry an unanswered or failed turn as context', async () => {
+    mocks.ask.mockResolvedValueOnce({ kind: 'failed', reason: 'unavailable' }).mockResolvedValue(citedAnswer)
+    node('#analysis-question').value = '失败的一问？'
+    node('#analysis-form').dispatch('submit')
+    await settle()
+    node('#analysis-question').value = '接着问？'
+    node('#analysis-form').dispatch('submit')
+    await settle()
+    // 没有回答的那一轮进不了历史：上下文里只有事实与判断，不能凭空给模型一句它没说过的话。
+    expect(mocks.ask.mock.calls[1]![2]).toEqual({ history: [] })
+  })
+
+  it('clears the history together with the conversation when the analysis object changes', async () => {
+    mocks.ask.mockResolvedValue(citedAnswer)
+    node('#analysis-question').value = '第一问？'
+    node('#analysis-form').dispatch('submit')
+    await settle()
+    stored[ANALYSIS_OBJECT_STORAGE_KEY] = createAnalysisObject({ asin: 'B0ZYXWVUTS', market: 'US', source: 'manual', owner: null, group: null })
+    changed({ [ANALYSIS_OBJECT_STORAGE_KEY]: {} }, 'local')
+    await settle()
+    node('#analysis-question').value = '新对象第一问？'
+    node('#analysis-form').dispatch('submit')
+    await settle()
+    // 换对象即清空对话：上一个对象的问答不能成为新对象的上下文。
+    expect(mocks.ask.mock.calls[1]![2]).toEqual({ history: [] })
+  })
+})

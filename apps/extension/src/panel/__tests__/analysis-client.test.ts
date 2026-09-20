@@ -52,11 +52,12 @@ describe('analysis client', () => {
       expect(init?.cache).toBe('no-store')
       expect(init?.headers).toEqual({ 'content-type': 'application/json' })
       expect(JSON.parse(String(init?.body))).toMatchObject({
-        schemaVersion: 1,
+        schemaVersion: 2,
         asin: evidence.asin,
         market: evidence.market,
         question: '当前最需要关注什么？',
         evidence,
+        history: { truncated: false, turns: [] },
       })
       return new Response(JSON.stringify(successBody), { status: 200 })
     })
@@ -99,5 +100,55 @@ describe('analysis client', () => {
       kind: 'failed',
       reason: '请求超时，请重试',
     })
+  })
+})
+describe('analysis history', () => {
+  const turn = (question: string, facts: string[], inferences: string[] = []) => ({ question, facts, inferences })
+  const outbound = (fetcher: { mock: { calls: unknown[][] } }): Record<string, unknown> =>
+    JSON.parse(String((fetcher.mock.calls[0]![1] as RequestInit).body))
+
+  const okResponse = (): Response => new Response(JSON.stringify(successBody), { status: 200 })
+
+  it('sends at most the three most recent turns, oldest dropped first', async () => {
+    const fetcher = vi.fn(async () => okResponse())
+    const history = [turn('第一问', ['事实 1']), turn('第二问', ['事实 2']), turn('第三问', ['事实 3']), turn('第四问', ['事实 4'])]
+    await askAnalysis('第五问', evidence, { fetcher, history })
+    expect(outbound(fetcher).history).toEqual({
+      // 截断了就要说出来：模型据此知道上下文不完整，也不会以为自己看全了。
+      truncated: true,
+      turns: [turn('第二问', ['事实 2']), turn('第三问', ['事实 3']), turn('第四问', ['事实 4'])],
+    })
+  })
+
+  it('leaves the history out of the evidence slot: only the current bundle travels with the request', async () => {
+    const fetcher = vi.fn(async () => okResponse())
+    await askAnalysis('那长尾词呢？', evidence, { fetcher, history: [turn('它主要靠广告撑着吗？', ['广告位占比 20%。'])] })
+    const body = outbound(fetcher)
+    expect(body.evidence).toEqual(evidence)
+    expect(JSON.stringify(body.history)).not.toContain('keyword')
+    expect(body.history).toEqual({ truncated: false, turns: [turn('它主要靠广告撑着吗？', ['广告位占比 20%。'])] })
+  })
+
+  it('sends exactly three turns verbatim without claiming a truncation', async () => {
+    const fetcher = vi.fn(async () => okResponse())
+    const turns = [turn('第一问', ['事实 1']), turn('第二问', ['事实 2']), turn('第三问', ['事实 3'])]
+    await askAnalysis('第四问', evidence, { fetcher, history: turns })
+    expect(outbound(fetcher).history).toEqual({ truncated: false, turns })
+  })
+
+  it('keeps a request that would exceed the byte ceiling out of the history instead of failing the turn forever', async () => {
+    const fetcher = vi.fn(async () => okResponse())
+    // 每条都合法，合起来却会把请求顶过 128KB：重试发的是同一个请求体，一旦这样发出去就永远过不去。
+    const heavy = turn('重', ['x'.repeat(1_000), 'x'.repeat(1_000), 'x'.repeat(1_000), 'x'.repeat(1_000)])
+    await askAnalysis('第五问', evidence, { fetcher, history: [heavy, heavy, heavy, heavy] })
+    const sent = outbound(fetcher).history as { truncated: boolean; turns: unknown[] }
+    expect(sent.truncated).toBe(true)
+    expect(sent.turns.length).toBeLessThan(4)
+  })
+
+  it('sends an empty history when there is nothing to carry', async () => {
+    const fetcher = vi.fn(async () => okResponse())
+    await askAnalysis('第一问', evidence, { fetcher })
+    expect(outbound(fetcher).history).toEqual({ truncated: false, turns: [] })
   })
 })

@@ -1,8 +1,11 @@
 import {
   ANALYSIS_ASK_PATH,
+  ANALYSIS_ASK_SCHEMA_VERSION,
   REMOTE_CONFIG_ORIGIN,
   isAnalysisAskResponse,
   normalizeAnalysisViewSpec,
+  toAnalysisHistory,
+  type AnalysisHistoryTurn,
   type AnalysisAskRequest,
   type AnalysisAskResponse,
   type AnalysisEvidence,
@@ -37,16 +40,22 @@ const failureFromResponse = async (response: Response): Promise<AnalysisResult> 
 export const askAnalysis = async (
   question: string,
   evidence: AnalysisEvidence,
-  options: { fetcher?: Fetcher; timeoutMs?: number } = {},
+  options: { fetcher?: Fetcher; timeoutMs?: number; history?: readonly AnalysisHistoryTurn[] } = {},
 ): Promise<AnalysisResult> => {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? REQUEST_TIMEOUT_MS)
+  /**
+   * 只带最近几轮的问答文本，超出从最早处截断，并把「已经截断」这件事一并送出去。
+   * 截断是发送端的责任：服务端见到超限只会拒绝，不替调用方决定丢掉哪一轮。
+   */
+  const history = toAnalysisHistory(options.history ?? [])
   const body: AnalysisAskRequest = {
-    schemaVersion: 1,
+    schemaVersion: ANALYSIS_ASK_SCHEMA_VERSION,
     asin: evidence.asin,
     market: evidence.market,
     question: question.trim(),
     evidence,
+    history,
   }
   try {
     const response = await (options.fetcher ?? defaultFetch)(new URL(ANALYSIS_ASK_PATH, REMOTE_CONFIG_ORIGIN), {

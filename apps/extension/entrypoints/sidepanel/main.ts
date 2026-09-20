@@ -18,7 +18,7 @@ import { analyzeSellerSpriteReviews, type ReviewPanelData } from '../../src/pane
 import { isResearchStatus, type ResearchStatus } from '../../src/research-record'
 import { describeRecordResult, ResearchRecordClient } from '../../src/panel/research-record-client'
 import { createViewerIdentity, describeViewer, ViewerIdentityStore, VIEWER_IDENTITY_STORAGE_KEY, type ViewerIdentity } from '../../src/viewer-identity'
-import type { AnalysisAskSuccess, AnalysisEvidence, AnalysisViewType } from '@cookie-amazon/protocol'
+import type { AnalysisAskSuccess, AnalysisEvidence, AnalysisHistoryTurn, AnalysisViewType } from '@cookie-amazon/protocol'
 import type { ServerResearchRecord } from '../../src/panel/research-record-client'
 
 const objectStore = new AnalysisObjectStore(browser.storage.local)
@@ -99,6 +99,20 @@ let thread: Array<{
   /** 一轮失败时这里留着 null：提问还在对话串里，重试接的就是它。 */
   answer: { response: Extract<AnalysisResult, { kind: 'answer' }>['response']; evidence: AnalysisEvidence } | null
 }> = []
+
+/**
+ * 追问的上下文：已经答出来的那几轮的问答文本。
+ *
+ * 只取问题与回答里的事实、判断——证据包副本、引用对象与视图规格都不进历史，
+ * 每轮请求仍只发当前证据包，请求体因此不随轮数线性膨胀（ADR-0005 的追加决定）。
+ * 还没有回答的那一轮（失败待重试）自然不在里面：上下文里不能有模型没说过的话。
+ * 条数上限由 analysis-client 统一裁：出站请求体的形状是那一层的事。
+ */
+const analysisHistory = (): AnalysisHistoryTurn[] => thread.flatMap((turn) => {
+  if (turn.answer === null) return []
+  const { facts, inferences } = turn.answer.response.answer
+  return [{ question: turn.question, facts, inferences }]
+})
 
 const positionTargetKey = (target: AnalysisObject): string => target.asin + ':' + target.market
 
@@ -601,7 +615,8 @@ const askCurrentAnalysis = async (questionOverride?: string): Promise<void> => {
     const askedEvidence = rebuildEvidence()
     renderDrawer()
     if (askedEvidence === null) return
-    const result = await askAnalysis(question, askedEvidence)
+    // 上文取自对话串里已经答出来的轮次：追问的「那…呢」才有东西可指。
+    const result = await askAnalysis(question, askedEvidence, { history: analysisHistory() })
     if (requestId !== analysisRequestId || current === null || positionTargetKey(current) !== targetKey) return
     if (result.kind === 'answer') {
       // 回答补到本轮留下的那个位置上，不新添一轮：气泡里的问句前后是同一条。

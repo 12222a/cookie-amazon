@@ -5,7 +5,10 @@
  * 固定视图类型。协议里没有 HTML、Cookie、模型生成代码或任意图表配置。
  */
 
+/** 输出侧版本：回答的视图规格。带上文不改它，模型的输出结构保持原样（ADR-0005）。 */
 export const ANALYSIS_SCHEMA_VERSION = 1 as const
+/** 请求契约版本：加入 history 后升到 2，旧版本号的请求按新契约解释不了，只能拒。 */
+export const ANALYSIS_ASK_SCHEMA_VERSION = 2 as const
 export const ANALYSIS_ASK_PATH = '/api/analysis/ask' as const
 
 export type AnalysisSource = 'storefront' | 'sellersprite' | 'derived' | 'research-record'
@@ -109,12 +112,45 @@ export type AnalysisAnswer = {
   citations: AnalysisCitation[]
 }
 
+/** 回答的条数与单行长度上限；历史装的是回答原文，两处同源。 */
+export const MAX_ANSWER_LINES = 8
+export const MAX_ANSWER_LINE = 1_000
+
+/**
+ * 历史轮次的条数与长度上限：超过就拒绝，而不是替调用方裁掉一句。
+ * 截断是发送端的事（它才知道哪一轮最早），服务端只认这个上限。
+ */
+export const MAX_HISTORY_TURNS = 3
+/**
+ * 历史总长度上限（字符）。逐条的上限挡不住「每条都擦着上限」的组合：
+ * 3 轮 × 17 条 × 1000 字，按中文 UTF-8 三字节算已经超过 MAX_REQUEST_BYTES，
+ * 于是一条字段全合法的请求会死在字节上限上，而重试发的是同一个请求体，永远过不去。
+ */
+export const MAX_HISTORY_TEXT_TOTAL = 8_000
+
+/**
+ * 一轮历史：只有问题与回答的事实、判断，没有证据包副本、引用对象与视图规格。
+ * 每轮请求仍只带当前证据包，所以请求体不随轮数线性膨胀。
+ */
+export type AnalysisHistoryTurn = {
+  question: string
+  facts: string[]
+  inferences: string[]
+}
+
+export type AnalysisHistory = {
+  /** 更早的轮次已经被发送端从最早处丢弃：这件事要告诉模型，它才知道上下文不完整。 */
+  truncated: boolean
+  turns: AnalysisHistoryTurn[]
+}
+
 export type AnalysisAskRequest = {
-  schemaVersion: typeof ANALYSIS_SCHEMA_VERSION
+  schemaVersion: typeof ANALYSIS_ASK_SCHEMA_VERSION
   asin: string
   market: string
   question: string
   evidence: AnalysisEvidence
+  history: AnalysisHistory
 }
 
 export type AnalysisAskSuccess = {
@@ -236,14 +272,59 @@ const isEvidence = (value: unknown): value is AnalysisEvidence => {
   return true
 }
 
+/** facts 至少一条（一条事实也没有的回答不成话），inferences 可以为空——模型本来就允许不给判断。 */
+const isHistoryLines = (value: unknown, requireSomeLines: boolean): value is string[] =>
+  Array.isArray(value)
+  && (!requireSomeLines || value.length > 0)
+  && value.length <= MAX_ANSWER_LINES
+  && value.every((item) => isText(item, MAX_ANSWER_LINE, false))
+
+const isHistoryTurn = (value: unknown): value is AnalysisHistoryTurn =>
+  isRecord(value)
+  && Object.keys(value).length === 3
+  && isText(value.question, MAX_ANSWER_LINE, false)
+  && isHistoryLines(value.facts, true)
+  && isHistoryLines(value.inferences, false)
+
+const historyTextLength = (turns: readonly AnalysisHistoryTurn[]): number => turns.reduce(
+  (total, turn) => total + turn.question.length + turn.facts.join('').length + turn.inferences.join('').length,
+  0,
+)
+
+const isHistory = (value: unknown): value is AnalysisHistory =>
+  isRecord(value)
+  && Object.keys(value).length === 2
+  && typeof value.truncated === 'boolean'
+  && Array.isArray(value.turns)
+  && value.turns.length <= MAX_HISTORY_TURNS
+  && value.turns.every(isHistoryTurn)
+  && historyTextLength(value.turns) <= MAX_HISTORY_TEXT_TOTAL
+
+/**
+ * 把对话串里已经答出来的轮次压成出站的历史：从最早处截断到条数与总长都合上限。
+ * 截断与「截断过」这个事实都在这里定，发送端不自己算一遍——两处各算一次迟早对不上。
+ */
+export const toAnalysisHistory = (turns: readonly AnalysisHistoryTurn[]): AnalysisHistory => {
+  const kept: AnalysisHistoryTurn[] = []
+  let total = 0
+  for (const turn of [...turns].reverse()) {
+    const length = historyTextLength([turn])
+    if (kept.length === MAX_HISTORY_TURNS || total + length > MAX_HISTORY_TEXT_TOTAL) break
+    kept.unshift(turn)
+    total += length
+  }
+  return { truncated: kept.length < turns.length, turns: kept }
+}
+
 export const isAnalysisAskRequest = (value: unknown): value is AnalysisAskRequest =>
   isRecord(value)
-  && Object.keys(value).length === 5
-  && value.schemaVersion === ANALYSIS_SCHEMA_VERSION
+  && Object.keys(value).length === 6
+  && value.schemaVersion === ANALYSIS_ASK_SCHEMA_VERSION
   && /^[A-Z0-9]{10}$/.test(String(value.asin))
   && isText(value.market, 16, false)
   && isText(value.question, 1_000, false)
   && isEvidence(value.evidence)
+  && isHistory(value.history)
   && value.evidence.asin === value.asin
   && value.evidence.market.toUpperCase() === String(value.market).toUpperCase()
 
@@ -307,8 +388,8 @@ const isCitation = (value: unknown): value is AnalysisCitation =>
 const isAnswer = (value: unknown): value is AnalysisAnswer =>
   isRecord(value)
   && Object.keys(value).length === 3
-  && Array.isArray(value.facts) && value.facts.length <= 8 && value.facts.every((item) => isText(item, 1_000, false))
-  && Array.isArray(value.inferences) && value.inferences.length <= 8 && value.inferences.every((item) => isText(item, 1_000, false))
+  && Array.isArray(value.facts) && value.facts.length <= MAX_ANSWER_LINES && value.facts.every((item) => isText(item, MAX_ANSWER_LINE, false))
+  && Array.isArray(value.inferences) && value.inferences.length <= MAX_ANSWER_LINES && value.inferences.every((item) => isText(item, MAX_ANSWER_LINE, false))
   && Array.isArray(value.citations) && value.citations.length <= 16 && value.citations.every(isCitation)
 
 export const isAnalysisAskResponse = (value: unknown): value is AnalysisAskResponse => {

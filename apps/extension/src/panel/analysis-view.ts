@@ -1,4 +1,5 @@
 import {
+  ANALYSIS_SCHEMA_VERSION,
   ANALYSIS_VIEW_TYPES,
   normalizeAnalysisViewSpec,
   type AnalysisEvidence,
@@ -234,7 +235,7 @@ export const renderDrawerPartitions = (
 ): void => {
   // 逐个请求全部固定类型，由同一份可用性规则筛掉证据里没有的：抽屉与回答里的内嵌视图
   // 因此对「哪些类型可用」只有一套判断，未读到的数据不会在抽屉里占一个空分区。
-  const types = normalizeAnalysisViewSpec({ schemaVersion: 1, views: [...ANALYSIS_VIEW_TYPES] }, evidence).views
+  const types = normalizeAnalysisViewSpec({ schemaVersion: ANALYSIS_SCHEMA_VERSION, views: [...ANALYSIS_VIEW_TYPES] }, evidence).views
     .filter((type) => type !== 'research-record')
   const views = types.map((type) => renderOne(document, type, evidence)).filter((view): view is HTMLElement => view !== null)
   container.replaceChildren(...views)
