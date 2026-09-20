@@ -4,7 +4,7 @@ import { ANALYSIS_OBJECT_STORAGE_KEY } from '../../analysis-object-store'
 import { VIEWER_IDENTITY_STORAGE_KEY } from '../../viewer-identity'
 import sidepanelHtml from '../../../entrypoints/sidepanel/index.html?raw'
 import type { AnalysisResult } from '../analysis-client'
-import { renderAnalysisViews } from '../analysis-view'
+import { renderBubbleViews } from '../analysis-view'
 import { buildAnalysisEvidence } from '../analysis-evidence'
 
 const mocks = vi.hoisted(() => ({ ask: vi.fn(), positions: vi.fn(), reviews: vi.fn(), find: vi.fn(), save: vi.fn() }))
@@ -29,13 +29,34 @@ class Node {
   hidden = false
   disabled = false
   value = ''
-  textContent = ''
   open = false
+  /** 真 DOM 的元素名：测试按标签读语义，不靠子节点位置猜结构。 */
+  tagName = 'DIV'
   attributes = new Map<string, string>()
   /** 面板按 dataset.view 标出分区的视图类型，测试也按它读回，不比对 HTML 长相。 */
   dataset: Record<string, string> = {}
   children: Node[] = []
   listeners = new Map<string, (event: { preventDefault(): void }) => void>()
+  /** 定位到对应分区：点内嵌视图入口之后，被滚到眼前的应该是那个分区。 */
+  scrolledIntoView = false
+  tabIndex = 0
+  scrollIntoView() { this.scrolledIntoView = true }
+  focus() {}
+  /** 真 DOM 有元素级选择器；面板按分区身份（[data-view=…]）在抽屉里找目标分区，这里同样支持。 */
+  querySelector(selector: string): Node | null {
+    const attribute = /^\[data-view="([^"]+)"\]$/.exec(selector)?.[1]
+    if (attribute === undefined) return null
+    return walk(this).find((item) => item !== this && item.dataset.view === attribute) ?? null
+  }
+  #text: string | null = null
+  /**
+   * 与真实 DOM 一样：设过文本就返回它，否则拼起子节点的文本。
+   * 少了这一条，读一个容器的字就得逐层猜结构，测试会变成对 HTML 长相的断言。
+   */
+  get textContent(): string {
+    return this.#text ?? this.children.map((child) => child.textContent).join('')
+  }
+  set textContent(value: string) { this.#text = value }
   append(...nodes: Node[]) { this.children.push(...nodes) }
   replaceChildren(...nodes: Node[]) { this.children = nodes }
   setAttribute(name: string, value: string) { this.attributes.set(name, value) }
@@ -45,6 +66,17 @@ class Node {
 }
 
 const answer: AnalysisResult = { kind: 'answer', response: { ok: true, answer: { facts: ['private finding'], inferences: [], citations: [] }, view: { schemaVersion: 1, views: ['object-summary'] } } }
+/**
+ * 带引用的回答：编号由渲染层按来源清单的序号生成，所以事实里的值与来源清单里的值是同一份。
+ */
+const citedAnswer: AnalysisResult = { kind: 'answer', response: { ok: true, answer: {
+  facts: ['前台价格是 19.99 美元。', '评论样本 120 条。'],
+  inferences: ['先看低星问题。'],
+  citations: [
+    { id: 'object.price', label: '前台价格', value: '19.99', source: 'storefront' },
+    { id: 'reviews.sampled', label: '评论样本数', value: '120', source: 'sellersprite' },
+  ],
+}, view: { schemaVersion: 1, views: ['object-summary'] } } }
 let nodes: Map<string, Node>
 let stored: Record<string, unknown>
 let changed: (changes: Record<string, unknown>, area: string) => void
@@ -69,6 +101,37 @@ const drawerText = (): string => partitions()
   .flatMap((item) => item.hidden ? [] : walk(item))
   .map((item) => item.textContent)
   .join('|')
+
+/** 对话串里的气泡。空态与气泡是同一处的两种形态，读法也统一按 dataset 走。 */
+const bubbles = (kind?: string): Node[] => node('#analysis-thread').children
+  .filter((child) => kind === undefined || child.dataset.bubble === kind)
+
+/** 一个气泡里的某个分区，身份是 dataset.section。 */
+const sectionOf = (bubble: Node, section: string): Node | undefined =>
+  bubble.children.find((child) => child.dataset.section === section)
+
+/** 一个容器里渲染出的某个视图，身份是 dataset.view（与抽屉分区同一套身份）。 */
+const viewOf = (container: Node, view: string): Node | undefined =>
+  walk(container).find((item) => item !== container && item.dataset.view === view)
+
+/** 按标签取一个节点下的所有元素：读语义（标题、列表、条目），不按子节点位置。 */
+const tagged = (value: Node | undefined, tag: string): Node[] => value === undefined
+  ? []
+  : walk(value).filter((item) => item !== value && item.tagName === tag)
+
+/** 一个节点下的标题文字（视图或分区都靠它认出自己是什么）。 */
+const titleOf = (value: Node | undefined, tag = 'H3'): string | undefined =>
+  tagged(value, tag)[0]?.textContent
+
+/** 一个分区里的条目文字。 */
+const entriesOf = (bubble: Node, section: string): Node[] => tagged(sectionOf(bubble, section), 'LI')
+
+/** 一句事实末尾的引用标号：sup 的数字就是底部来源清单里的序号。 */
+const marksOf = (bubble: Node, section: string): string[][] => entriesOf(bubble, section)
+  .map((item) => tagged(item, 'SUP').map((sup) => sup.textContent))
+
+/** 底部来源清单里的一条：序号、标签、值（值里带着来源名）。 */
+const sourceLine = (item: Node): string[] => ['B', 'SPAN', 'I'].map((tag) => tagged(item, tag)[0]?.textContent ?? '')
 
 const keywordRow = (keyword: string): unknown => ({
   keyword,
@@ -98,7 +161,7 @@ beforeEach(async () => {
   }
   vi.stubGlobal('document', {
     querySelector(id: string) { const value = new Node(); nodes.set(id, value); return value },
-    createElement: () => new Node(),
+    createElement: (tag: string) => { const value = new Node(); value.tagName = tag.toUpperCase(); return value },
   })
   vi.stubGlobal('browser', { storage: {
     local: { get: async (key: string) => ({ [key]: stored[key] }), set: async (value: Record<string, unknown>) => { Object.assign(stored, value) } },
@@ -185,11 +248,12 @@ describe('analysis panel lifecycle', () => {
     const object = createAnalysisObject({ asin: 'B0ABCDEFGH', market: 'US', source: 'manual', owner: null, group: null })!
     const evidence = buildAnalysisEvidence({ object })
     const container = new Node()
-    renderAnalysisViews(
+    renderBubbleViews(
       document,
       container as unknown as HTMLElement,
       { schemaVersion: 1, views: ['made-up', 'chart-magic'] as never },
       evidence,
+      () => {},
     )
     expect(container.children.map((view) => view.dataset.view)).toEqual(['object-summary'])
   })
@@ -207,7 +271,7 @@ describe('analysis panel lifecycle', () => {
       },
     })
     const container = new Node()
-    renderAnalysisViews(document, container as unknown as HTMLElement, { schemaVersion: 1, views: ['keyword-summary'] }, evidence)
+    renderBubbleViews(document, container as unknown as HTMLElement, { schemaVersion: 1, views: ['keyword-summary'] }, evidence, () => {})
     expect(textsOf(container)).toContain('自然搜索词')
     expect(textsOf(container)).toContain('9')
   })
@@ -289,25 +353,40 @@ describe('analysis panel lifecycle', () => {
     const object = createAnalysisObject({ asin: 'B0ABCDEFGH', market: 'US', source: 'manual', owner: null, group: null })!
     const evidence = buildAnalysisEvidence({ object })
     const container = new Node()
-    renderAnalysisViews(document, container as unknown as HTMLElement, { schemaVersion: 1, views: ['review-pain-points'] }, evidence)
-    expect(container.children[0]?.children[0]?.textContent).toBe('前台基础信息')
+    renderBubbleViews(document, container as unknown as HTMLElement, { schemaVersion: 1, views: ['review-pain-points'] }, evidence, () => {})
+    // 要评论痛点但证据里没有评论：降级回可用的视图，第一个是前台基础信息。
+    expect(titleOf(viewOf(container, 'object-summary'), 'H3')).toBe('前台基础信息')
     evidence.reviews = { sampled: 0, total: 0, coverage: 0, lowStarCount: 0, sampleSufficient: false, painPoints: [] }
-    renderAnalysisViews(document, container as unknown as HTMLElement, { schemaVersion: 1, views: ['review-pain-points'] }, evidence)
-    const review = container.children[1]!
-    expect(review.children[0]?.textContent).toBe('评论概览')
-    expect(review.children[2]?.textContent).toContain('未返回评论总数')
-    expect(review.children[2]?.textContent).toContain('样本不足')
+    renderBubbleViews(document, container as unknown as HTMLElement, { schemaVersion: 1, views: ['review-pain-points'] }, evidence, () => {})
+    const review = viewOf(container, 'review-summary')
+    expect(titleOf(review, 'H3')).toBe('评论概览')
+    // 样本不足与没读到评论总数都要明说，不能给一个确定的痛点结论。
+    expect(review!.textContent).toContain('未返回评论总数')
+    expect(review!.textContent).toContain('样本不足')
   })
 
   it('preserves the previous answer and offers retry when a question fails', async () => {
     mocks.ask.mockResolvedValueOnce(answer).mockResolvedValueOnce({ kind: 'failed', reason: 'unavailable' })
+    node('#analysis-question').value = '第一问？'
     node('#analysis-form').dispatch('submit')
     await settle()
-    expect(node('#analysis-answer').hidden).toBe(false)
+    expect(bubbles('answer')).toHaveLength(1)
+    node('#analysis-question').value = '失败的一问？'
     node('#analysis-form').dispatch('submit')
     await settle()
-    expect(node('#analysis-facts').children[0]?.textContent).toBe('private finding')
+    // 失败的一轮不清空对话：上一轮的问答还在，只是多出一个重试入口。
+    expect(bubbles('question')).toHaveLength(2)
+    expect(bubbles('answer')).toHaveLength(1)
+    expect(entriesOf(bubbles('answer')[0]!, 'facts')[0]?.textContent).toBe('private finding')
     expect(node('#analysis-retry').hidden).toBe(false)
+    // 重试接着失败的那一轮问句，而不是用户后来打进输入框的内容。
+    node('#analysis-question').value = '改成别的了'
+    mocks.ask.mockResolvedValue(answer)
+    node('#analysis-retry').dispatch('click')
+    await settle()
+    expect(mocks.ask.mock.calls[2]![0]).toBe('失败的一问？')
+    expect(bubbles('question').map((bubble) => bubble.textContent)).toEqual(['第一问？', '失败的一问？'])
+    expect(bubbles('answer')).toHaveLength(2)
   })
 
   it('clears an existing answer immediately on a group change', async () => {
@@ -316,9 +395,21 @@ describe('analysis panel lifecycle', () => {
     await settle()
     stored[VIEWER_IDENTITY_STORAGE_KEY] = { token: 'Bob-token' }
     changed({ [VIEWER_IDENTITY_STORAGE_KEY]: {} }, 'local')
-    expect(node('#analysis-answer').hidden).toBe(true)
-    expect(node('#analysis-facts').children).toHaveLength(0)
+    expect(bubbles()).toHaveLength(0)
     await settle()
+  })
+
+  it('切换分析对象时对话串同步清空', async () => {
+    mocks.ask.mockResolvedValue(answer)
+    node('#analysis-form').dispatch('submit')
+    await settle()
+    expect(bubbles('answer')).toHaveLength(1)
+    stored[ANALYSIS_OBJECT_STORAGE_KEY] = createAnalysisObject({ asin: 'B0ZYXWVUTS', market: 'US', source: 'manual', owner: null, group: null })
+    changed({ [ANALYSIS_OBJECT_STORAGE_KEY]: {} }, 'local')
+    // 与抽屉一样是同步清屏：上一个对象的问题与回答不得留在新对象的第一屏。
+    expect(bubbles()).toHaveLength(0)
+    await settle()
+    expect(bubbles()).toHaveLength(0)
   })
 
   it.each(['identity', 'positions', 'reviews'])('discards an outstanding answer after %s changes', async (kind) => {
@@ -334,7 +425,7 @@ describe('analysis panel lifecycle', () => {
     await settle()
     finish(answer)
     await settle()
-    expect(node('#analysis-answer').hidden).toBe(true)
+    expect(bubbles('answer')).toHaveLength(0)
     expect(node('#analysis-ask').disabled).toBe(false)
   })
 
@@ -350,7 +441,7 @@ describe('analysis panel lifecycle', () => {
     await settle()
     finish(answer)
     await settle()
-    expect(node('#analysis-answer').hidden).toBe(true)
+    expect(bubbles('answer')).toHaveLength(0)
     expect(node('#analysis-ask').disabled).toBe(false)
   })
 
@@ -376,14 +467,217 @@ describe('analysis panel lifecycle', () => {
     expect(node('#record-owner').textContent).toBe('Alice')
     node('#analysis-form').dispatch('submit')
     await settle()
-    expect(node('#analysis-answer').hidden).toBe(false)
+    expect(bubbles('answer')).toHaveLength(1)
     // 退出：密钥被清掉后，屏幕上不能再留着上一身份的记录与回答。
     stored[VIEWER_IDENTITY_STORAGE_KEY] = null
     changed({ [VIEWER_IDENTITY_STORAGE_KEY]: {} }, 'local')
     await settle()
-    expect(node('#analysis-answer').hidden).toBe(true)
+    expect(bubbles()).toHaveLength(0)
     expect(node('#record-owner').textContent).toBe('')
     expect(node('#record-note').textContent).toContain('需要访问密钥')
     expect(node('#identity').hidden).toBe(false)
+  })
+})
+
+describe('对话串', () => {
+  it('提问与回答各占一个气泡，事实与推断分区分明', async () => {
+    mocks.ask.mockResolvedValue(citedAnswer)
+    node('#analysis-question').value = '这个 ASIN 现在最需要关注什么？'
+    node('#analysis-form').dispatch('submit')
+    await settle()
+    const questions = bubbles('question')
+    const answers = bubbles('answer')
+    expect(questions).toHaveLength(1)
+    expect(answers).toHaveLength(1)
+    expect(questions[0]!.textContent).toBe('这个 ASIN 现在最需要关注什么？')
+    expect(titleOf(sectionOf(answers[0]!, 'facts'))).toBe('事实')
+    expect(titleOf(sectionOf(answers[0]!, 'inferences'))).toBe('结论与判断')
+    expect(entriesOf(answers[0]!, 'inferences')[0]?.textContent).toBe('先看低星问题。')
+  })
+
+  it('句中标号按来源清单顺序生成，与底部来源清单一一对应', async () => {
+    mocks.ask.mockResolvedValue(citedAnswer)
+    node('#analysis-form').dispatch('submit')
+    await settle()
+    const bubble = bubbles('answer')[0]!
+    // 模型只给事实与它引用的来源 ID；1、2 是渲染层按来源清单序号贴上去的。
+    expect(marksOf(bubble, 'facts')).toEqual([['1'], ['2']])
+    expect(marksOf(bubble, 'inferences')).toEqual([[]])
+    // 来源清单按序号列出标签、值与来自哪里：用户据此核对这句话依据的是哪个字段。
+    expect(sectionOf(bubble, 'sources')!.children.map(sourceLine)).toEqual([
+      ['1', '前台价格', '19.99（亚马逊前台）'],
+      ['2', '评论样本数', '120（SellerSprite）'],
+    ])
+  })
+
+  it('空态给出引导语、可点的问题建议与一行数据状态', async () => {
+    expect(node('#analysis-empty').hidden).toBe(false)
+    // 一行数据状态：说到词位与评论各自读到什么，读取入口就在这一处。
+    expect(node('#analysis-data-status').textContent).toContain('词位')
+    expect(node('#analysis-data-status').textContent).toContain('还没有读取评论')
+    const suggests = node('#analysis-suggests').children
+    expect(suggests.length).toBeGreaterThan(0)
+    suggests[0]!.dispatch('click')
+    // 建议是可点的问题，点一下就把问题写进输入框，用户不必自己再打一遍。
+    expect(node('#analysis-question').value).toBe(suggests[0]!.textContent)
+    // 还没读词位时，第一条建议就是问自然位——建议按已读到的数据给。
+    expect(node('#analysis-question').value).toContain('自然位')
+  })
+
+  it('读取评论后数据状态改口，空态里的读取入口与抽屉里的是同一条取数路径', async () => {
+    node('#analysis-load-reviews').dispatch('click')
+    await settle()
+    expect(mocks.reviews).toHaveBeenCalledOnce()
+    expect(node('#analysis-data-status').textContent).toContain('评论样本')
+    expect(node('#analysis-data-status').textContent).not.toContain('还没有读取评论')
+  })
+
+  it('有了回答就不再显示空态，建议与数据状态跟着变', async () => {
+    mocks.ask.mockResolvedValue(answer)
+    node('#load-positions').dispatch('click')
+    await settle()
+    expect(node('#analysis-data-status').textContent).toContain('词位')
+    expect(node('#analysis-data-status').textContent).not.toContain('还没有读取词位')
+    node('#analysis-form').dispatch('submit')
+    await settle()
+    expect(node('#analysis-empty').hidden).toBe(true)
+  })
+
+  it('气泡里的内嵌视图入口展开抽屉并定位到对应分区', async () => {
+    mocks.positions.mockResolvedValue({
+      kind: 'rows',
+      rows: [keywordRow('长尾词')],
+      summary: { totalKeywords: 1, rankedKeywords: 1, adKeywords: 0, sourceTypeCounts: [] },
+      cached: false,
+      ageMs: 0,
+    })
+    node('#load-positions').dispatch('click')
+    await settle()
+    mocks.ask.mockResolvedValue({ kind: 'answer', response: {
+      ok: true,
+      answer: citedAnswer.response.answer,
+      view: { schemaVersion: 1, views: ['object-summary', 'keyword-table'] },
+    } })
+    node('#analysis-form').dispatch('submit')
+    await settle()
+    const bubble = bubbles('answer')[0]!
+    const entry = sectionOf(bubble, 'views')!.children.find((child) => child.dataset.entry === 'keyword-table')!
+    expect(entry.textContent).toBe('查看关键词明细（1 条）')
+    expect(node('#drawer-body').hidden).toBe(true)
+    entry.dispatch('click')
+    expect(node('#drawer-body').hidden).toBe(false)
+    // 定位到对应分区：展开之后被滚到眼前的就是那个分区，用户不用自己找。
+    expect(node('#drawer-views').children.find((child) => child.dataset.view === 'keyword-table')!.scrolledIntoView).toBe(true)
+  })
+
+  it('内嵌视图按视图规格渲染摘要，整表留在抽屉里', async () => {
+    mocks.positions.mockResolvedValue({
+      kind: 'rows',
+      rows: [keywordRow('长尾词')],
+      summary: { totalKeywords: 1, rankedKeywords: 1, adKeywords: 0, sourceTypeCounts: [] },
+      cached: false,
+      ageMs: 0,
+    })
+    node('#load-positions').dispatch('click')
+    await settle()
+    mocks.ask.mockResolvedValue({ kind: 'answer', response: {
+      ok: true,
+      answer: citedAnswer.response.answer,
+      view: { schemaVersion: 1, views: ['object-summary', 'keyword-summary', 'keyword-table', 'made-up'] as never },
+    } })
+    node('#analysis-form').dispatch('submit')
+    await settle()
+    const views = sectionOf(bubbles('answer')[0]!, 'views')!.children
+    // 未知类型被忽略；概览卡就地渲染；词位表这类宽表不进气泡，只留一个指向抽屉分区的入口。
+    expect(views.map((view) => view.dataset.view ?? view.dataset.entry))
+      .toEqual(['object-summary', 'keyword-summary', 'keyword-table'])
+    // 宽表是入口不是视图：它只带 dataset.entry，点了才展开抽屉里的那个分区。
+    expect(views.find((view) => view.dataset.entry === 'keyword-table')?.dataset.view).toBeUndefined()
+    // 抽屉里确实有它指向的那个分区，入口不会指向一个不存在的地方。
+    expect(drawerSections()).toContain('keyword-table')
+  })
+
+  it('规格与数据不匹配时降级为表格：要趋势但趋势读不到，气泡改成指向表格的入口', async () => {
+    // 词位只给一行没有趋势样本的关键词：规格里的 keyword-trend 落到表格上。
+    mocks.positions.mockResolvedValue({
+      kind: 'rows',
+      rows: [keywordRow('长尾词')],
+      summary: { totalKeywords: 1, rankedKeywords: 1, adKeywords: 0, sourceTypeCounts: [] },
+      cached: false,
+      ageMs: 0,
+    })
+    node('#load-positions').dispatch('click')
+    await settle()
+    mocks.ask.mockResolvedValue({ kind: 'answer', response: {
+      ok: true,
+      answer: citedAnswer.response.answer,
+      view: { schemaVersion: 1, views: ['keyword-trend'] },
+    } })
+    node('#analysis-form').dispatch('submit')
+    await settle()
+    const views = sectionOf(bubbles('answer')[0]!, 'views')!.children
+    expect(views.map((view) => view.dataset.view ?? view.dataset.entry)).toEqual(['keyword-table'])
+    expect(views[0]!.textContent).toBe('查看关键词明细（1 条）')
+  })
+
+  it('数据换掉之后，旧气泡的入口不会点了没反应', async () => {
+    // 提问时读了词位，气泡里因此有词位表入口。
+    mocks.positions.mockResolvedValue({
+      kind: 'rows',
+      rows: [keywordRow('长尾词')],
+      summary: { totalKeywords: 1, rankedKeywords: 1, adKeywords: 0, sourceTypeCounts: [] },
+      cached: false,
+      ageMs: 0,
+    })
+    node('#load-positions').dispatch('click')
+    await settle()
+    mocks.ask.mockResolvedValue({ kind: 'answer', response: {
+      ok: true,
+      answer: citedAnswer.response.answer,
+      view: { schemaVersion: 1, views: ['keyword-table'] },
+    } })
+    node('#analysis-form').dispatch('submit')
+    await settle()
+    const entry = tagged(sectionOf(bubbles('answer')[0]!, 'views'), 'BUTTON')[0]!
+    // 之后词位读取失败，抽屉里不再有这个分区。
+    mocks.positions.mockResolvedValue({ kind: 'failed', reason: 'TARGET_UNAVAILABLE', cached: false, ageMs: 0 })
+    node('#load-positions').dispatch('click')
+    await settle()
+    entry.dispatch('click')
+    expect(node('#drawer-body').hidden).toBe(false)
+    expect(node('#analysis-status').textContent).toContain('已经不是提问时的')
+  })
+})
+
+describe('真实标记下的对话串', () => {
+  beforeEach(async () => {
+    vi.resetModules()
+    vi.unstubAllGlobals()
+    document.body.innerHTML = sidepanelHtml.replace(/^[\s\S]*?<body>/, '').replace(/<\/body>[\s\S]*$/, '')
+    vi.stubGlobal('browser', { storage: {
+      local: { get: async () => ({}), set: async () => {} },
+      onChanged: { addListener: () => {} },
+    } })
+    await import('../../../entrypoints/sidepanel/main')
+    await settle()
+  })
+
+  it('对话串与空态都在标记里，且气泡容器只在对话区内', () => {
+    for (const id of ['#analysis-thread', '#analysis-empty', '#analysis-suggests', '#analysis-data-status', '#analysis-load-positions', '#analysis-load-reviews']) {
+      expect(document.querySelectorAll(id).length, id + ' 应恰好有一个').toBe(1)
+    }
+    // 旧的气泡外回答区已经并进对话串，标记里不该再有两份。
+    for (const id of ['#analysis-answer', '#analysis-facts', '#analysis-inferences', '#analysis-citations', '#analysis-views']) {
+      expect(document.querySelectorAll(id).length, id + ' 应已并进对话串').toBe(0)
+    }
+  })
+
+  it('空态在真实文档里带引导语，读取入口与它们在同一个区里', () => {
+    const empty = document.querySelector<HTMLElement>('#analysis-empty')!
+    expect(empty.hidden).toBe(false)
+    expect(empty.textContent).toContain('就当前 ASIN 提问')
+    for (const id of ['#analysis-suggests', '#analysis-data-status', '#analysis-load-positions']) {
+      expect(empty.querySelector(id), id + ' 应在空态里').not.toBeNull()
+    }
   })
 })

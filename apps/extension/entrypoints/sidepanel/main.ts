@@ -3,7 +3,8 @@ import { AnalysisObjectStore, ANALYSIS_OBJECT_STORAGE_KEY } from '../../src/anal
 import { createAnalysisObject, DEFAULT_MARKET, type AnalysisObject } from '../../src/analysis-object'
 import { askAnalysis, type AnalysisResult } from '../../src/panel/analysis-client'
 import { buildAnalysisEvidence } from '../../src/panel/analysis-evidence'
-import { renderAnalysisViews, renderDrawerPartitions } from '../../src/panel/analysis-view'
+import { renderBubbleViews, renderDrawerPartitions } from '../../src/panel/analysis-view'
+import { markAnswerSentences } from '../../src/panel/citation-marker'
 import { describeAnalysisObject } from '../../src/panel/panel-state'
 import { describeColleagueRecord, describeRecordForOwner, RESEARCH_STATUS_LABELS } from '../../src/panel/research-panel-state'
 import { requestKeywordPositionsCached, type CachedKeywordPositionResult } from '../../src/panel/keyword-position-cache-client'
@@ -17,7 +18,7 @@ import { analyzeSellerSpriteReviews, type ReviewPanelData } from '../../src/pane
 import { isResearchStatus, type ResearchStatus } from '../../src/research-record'
 import { describeRecordResult, ResearchRecordClient } from '../../src/panel/research-record-client'
 import { createViewerIdentity, describeViewer, ViewerIdentityStore, VIEWER_IDENTITY_STORAGE_KEY, type ViewerIdentity } from '../../src/viewer-identity'
-import type { AnalysisAskSuccess, AnalysisEvidence } from '@cookie-amazon/protocol'
+import type { AnalysisAskSuccess, AnalysisEvidence, AnalysisViewType } from '@cookie-amazon/protocol'
 import type { ServerResearchRecord } from '../../src/panel/research-record-client'
 
 const objectStore = new AnalysisObjectStore(browser.storage.local)
@@ -40,7 +41,7 @@ const identityError = document.querySelector<HTMLParagraphElement>('#identity-er
 const emptyElement = document.querySelector<HTMLElement>('#empty')
 const objectElement = document.querySelector<HTMLElement>('#object')
 const formElement = document.querySelector<HTMLFormElement>('#manual')
-  const inputElement = document.querySelector<HTMLInputElement>('#asin')
+const inputElement = document.querySelector<HTMLInputElement>('#asin')
 const errorElement = document.querySelector<HTMLParagraphElement>('#error')
 const loadButton = document.querySelector<HTMLButtonElement>('#load-positions')
 const statusElement = document.querySelector<HTMLParagraphElement>('#positions-status')
@@ -59,15 +60,14 @@ const analysisQuestionInput = document.querySelector<HTMLTextAreaElement>('#anal
 const analysisAskButton = document.querySelector<HTMLButtonElement>('#analysis-ask')
 const analysisRetryButton = document.querySelector<HTMLButtonElement>('#analysis-retry')
 const analysisStatusElement = document.querySelector<HTMLParagraphElement>('#analysis-status')
-const analysisAnswerElement = document.querySelector<HTMLElement>('#analysis-answer')
-const analysisAnswerQuestionElement = document.querySelector<HTMLParagraphElement>('#analysis-answer-question')
-const analysisFactsElement = document.querySelector<HTMLUListElement>('#analysis-facts')
-const analysisInferencesElement = document.querySelector<HTMLUListElement>('#analysis-inferences')
-const analysisCitationsElement = document.querySelector<HTMLUListElement>('#analysis-citations')
-const analysisViewsElement = document.querySelector<HTMLElement>('#analysis-views')
+const analysisThreadElement = document.querySelector<HTMLElement>('#analysis-thread')
+const analysisEmptyElement = document.querySelector<HTMLElement>('#analysis-empty')
+const analysisSuggestsElement = document.querySelector<HTMLElement>('#analysis-suggests')
+const analysisDataStatusElement = document.querySelector<HTMLParagraphElement>('#analysis-data-status')
 const drawerToggle = document.querySelector<HTMLButtonElement>('#drawer-toggle')
 const drawerBody = document.querySelector<HTMLElement>('#drawer-body')
 const drawerViewsElement = document.querySelector<HTMLElement>('#drawer-views')
+const drawerElement = document.querySelector<HTMLElement>('#drawer')
 let current: AnalysisObject | null = null
 let viewer: ViewerIdentity | null = null
 let loading = false
@@ -88,9 +88,17 @@ let currentRecord: ServerResearchRecord | null = null
 let evidence: AnalysisEvidence | null = null
 let analysisLoading = false
 let analysisRequestId = 0
-let lastAnalysis: Extract<AnalysisResult, { kind: 'answer' }> | null = null
-let lastAnalysisEvidence: Parameters<typeof renderAnalysisViews>[3] | null = null
-let lastAnalysisQuestion = ''
+/**
+ * 对话串：一条条问答气泡，本次打开面板的会话内保留（对话是过程，不跨会话持久化）。
+ *
+ * 每轮记下当轮的证据包——回答里的内嵌视图与句中标号都要按「提问时的数据」渲染，
+ * 之后又读了词位或换了研究记录，也不该改写已经说出口的那句话。
+ */
+let thread: Array<{
+  question: string
+  /** 一轮失败时这里留着 null：提问还在对话串里，重试接的就是它。 */
+  answer: { response: Extract<AnalysisResult, { kind: 'answer' }>['response']; evidence: AnalysisEvidence } | null
+}> = []
 
 const positionTargetKey = (target: AnalysisObject): string => target.asin + ':' + target.market
 
@@ -153,14 +161,106 @@ const setDrawerOpen = (open: boolean): void => {
   drawerToggle?.setAttribute('aria-expanded', open ? 'true' : 'false')
 }
 
-const renderAnalysisList = (element: HTMLUListElement | null, values: readonly string[]): void => {
-  element?.replaceChildren(...values.map((value) => {
-    const item = document.createElement('li')
-    item.textContent = value
-    return item
-  }))
+/**
+ * 从气泡里的内嵌视图入口打开抽屉并定位到对应分区。
+ *
+ * 定位就是分区身份本身（视图类型）：抽屉的分区与内嵌视图由同一份类型表生成，
+ * 所以这里只要把焦点摆到那个分区上，不新增第二套「哪个入口对应哪个分区」的映射。
+ *
+ * 抽屉现在没有这个分区时（这个入口指的是提问时的数据，那之后数据被换掉了），
+ * 退到抽屉本身并把这一点告诉用户——点下去毫无反应比落到别处更让人困惑。
+ */
+const openDrawerAt = (view: AnalysisViewType): void => {
+  setDrawerOpen(true)
+  // 分区身份就是视图类型：气泡入口与抽屉分区都由 renderDrawerPartitions 这一条路径产出，所以只在这一处找。
+  const partition = drawerViewsElement === null
+    ? undefined
+    : [...drawerViewsElement.children].find((child) => (child as HTMLElement).dataset.view === view) as HTMLElement | undefined
+  if (partition === undefined) {
+    setAnalysisStatus('抽屉里现在没有这个分区：这份数据已经不是提问时的了。')
+    drawerElement?.scrollIntoView({ block: 'start' })
+    return
+  }
+  // 先展开再定位：收起状态下分区没有布局，滚动到它身上等于没滚。
+  partition.tabIndex = -1
+  partition.focus({ preventScroll: true })
+  partition.scrollIntoView({ block: 'start' })
 }
 
+/**
+ * 空态里的问题建议：按已读到的数据给，读过的数据才有话可问。
+ * 建议与底部那一行数据状态说的是同一件事，所以两处都从这里取。
+ */
+const questionSuggestions = (): string[] => [
+  ...(keywordRows.length > 0
+    ? ['这个词位结构更依赖自然位还是广告位？']
+    : ['这个 ASIN 有没有值得关注的自然位？']),
+  ...(reviewData && reviewData.painPoints.length > 0
+    ? ['低星问题集中在哪几个方面？']
+    : ['评论里有没有反复出现的问题？']),
+  ...(currentRecord ? ['本小组的研究记录和现在的数据一致吗？'] : ['我还需要补读哪些数据？']),
+]
+
+/**
+ * 该重试的是哪一句：最后一条还没有回答的那一轮。提问进行中不可能再提，
+ * 所以「最后一条没有回答」就等于「上一轮失败了」。
+ */
+const pendingTurn = (): string | undefined => {
+  const last = thread[thread.length - 1]
+  return last !== undefined && last.answer === null ? last.question : undefined
+}
+
+/** 一行数据状态：描述当前证据包里有什么，不描述底层还藏着什么。 */
+const describeDataStatus = (): string => {
+  if (evidence === null) return '还没有当前对象的证据包。'
+  const keyword = evidence.keyword === null
+    ? '还没有读取词位'
+    : '词位 ' + evidence.keyword.rows.length + ' 条'
+  const reviews = evidence.reviews === null
+    ? '还没有读取评论'
+    : '评论样本 ' + evidence.reviews.sampled + ' / ' + evidence.reviews.total
+  return keyword + ' · ' + reviews + ' · 读取后对话与数据抽屉同时可用。'
+}
+
+const element = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: string): HTMLElementTagNameMap[K] => {
+  const node = document.createElement(tag)
+  if (className) node.className = className
+  return node
+}
+
+const section = (label: string, content: HTMLElement, kind: string): HTMLElement => {
+  const node = element('section', 'panel-bubble-section')
+  node.dataset.section = kind
+  const title = element('h3')
+  title.textContent = label
+  node.append(title, content)
+  return node
+}
+
+/** 一条带句中标号的回答：标号是 sup，序号指向底部来源清单。 */
+const markedList = (
+  className: string,
+  values: readonly string[],
+  citations: AnalysisAskSuccess['answer']['citations'],
+): HTMLElement => {
+  const list = element('ul', className)
+  for (const sentence of markAnswerSentences(values, citations)) {
+    const item = element('li')
+    const text = element('span')
+    text.textContent = sentence.text
+    item.append(text)
+    for (const mark of sentence.marks) {
+      const sup = element('sup', 'panel-citation-marker')
+      sup.textContent = mark
+      sup.dataset.marker = mark
+      item.append(sup)
+    }
+    list.append(item)
+  }
+  return list
+}
+
+/** 来源清单里那句话说的是「这个值来自哪里」，所以标签要落回用户看得懂的来源名。 */
 const ANALYSIS_SOURCE_LABELS: Record<string, string> = {
   storefront: '亚马逊前台',
   sellersprite: 'SellerSprite',
@@ -168,28 +268,88 @@ const ANALYSIS_SOURCE_LABELS: Record<string, string> = {
   'research-record': '小组研究记录',
 }
 
-const renderAnalysisAnswer = (): void => {
-  const response: AnalysisAskSuccess | null = lastAnalysis?.response ?? null
-  if (analysisAnswerElement) analysisAnswerElement.hidden = response === null
-  if (analysisAnswerQuestionElement) analysisAnswerQuestionElement.textContent = response === null ? '' : '问题：' + lastAnalysisQuestion
-  renderAnalysisList(analysisFactsElement, response?.answer.facts ?? [])
-  renderAnalysisList(analysisInferencesElement, response?.answer.inferences ?? [])
-  analysisCitationsElement?.replaceChildren(...(response?.answer.citations ?? []).map((citation) => {
-    const item = document.createElement('li')
-    item.textContent = citation.label + '：' + citation.value + '（' + (ANALYSIS_SOURCE_LABELS[citation.source] ?? citation.source) + '）'
-    return item
-  }))
-  if (response && lastAnalysisEvidence && analysisViewsElement) {
-    renderAnalysisViews(document, analysisViewsElement, response.view, lastAnalysisEvidence)
-  } else {
-    analysisViewsElement?.replaceChildren()
+/**
+ * 底部来源清单：序号 + 标签 + 值 + 来自哪里，序号就是句中标号里的那个数。
+ *
+ * 「来自哪里」不能省：这是用户判断某个数能不能信的依据，也是 CONTEXT 里引用标号要指到的东西。
+ */
+const sourceList = (citations: AnalysisAskSuccess['answer']['citations']): HTMLElement => {
+  const list = element('ol', 'panel-source-list')
+  list.dataset.section = 'sources'
+  for (const [index, citation] of citations.entries()) {
+    const item = element('li')
+    const number = element('b')
+    number.textContent = String(index + 1)
+    const label = element('span')
+    label.textContent = citation.label
+    const value = element('i')
+    value.textContent = citation.value + '（' + (ANALYSIS_SOURCE_LABELS[citation.source] ?? citation.source) + '）'
+    item.append(number, label, value)
+    list.append(item)
   }
+  return list
+}
+
+const renderAnswerBubble = (turn: { response: Extract<AnalysisResult, { kind: 'answer' }>['response']; evidence: AnalysisEvidence }): HTMLElement => {
+  const bubble = element('article', 'panel-bubble panel-bubble-answer')
+  bubble.dataset.bubble = 'answer'
+  const { answer } = turn.response
+  bubble.append(
+    section('事实', markedList('panel-analysis-list', answer.facts, answer.citations), 'facts'),
+    section('结论与判断', markedList('panel-analysis-list', answer.inferences, answer.citations), 'inferences'),
+    sourceList(answer.citations),
+  )
+  const views = element('div', 'panel-bubble-views')
+  views.dataset.section = 'views'
+  renderBubbleViews(document, views, turn.response.view, turn.evidence, openDrawerAt)
+  if (views.children.length > 0) bubble.append(views)
+  return bubble
+}
+
+/**
+ * 对话串的渲染：整串重建。
+ *
+ * 一轮一轮往上叠是 bug 的温床——切对象、失败重试、重渲染都会留下上一轮的气泡。
+ * 对话条数少，整串重建换的是「屏幕上永远等于 thread 里的那些」。
+ */
+const renderThread = (): void => {
+  const ask = (text: string): HTMLElement => {
+    const question = element('div', 'panel-bubble panel-bubble-question')
+    question.dataset.bubble = 'question'
+    const body = element('p')
+    body.textContent = text
+    question.append(body)
+    return question
+  }
+  const nodes = thread.flatMap<HTMLElement>((turn) => [
+    ask(turn.question),
+    ...(turn.answer === null ? [] : [renderAnswerBubble(turn.answer)]),
+  ])
+  analysisThreadElement?.replaceChildren(...nodes)
+  // 空态是「一条消息都还没有」的那一屏：提问一进对话串，它就该让位。
+  if (analysisEmptyElement) analysisEmptyElement.hidden = nodes.length > 0
+}
+
+const renderSuggestions = (): void => {
+  analysisSuggestsElement?.replaceChildren(...questionSuggestions().map((question) => {
+    const button = element('button', 'panel-suggest')
+    button.type = 'button'
+    button.textContent = question
+    button.addEventListener('click', () => {
+      if (analysisQuestionInput) analysisQuestionInput.value = question
+    })
+    return button
+  }))
+}
+
+const renderAnalysisAnswer = (): void => {
+  renderThread()
+  renderSuggestions()
+  if (analysisDataStatusElement) analysisDataStatusElement.textContent = describeDataStatus()
 }
 
 const clearAnalysisAnswer = (message: string | null = null): void => {
-  lastAnalysis = null
-  lastAnalysisEvidence = null
-  lastAnalysisQuestion = ''
+  thread = []
   renderAnalysisAnswer()
   setAnalysisStatus(message)
   if (analysisRetryButton) analysisRetryButton.hidden = true
@@ -263,9 +423,12 @@ const rebuildEvidence = (): AnalysisEvidence | null => {
 const renderDrawer = (): void => {
   if (drawerViewsElement === null || evidence === null) {
     drawerViewsElement?.replaceChildren()
+    renderAnalysisAnswer()
     return
   }
   renderDrawerPartitions(document, drawerViewsElement, evidence)
+  // 空态那一行数据状态说的是证据包里有什么，抽屉重建之后它也要跟着变。
+  renderAnalysisAnswer()
 }
 
 /**
@@ -395,10 +558,14 @@ const loadReviews = async (): Promise<void> => {
   }
 }
 
-const askCurrentAnalysis = async (): Promise<void> => {
+/**
+ * 提问。questionOverride 给重试用：重试要接着失败那一轮的问题再问一次，
+ * 而不是把用户后来在输入框里改过的字当成那一轮的问句——气泡里显示的仍是原来那句。
+ */
+const askCurrentAnalysis = async (questionOverride?: string): Promise<void> => {
   const target = current
   if (target === null || analysisLoading) return
-  const question = (analysisQuestionInput?.value ?? '').trim()
+  const question = (questionOverride ?? analysisQuestionInput?.value ?? '').trim()
   if (question.length === 0) {
     setAnalysisStatus('先写下你想了解的问题。', true)
     if (analysisRetryButton) analysisRetryButton.hidden = true
@@ -407,6 +574,16 @@ const askCurrentAnalysis = async (): Promise<void> => {
 
   const targetKey = positionTargetKey(target)
   const requestId = ++analysisRequestId
+  /**
+   * 提问立刻进对话串：问题先出现，回答回来再补上同一轮。
+   *
+   * 上一轮如果还没有回答，就用它原来那条气泡：
+   * 重试接的是同一轮，不该在对话串里留下两个一模一样的问题。
+   */
+  const retrying = pendingTurn() === question
+  thread = retrying ? thread : [...thread, { question, answer: null }]
+  const turnIndex = thread.length - 1
+  renderAnalysisAnswer()
   analysisLoading = true
   if (analysisAskButton) analysisAskButton.disabled = true
   if (analysisRetryButton) analysisRetryButton.hidden = true
@@ -421,19 +598,21 @@ const askCurrentAnalysis = async (): Promise<void> => {
     // 提问读的就是抽屉那一份：记录刚被同事改过也一并带进证据包，
     // 于是「对话里引用的数」与「抽屉里显示的」始终同源。
     currentRecord = recordResult?.kind === 'found' ? recordResult.record : null
-    const asked = rebuildEvidence()
+    const askedEvidence = rebuildEvidence()
     renderDrawer()
-    if (asked === null) return
-    const result = await askAnalysis(question, asked)
+    if (askedEvidence === null) return
+    const result = await askAnalysis(question, askedEvidence)
     if (requestId !== analysisRequestId || current === null || positionTargetKey(current) !== targetKey) return
     if (result.kind === 'answer') {
-      lastAnalysis = result
-      lastAnalysisEvidence = asked
-      lastAnalysisQuestion = question
+      // 回答补到本轮留下的那个位置上，不新添一轮：气泡里的问句前后是同一条。
+      thread = thread.map((turn, index) => index === turnIndex
+        ? { ...turn, answer: { response: result.response, evidence: askedEvidence } }
+        : turn)
       renderAnalysisAnswer()
       setAnalysisStatus('已生成回答，引用了 ' + result.response.answer.citations.length + ' 条证据。')
       if (analysisRetryButton) analysisRetryButton.hidden = true
     } else {
+      renderAnalysisAnswer()
       setAnalysisStatus(result.kind === 'unsupported-scope' ? result.message : result.reason, true)
       if (analysisRetryButton) analysisRetryButton.hidden = result.kind !== 'failed'
     }
@@ -579,7 +758,11 @@ analysisForm?.addEventListener('submit', (event) => {
   event.preventDefault()
   void askCurrentAnalysis()
 })
-analysisRetryButton?.addEventListener('click', () => { void askCurrentAnalysis() })
+// 重试接着失败那一轮的问句：用户可能在两次点击之间改了输入框，而那一轮的气泡仍是原来那句。
+analysisRetryButton?.addEventListener('click', () => { void askCurrentAnalysis(pendingTurn()) })
+// 空态里的读取入口与抽屉里的那两个是同一件事，走的是同一条取数路径。
+document.querySelector<HTMLButtonElement>('#analysis-load-positions')?.addEventListener('click', () => { void loadPositions() })
+document.querySelector<HTMLButtonElement>('#analysis-load-reviews')?.addEventListener('click', () => { void loadReviews() })
 
 formElement?.addEventListener('submit', (event) => {
   event.preventDefault()

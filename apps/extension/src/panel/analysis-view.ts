@@ -240,15 +240,45 @@ export const renderDrawerPartitions = (
   container.replaceChildren(...views)
 }
 
-export const renderAnalysisViews = (
+/**
+ * 气泡里只放得下摘要，宽表退成一个指向数据抽屉的入口。目前只有词位表是宽表：
+ * 它的列多到在面板宽度里读不动，而概览卡、趋势、痛点都是气泡里读得完的。
+ */
+const ENTRY_TYPES: readonly AnalysisViewType[] = ['keyword-table']
+
+/** 入口文案里的条数取自证据包，与抽屉里那张表是同一份数据——两处不会出现不同的行数。 */
+const entryLabel = (type: AnalysisViewType, evidence: AnalysisEvidence): string => type === 'keyword-table'
+  ? '查看' + viewTitle[type] + '（' + (evidence.keyword?.rows.length ?? 0) + ' 条）'
+  : '查看' + viewTitle[type]
+
+/**
+ * 气泡里的内嵌视图：摘要类就地渲染，宽表退成一个指向数据抽屉的入口。
+ *
+ * 整表不进气泡（ADR-0005）：词位表这类宽表在面板宽度里读不动，塞进气泡会挤掉对话本身。
+ * 入口与抽屉里的分区共用同一批组件与同一份证据包，入口文案里的条数也就来自那张表本身。
+ *
+ * 与抽屉分区同样走 normalizeAnalysisViewSpec：未知类型在那里就被丢掉，
+ * 规格与数据不匹配时降级为表格，重复请求同一份数据得到同一个视图。
+ */
+export const renderBubbleViews = (
   document: Document,
   container: HTMLElement,
   spec: AnalysisViewSpec,
   evidence: AnalysisEvidence,
+  onOpenDrawer: (type: AnalysisViewType) => void,
 ): void => {
-  const normalized = normalizeAnalysisViewSpec(spec, evidence)
-  const views = normalized.views.map((type) => renderOne(document, type, evidence)).filter((view): view is HTMLElement => view !== null)
-  container.replaceChildren(...views)
+  const types = normalizeAnalysisViewSpec(spec, evidence).views
+  const nodes = types.map((type) => {
+    if (!ENTRY_TYPES.includes(type)) return renderOne(document, type, evidence)
+    const entry = document.createElement('button')
+    entry.type = 'button'
+    entry.className = 'panel-view-entry'
+    entry.dataset.entry = type
+    entry.textContent = entryLabel(type, evidence)
+    entry.addEventListener('click', () => onOpenDrawer(type))
+    return entry
+  }).filter((node): node is HTMLElement => node !== null)
+  container.replaceChildren(...nodes)
 }
 
 export type { AnalysisKeywordRow }

@@ -510,28 +510,40 @@ body {
   color: var(--ca-danger);
 }
 
-.panel-analysis-answer {
+/* 对话串：提问与回答各占一个气泡，回答里的分区与底部来源清单都长在同一个气泡里。 */
+.panel-thread {
   display: flex;
   flex-direction: column;
-  gap: var(--ca-space-8);
+  gap: var(--ca-space-10);
+}
+
+.panel-bubble {
   padding: var(--ca-space-10);
   border: 1px solid var(--ca-line);
   background: var(--ca-surface);
 }
 
-.panel-analysis-question {
-  margin: 0;
-  color: var(--ca-ink-muted);
-  font-size: var(--ca-font-sm);
+.panel-bubble-question {
+  margin-left: var(--ca-space-26);
+  background: var(--ca-surface-raised);
 }
 
-.panel-analysis-block {
+.panel-bubble p {
+  margin: 0;
+  color: var(--ca-ink);
+}
+
+.panel-bubble-answer {
+  margin-right: var(--ca-space-14);
+}
+
+.panel-bubble-section {
   display: flex;
   flex-direction: column;
   gap: var(--ca-space-4);
 }
 
-.panel-analysis-block h3,
+.panel-bubble-section h3,
 .panel-analysis-view h3,
 .panel-source-types h4 {
   margin: 0;
@@ -549,14 +561,123 @@ body {
   font-size: var(--ca-font-sm);
 }
 
-.panel-analysis-citations {
-  color: var(--ca-ink-muted);
+/* 底部来源清单：序号就是句中标号里的数字，所以两者用同一个颜色。 */
+.panel-source-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ca-space-3);
+  margin: 0;
+  padding: var(--ca-space-8) 0 0;
+  border-top: 1px solid var(--ca-line);
+  list-style: none;
 }
 
-.panel-analysis-views {
+.panel-source-list li {
+  display: flex;
+  gap: var(--ca-space-7);
+  color: var(--ca-ink-muted);
+  font-size: var(--ca-font-sm);
+}
+
+.panel-source-list b,
+.panel-citation-marker {
+  color: var(--ca-accent);
+  font-size: var(--ca-font-xs);
+}
+
+.panel-citation-marker {
+  margin-left: var(--ca-space-2);
+  vertical-align: super;
+}
+
+.panel-source-list i {
+  color: var(--ca-ink-body);
+  font-style: normal;
+}
+
+/* 气泡里的内嵌视图：就地渲染摘要，宽表退成一个指向数据抽屉的入口。 */
+.panel-bubble-views {
   display: flex;
   flex-direction: column;
   gap: var(--ca-space-8);
+}
+
+.panel-view-entry {
+  align-self: flex-start;
+  padding: var(--ca-space-6) var(--ca-space-9);
+  border: 1px solid var(--ca-line-control);
+  background: transparent;
+  color: var(--ca-ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.panel-view-entry:focus-visible {
+  outline: 2px solid var(--ca-accent);
+  outline-offset: 1px;
+}
+
+/* 空态：引导语、可点的问题建议与一行数据状态，读取入口就在这一处。 */
+.panel-analysis-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ca-space-8);
+  padding: var(--ca-space-10);
+  border: 1px solid var(--ca-line);
+  background: var(--ca-surface);
+}
+
+.panel-analysis-empty .panel-hint {
+  margin: 0;
+  color: var(--ca-ink-muted);
+  font-size: var(--ca-font-sm);
+}
+
+.panel-suggests {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ca-space-5);
+  align-items: flex-start;
+}
+
+.panel-suggests button {
+  padding: var(--ca-space-5) var(--ca-space-9);
+  border: 1px solid var(--ca-line-control);
+  background: transparent;
+  color: var(--ca-ink-body);
+  font: inherit;
+  font-size: var(--ca-font-sm);
+  cursor: pointer;
+}
+
+.panel-suggests button:focus-visible {
+  outline: 2px solid var(--ca-accent);
+  outline-offset: 1px;
+}
+
+.panel-data-status {
+  margin: 0;
+  color: var(--ca-ink-muted);
+  font-size: var(--ca-font-sm);
+}
+
+.panel-data-actions {
+  display: flex;
+  gap: var(--ca-space-8);
+}
+
+.panel-data-actions button {
+  padding: var(--ca-space-6) var(--ca-space-9);
+  border: 1px solid var(--ca-line-control);
+  background: transparent;
+  color: var(--ca-ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.panel-data-actions button:focus-visible {
+  outline: 2px solid var(--ca-accent);
+  outline-offset: 1px;
 }
 
 .panel-analysis-view {

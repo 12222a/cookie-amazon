@@ -14,6 +14,7 @@ cloudflare/config-worker/.wrangler/
 .cursor-*
 .playwright-cli/
 .codegraph/
+.scratch/
 artifacts/
 chrome-mv3.zip
 tsconfig.b-track.json

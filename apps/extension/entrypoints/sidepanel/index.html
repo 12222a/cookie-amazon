@@ -34,33 +34,30 @@
         <section id="analysis" class="panel-analysis" hidden>
           <div class="panel-analysis-head">
             <div>
-              <h2>AI 选品问答</h2>
+              <h2>选品对话</h2>
               <p class="panel-hint">只根据当前 ASIN 的前台信息、已读取的 SellerSprite 数据和本小组研究记录回答。</p>
             </div>
             <button id="analysis-retry" type="button" hidden>重试</button>
           </div>
+
+          <section id="analysis-empty" class="panel-analysis-empty">
+            <p class="panel-hint">就当前 ASIN 提问。回答分「事实」与「结论与判断」，句末的标号对应回答底部的来源清单。</p>
+            <div id="analysis-suggests" class="panel-suggests"></div>
+            <p id="analysis-data-status" class="panel-data-status" role="status"></p>
+            <div class="panel-data-actions">
+              <button id="analysis-load-positions" type="button">读取词位</button>
+              <button id="analysis-load-reviews" type="button">读取评论</button>
+            </div>
+          </section>
+
+          <div id="analysis-thread" class="panel-thread"></div>
+
           <form id="analysis-form" class="panel-analysis-form">
             <label for="analysis-question">你想了解什么</label>
             <textarea id="analysis-question" name="question" rows="3" maxlength="1000" placeholder="例如：这个 ASIN 当前最需要关注哪些问题？"></textarea>
             <button id="analysis-ask" type="submit">让 AI 分析</button>
           </form>
           <p id="analysis-status" class="panel-analysis-status" role="status" hidden></p>
-          <section id="analysis-answer" class="panel-analysis-answer" hidden>
-            <p id="analysis-answer-question" class="panel-analysis-question"></p>
-            <section class="panel-analysis-block">
-              <h3>事实</h3>
-              <ul id="analysis-facts" class="panel-analysis-list"></ul>
-            </section>
-            <section class="panel-analysis-block">
-              <h3>结论与判断</h3>
-              <ul id="analysis-inferences" class="panel-analysis-list"></ul>
-            </section>
-            <section class="panel-analysis-block">
-              <h3>引用证据</h3>
-              <ul id="analysis-citations" class="panel-analysis-list panel-analysis-citations"></ul>
-            </section>
-            <section id="analysis-views" class="panel-analysis-views"></section>
-          </section>
         </section>
 
         <section id="drawer" class="panel-drawer">
