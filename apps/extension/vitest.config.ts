@@ -8,6 +8,9 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   test: {
     environment: 'happy-dom',
+    // 样式共享层要求测试能读到 CSS 文本本身（浮层把同一份文本内联进 shadow DOM），
+    // 默认的 css: false 会把 CSS 导入替换成空串，读不到内容。
+    css: true,
     include: ['src/**/*.test.ts', 'entrypoints/**/*.test.ts'],
   },
 })

@@ -1,0 +1,58 @@
+/*
+ * 两套外壳（侧边栏、页面内浮层）共用的配色、字号与间距，只有这一份（#18、ADR-0005）。
+ *
+ * 侧边栏是普通文档，panel.css 用 @import 直接引入这份文件；浮层的样式必须在 shadow DOM
+ * 里内联，overlay.ts 用 ?raw 读同一份文本再拼上自己的布局。两壳各自的几何——面板宽度、
+ * 浮层尺寸与定位——不入此文件。
+ *
+ * 选择器写成 :root, :host，是让同一份 token 分别落在侧边栏文档与浮层的 shadow 宿主上。
+ * 之后换配色只改这里的值，两处一起变。两壳用到的取值都收在这里，不按「刻度」四舍五入，
+ * 也不给没人用的值起名字。
+ */
+:root,
+:host {
+  /* 颜色 */
+  --ca-bg: #0b1015;
+  --ca-surface: #111920;
+  --ca-surface-raised: #131c23;
+  --ca-line: #29343d;
+  --ca-line-strong: #35414a;
+  --ca-line-control: #44515a;
+  --ca-line-soft: #202b33;
+  --ca-ink: #f2f5f3;
+  --ca-ink-body: #cdd5d4;
+  --ca-ink-muted: #8b9794;
+  --ca-accent: #6ea8a0;
+  --ca-danger: #c99b8d;
+  --ca-identity-surface: #2b2116;
+  --ca-identity-line: #695235;
+  --ca-identity-ink: #ddbf94;
+  --ca-shadow: 0 6px 20px rgba(0, 0, 0, .45);
+
+  /* 字体 */
+  --ca-font-family: system-ui, sans-serif;
+  --ca-leading-body: 1.55;
+  --ca-leading-compact: 1.5;
+  --ca-font-micro: 9px;
+  --ca-font-xs: 10px;
+  --ca-font-sm: 11px;
+  --ca-font-md: 12px;
+  --ca-font-lg: 13px;
+  --ca-font-title: 14px;
+  --ca-font-metric: 17px;
+
+  /* 间距。命名即取值，因为同一个数在两壳里的语义不同（6px 既做过 gap 也做过 padding）。 */
+  --ca-space-2: 2px;
+  --ca-space-3: 3px;
+  --ca-space-4: 4px;
+  --ca-space-5: 5px;
+  --ca-space-6: 6px;
+  --ca-space-7: 7px;
+  --ca-space-8: 8px;
+  --ca-space-9: 9px;
+  --ca-space-10: 10px;
+  --ca-space-12: 12px;
+  --ca-space-14: 14px;
+  --ca-space-18: 18px;
+  --ca-space-26: 26px;
+}

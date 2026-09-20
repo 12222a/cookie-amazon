@@ -4,6 +4,10 @@ import type { OverlayMode, OverlayPosition } from './overlay-state'
 import { clampOverlayPosition } from './overlay-state'
 import type { KeywordPositionRow } from './keyword-positions'
 import { renderKeywordTrend } from './keyword-trend-view'
+// 浮层在 shadow DOM 里，拿不到侧边栏那份外部样式，所以这里读同一份 CSS 文本再内联进去。
+// shell-style.css 是两套外壳共用的配色、字号与间距；overlay.css 只是浮层自己的布局。
+import shellStyle from './shell-style.css?raw'
+import overlayStyle from './overlay.css?raw'
 
 export const OVERLAY_HOST_ID = 'cookie-amazon-overlay-host'
 
@@ -23,35 +27,7 @@ export type OverlayHandle = {
   remove: () => void
 }
 
-const STYLE = `
-:host { all: initial; }
-.ca-root { position: fixed; z-index: 2147483646; box-sizing: border-box;
-  border: 1px solid #35414a; background: #0b1015; color: #cdd5d4;
-  font: 12px/1.5 system-ui, sans-serif; box-shadow: 0 6px 20px rgba(0,0,0,.45); }
-.ca-card { width: 268px; padding: 10px 12px; }
-.ca-pill { padding: 4px 9px; cursor: pointer; color: #f2f5f3; font-size: 11px; }
-.ca-head { display: flex; align-items: baseline; gap: 8px; }
-.ca-card .ca-head { cursor: grab; }
-.ca-asin { color: #f2f5f3; font-weight: 600; }
-.ca-meta { color: #8b9794; font-size: 10px; margin-left: auto; }
-.ca-fields { display: grid; grid-template-columns: auto 1fr; gap: 3px 8px; margin: 8px 0 0; }
-.ca-fields dt { color: #8b9794; font-size: 10px; }
-.ca-fields dd { margin: 0; color: #f2f5f3; word-break: break-word; }
-.ca-trends { margin-top: 10px; padding-top: 8px; border-top: 1px solid #29343d; }
-.ca-trends-title { margin: 0 0 5px; color: #8b9794; font-size: 10px; font-weight: 500; }
-.ca-trend-list { display: flex; flex-direction: column; gap: 5px; }
-.ca-trend-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; }
-.ca-trend-keyword { min-width: 0; overflow: hidden; color: #cdd5d4; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.ca-keyword-trend { display: inline-flex; min-height: 22px; align-items: center; color: #8b9794; font-size: 9px; white-space: nowrap; }
-.ca-keyword-trend svg { display: block; width: 82px; height: 22px; overflow: visible; }
-.ca-keyword-trend polyline { fill: none; stroke: #6ea8a0; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.75; vector-effect: non-scaling-stroke; }
-.ca-keyword-trend circle { fill: #6ea8a0; }
-.ca-keyword-trend.keyword-trend--insufficient { color: #8b9794; }
-.ca-actions { display: flex; gap: 6px; margin-top: 10px; }
-.ca-actions button { flex: 1; padding: 5px 8px; border: 1px solid #44515a; background: transparent;
-  color: #f2f5f3; font: inherit; cursor: pointer; }
-.ca-root button:focus-visible, .ca-pill:focus-visible { outline: 2px solid #6ea8a0; outline-offset: 1px; }
-`
+const STYLE = shellStyle + overlayStyle
 
 const element = <K extends keyof HTMLElementTagNameMap>(
   document: Document,

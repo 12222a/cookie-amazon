@@ -1,0 +1,28 @@
+/* 浮层的布局。配色与字号来自 shell-style.css，浮层在 shadow DOM 里运行时由 overlay.ts 内联。 */
+:host { all: initial; }
+.ca-root { position: fixed; z-index: 2147483646; box-sizing: border-box;
+  border: 1px solid var(--ca-line-strong); background: var(--ca-bg); color: var(--ca-ink-body);
+  font: var(--ca-font-md)/var(--ca-leading-compact) var(--ca-font-family); box-shadow: var(--ca-shadow); }
+.ca-card { width: 268px; padding: var(--ca-space-10) var(--ca-space-12); }
+.ca-pill { padding: var(--ca-space-4) var(--ca-space-9); cursor: pointer; color: var(--ca-ink); font-size: var(--ca-font-sm); }
+.ca-head { display: flex; align-items: baseline; gap: var(--ca-space-8); }
+.ca-card .ca-head { cursor: grab; }
+.ca-asin { color: var(--ca-ink); font-weight: 600; }
+.ca-meta { color: var(--ca-ink-muted); font-size: var(--ca-font-xs); margin-left: auto; }
+.ca-fields { display: grid; grid-template-columns: auto 1fr; gap: var(--ca-space-3) var(--ca-space-8); margin: var(--ca-space-8) 0 0; }
+.ca-fields dt { color: var(--ca-ink-muted); font-size: var(--ca-font-xs); }
+.ca-fields dd { margin: 0; color: var(--ca-ink); word-break: break-word; }
+.ca-trends { margin-top: var(--ca-space-10); padding-top: var(--ca-space-8); border-top: 1px solid var(--ca-line); }
+.ca-trends-title { margin: 0 0 var(--ca-space-5); color: var(--ca-ink-muted); font-size: var(--ca-font-xs); font-weight: 500; }
+.ca-trend-list { display: flex; flex-direction: column; gap: var(--ca-space-5); }
+.ca-trend-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--ca-space-6); }
+.ca-trend-keyword { min-width: 0; overflow: hidden; color: var(--ca-ink-body); font-size: var(--ca-font-xs); text-overflow: ellipsis; white-space: nowrap; }
+.ca-keyword-trend { display: inline-flex; min-height: 22px; align-items: center; color: var(--ca-ink-muted); font-size: var(--ca-font-micro); white-space: nowrap; }
+.ca-keyword-trend svg { display: block; width: 82px; height: 22px; overflow: visible; }
+.ca-keyword-trend polyline { fill: none; stroke: var(--ca-accent); stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.75; vector-effect: non-scaling-stroke; }
+.ca-keyword-trend circle { fill: var(--ca-accent); }
+.ca-keyword-trend.keyword-trend--insufficient { color: var(--ca-ink-muted); }
+.ca-actions { display: flex; gap: var(--ca-space-6); margin-top: var(--ca-space-10); }
+.ca-actions button { flex: 1; padding: var(--ca-space-5) var(--ca-space-8); border: 1px solid var(--ca-line-control); background: transparent;
+  color: var(--ca-ink); font: inherit; cursor: pointer; }
+.ca-root button:focus-visible, .ca-pill:focus-visible { outline: 2px solid var(--ca-accent); outline-offset: 1px; }
