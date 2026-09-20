@@ -1,4 +1,5 @@
 import {
+  ANALYSIS_VIEW_TYPES,
   normalizeAnalysisViewSpec,
   type AnalysisEvidence,
   type AnalysisKeywordRow,
@@ -67,6 +68,24 @@ const renderKeywordSummary = (document: Document, evidence: AnalysisEvidence): H
     card(document, '有广告排名', evidence.keyword.summary.adKeywords),
   )
   node.append(cards)
+  // 来源类型是「这个词靠什么出单」的一半信息，收进抽屉也要跟着走。
+  if (evidence.keyword.summary.sourceTypeCounts.length > 0) {
+    const sourceTypes = element(document, 'div', 'panel-source-types')
+    const title = element(document, 'h4')
+    title.textContent = '来源类型'
+    const list = element(document, 'ul')
+    for (const item of evidence.keyword.summary.sourceTypeCounts) {
+      const row = element(document, 'li')
+      const name = element(document, 'span')
+      name.textContent = item.label
+      const count = element(document, 'strong')
+      count.textContent = String(item.count)
+      row.append(name, count)
+      list.append(row)
+    }
+    sourceTypes.append(title, list)
+    node.append(sourceTypes)
+  }
   return node
 }
 
@@ -186,6 +205,13 @@ const renderRecord = (document: Document, evidence: AnalysisEvidence): HTMLEleme
 }
 
 const renderOne = (document: Document, type: AnalysisViewType, evidence: AnalysisEvidence): HTMLElement | null => {
+  const view = renderByType(document, type, evidence)
+  // 视图类型是这个组件的身份：内嵌视图与抽屉分区靠它对应上，点内嵌视图的入口才能定位到分区。
+  if (view) view.dataset.view = type
+  return view
+}
+
+const renderByType = (document: Document, type: AnalysisViewType, evidence: AnalysisEvidence): HTMLElement | null => {
   if (type === 'object-summary') return renderObjectSummary(document, evidence)
   if (type === 'keyword-summary') return renderKeywordSummary(document, evidence)
   if (type === 'keyword-table') return renderKeywordTable(document, evidence)
@@ -193,6 +219,25 @@ const renderOne = (document: Document, type: AnalysisViewType, evidence: Analysi
   if (type === 'review-summary') return renderReviewSummary(document, evidence)
   if (type === 'review-pain-points') return renderReviewPainPoints(document, evidence)
   return renderRecord(document, evidence)
+}
+
+/**
+ * 数据抽屉的分区：与内嵌视图同一套组件、同一份证据包，因此两处不可能出现不同的数字。
+ *
+ * 分区集合由证据包决定，未知类型在 normalizeAnalysisViewSpec 里就被丢掉，这里拿到的
+ * 只会是固定类型。研究记录分区不在这里渲染——那是抽屉里可写的表单，由面板自己维护。
+ */
+export const renderDrawerPartitions = (
+  document: Document,
+  container: HTMLElement,
+  evidence: AnalysisEvidence,
+): void => {
+  // 逐个请求全部固定类型，由同一份可用性规则筛掉证据里没有的：抽屉与回答里的内嵌视图
+  // 因此对「哪些类型可用」只有一套判断，未读到的数据不会在抽屉里占一个空分区。
+  const types = normalizeAnalysisViewSpec({ schemaVersion: 1, views: [...ANALYSIS_VIEW_TYPES] }, evidence).views
+    .filter((type) => type !== 'research-record')
+  const views = types.map((type) => renderOne(document, type, evidence)).filter((view): view is HTMLElement => view !== null)
+  container.replaceChildren(...views)
 }
 
 export const renderAnalysisViews = (

@@ -48,26 +48,6 @@ body {
   color: var(--ca-ink-muted);
 }
 
-.panel-fields {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: var(--ca-space-6) var(--ca-space-10);
-  margin: 0;
-  padding: var(--ca-space-12);
-  border: 1px solid var(--ca-line);
-  background: var(--ca-surface);
-}
-
-.panel-fields dt {
-  color: var(--ca-ink-muted);
-}
-
-.panel-fields dd {
-  margin: 0;
-  color: var(--ca-ink);
-  word-break: break-word;
-}
-
 .panel-manual {
   display: flex;
   flex-direction: column;
@@ -103,7 +83,8 @@ body {
   outline: 2px solid var(--ca-accent);
   outline-offset: 1px;
 }
-.panel-positions {
+/* 数据抽屉：默认收起的一层，按分区放同一份证据包里的表格与概览（ADR-0005）。 */
+.panel-drawer {
   display: flex;
   flex-direction: column;
   gap: var(--ca-space-8);
@@ -111,26 +92,8 @@ body {
   border-top: 1px solid var(--ca-line);
 }
 
-.panel-positions-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ca-space-10);
-}
-
-.panel-positions-head h2 {
-  margin: 0;
-  color: var(--ca-ink);
-  font-size: var(--ca-font-lg);
-}
-
-.panel-positions .panel-hint {
-  margin: 0;
-  color: var(--ca-ink-muted);
-  font-size: var(--ca-font-sm);
-}
-
-.panel-positions-head button {
+.panel-drawer-toggle {
+  align-self: flex-start;
   padding: var(--ca-space-6) var(--ca-space-9);
   border: 1px solid var(--ca-line-control);
   background: transparent;
@@ -139,31 +102,91 @@ body {
   cursor: pointer;
 }
 
-.panel-positions-head button:disabled {
-  cursor: default;
-  opacity: .55;
+.panel-drawer-toggle[aria-expanded='true'] {
+  border-color: var(--ca-accent);
+  color: var(--ca-accent);
 }
 
-.panel-positions-status {
-  margin: 0;
-  color: var(--ca-ink-body);
-  font-size: var(--ca-font-sm);
+.panel-drawer-toggle:focus-visible {
+  outline: 2px solid var(--ca-accent);
+  outline-offset: 1px;
 }
 
-.panel-position-summary {
+.panel-drawer-body {
   display: flex;
   flex-direction: column;
-  gap: var(--ca-space-8);
+  gap: var(--ca-space-10);
+}
+
+.panel-drawer-sources {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ca-space-6);
   padding: var(--ca-space-10);
   border: 1px solid var(--ca-line);
   background: var(--ca-surface);
 }
 
-.panel-position-summary h3,
-.panel-source-types h4 {
+.panel-drawer-sources .panel-hint {
+  margin: 0;
+  color: var(--ca-ink-muted);
+  font-size: var(--ca-font-sm);
+}
+
+/* 读取入口与它读出来的状态在同一行：点了什么、得到了什么，一眼能看到一处。 */
+.panel-drawer-source {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ca-space-8);
+}
+
+.panel-drawer-source button {
+  flex: none;
+  padding: var(--ca-space-6) var(--ca-space-9);
+  border: 1px solid var(--ca-line-control);
+  background: transparent;
+  color: var(--ca-ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.panel-drawer-source button:disabled {
+  cursor: default;
+  opacity: .55;
+}
+
+.panel-drawer-source button:focus-visible {
+  outline: 2px solid var(--ca-accent);
+  outline-offset: 1px;
+}
+
+.panel-drawer-status {
+  margin: 0;
+  color: var(--ca-ink-body);
+  font-size: var(--ca-font-sm);
+}
+
+.panel-drawer-views,
+.panel-drawer-partition {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ca-space-6);
+}
+
+.panel-drawer-views {
+  gap: var(--ca-space-10);
+}
+
+.panel-drawer-partition h2 {
   margin: 0;
   color: var(--ca-ink);
-  font-size: var(--ca-font-md);
+  font-size: var(--ca-font-lg);
+}
+
+.panel-drawer-partition .panel-hint {
+  margin: 0;
+  color: var(--ca-ink-muted);
+  font-size: var(--ca-font-sm);
 }
 
 .panel-summary-cards {
@@ -219,23 +242,6 @@ body {
 
 .panel-source-types li strong {
   color: var(--ca-ink);
-}
-
-.panel-positions-details {
-  border: 1px solid var(--ca-line);
-  background: var(--ca-surface);
-}
-
-.panel-positions-details summary {
-  padding: var(--ca-space-8) var(--ca-space-10);
-  color: var(--ca-ink-body);
-  cursor: pointer;
-  font-size: var(--ca-font-sm);
-}
-
-.panel-positions-details summary:focus-visible {
-  outline: 2px solid var(--ca-accent);
-  outline-offset: -2px;
 }
 
 /* 窄栏里表格必须能横向滚动，否则关键词列会把数字列挤没。 */
@@ -309,11 +315,6 @@ body {
   border-bottom: 0;
 }
 
-.panel-positions-head button:focus-visible {
-  outline: 2px solid var(--ca-accent);
-  outline-offset: 1px;
-}
-
 .panel-viewer {
   margin: var(--ca-space-2) 0 0;
   color: var(--ca-ink-muted);
@@ -366,12 +367,6 @@ body {
   cursor: pointer;
 }
 
-.panel-record {
-  margin-top: var(--ca-space-12);
-  padding-top: var(--ca-space-12);
-  border-top: 1px solid var(--ca-line);
-}
-
 .panel-record-head {
   display: flex;
   align-items: baseline;
@@ -390,61 +385,11 @@ body {
   font-size: var(--ca-font-xs);
 }
 
-.panel-reviews {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ca-space-8);
-  padding-top: var(--ca-space-12);
-  border-top: 1px solid var(--ca-line);
-}
-
-.panel-reviews-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ca-space-10);
-}
-
-.panel-reviews-head h2 {
-  margin: 0;
-  color: var(--ca-ink);
-  font-size: var(--ca-font-lg);
-}
-
-.panel-reviews-head button {
-  padding: var(--ca-space-6) var(--ca-space-9);
-  border: 1px solid var(--ca-line-control);
-  background: transparent;
-  color: var(--ca-ink);
-  font: inherit;
-  cursor: pointer;
-}
-
-.panel-reviews-head button:disabled {
-  cursor: default;
-  opacity: .55;
-}
-
-.panel-reviews-status,
+.panel-drawer-status,
 .panel-review-coverage {
   margin: 0;
   color: var(--ca-ink-body);
   font-size: var(--ca-font-sm);
-}
-
-.panel-review-summary {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ca-space-6);
-  padding: var(--ca-space-10);
-  border: 1px solid var(--ca-line);
-  background: var(--ca-surface);
-}
-
-.panel-pain-points {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ca-space-6);
 }
 
 .panel-pain-point {
@@ -587,7 +532,8 @@ body {
 }
 
 .panel-analysis-block h3,
-.panel-analysis-view h3 {
+.panel-analysis-view h3,
+.panel-source-types h4 {
   margin: 0;
   color: var(--ca-ink);
   font-size: var(--ca-font-md);

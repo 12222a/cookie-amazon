@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createAnalysisObject } from '../../analysis-object'
 import { ANALYSIS_OBJECT_STORAGE_KEY } from '../../analysis-object-store'
 import { VIEWER_IDENTITY_STORAGE_KEY } from '../../viewer-identity'
+import sidepanelHtml from '../../../entrypoints/sidepanel/index.html?raw'
 import type { AnalysisResult } from '../analysis-client'
 import { renderAnalysisViews } from '../analysis-view'
 import { buildAnalysisEvidence } from '../analysis-evidence'
@@ -29,11 +30,16 @@ class Node {
   disabled = false
   value = ''
   textContent = ''
-  dataset = {}
+  open = false
+  attributes = new Map<string, string>()
+  /** 面板按 dataset.view 标出分区的视图类型，测试也按它读回，不比对 HTML 长相。 */
+  dataset: Record<string, string> = {}
   children: Node[] = []
   listeners = new Map<string, (event: { preventDefault(): void }) => void>()
   append(...nodes: Node[]) { this.children.push(...nodes) }
   replaceChildren(...nodes: Node[]) { this.children = nodes }
+  setAttribute(name: string, value: string) { this.attributes.set(name, value) }
+  getAttribute(name: string): string | null { return this.attributes.get(name) ?? null }
   addEventListener(type: string, callback: (event: { preventDefault(): void }) => void) { this.listeners.set(type, callback) }
   dispatch(type: string) { this.listeners.get(type)?.({ preventDefault() {} }) }
 }
@@ -44,6 +50,35 @@ let stored: Record<string, unknown>
 let changed: (changes: Record<string, unknown>, area: string) => void
 const node = (id: string): Node => nodes.get(id)!
 const settle = async () => { for (let i = 0; i < 30; i++) await Promise.resolve() }
+
+const walk = (value: Node): Node[] => [value, ...value.children.flatMap(walk)]
+const textsOf = (value: Node): string[] => walk(value).map((item) => item.textContent)
+
+/** 抽屉里的分区：读证据渲染的那些挂在 #drawer-views 下，研究记录分区是静态节点。 */
+const partitions = (): Node[] => [
+  ...node('#drawer-views').children,
+  ...(nodes.has('#record') ? [node('#record')] : []),
+]
+
+/** 抽屉里当前可见的分区，身份是它对应的视图类型。 */
+const drawerSections = (): string[] => partitions()
+  .flatMap((item) => !item.hidden && item.dataset.view ? [item.dataset.view] : [])
+
+/** 抽屉里看得见的字：分区内容由同一份证据包渲染，两处不会出现不同数字。 */
+const drawerText = (): string => partitions()
+  .flatMap((item) => item.hidden ? [] : walk(item))
+  .map((item) => item.textContent)
+  .join('|')
+
+const keywordRow = (keyword: string): unknown => ({
+  keyword,
+  natural: '第 1 页 · 12',
+  ad: '—',
+  naturalShare: '4.2%',
+  adShare: '—',
+  types: '自然搜索词',
+  trend: { kind: 'unavailable' },
+})
 
 beforeEach(async () => {
   vi.resetModules()
@@ -76,7 +111,180 @@ beforeEach(async () => {
 
 afterEach(() => { vi.unstubAllGlobals() })
 
+/**
+ * DOM double 认不出标记里少了一个 id、少了 data-view，或哪个分区藏在抽屉外面——
+ * 这些正是这次改动最容易出错的地方。这个用例用真实的 sidepanel 标记跑一遍面板。
+ */
+describe('侧边栏真实标记', () => {
+  beforeEach(async () => {
+    vi.resetModules()
+    // 丢掉 DOM double，改用 vitest 环境给的真实文档。
+    vi.unstubAllGlobals()
+    document.body.innerHTML = sidepanelHtml.replace(/^[\s\S]*?<body>/, '').replace(/<\/body>[\s\S]*$/, '')
+    vi.stubGlobal('browser', { storage: {
+      local: { get: async () => ({}), set: async () => {} },
+      onChanged: { addListener: () => {} },
+    } })
+    await import('../../../entrypoints/sidepanel/main')
+    await settle()
+  })
+
+  it('抽屉默认收起，点一下展开，再点收起', () => {
+    const body = document.querySelector<HTMLElement>('#drawer-body')!
+    const toggle = document.querySelector<HTMLButtonElement>('#drawer-toggle')!
+    expect(body.hidden).toBe(true)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    toggle.click()
+    expect(body.hidden).toBe(false)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    toggle.click()
+    expect(body.hidden).toBe(true)
+  })
+
+  it('读取入口和数据状态都在抽屉里，展开就能看到', () => {
+    const drawer = document.querySelector<HTMLElement>('#drawer-body')!
+    for (const id of ['#load-positions', '#positions-status', '#load-reviews', '#reviews-status', '#drawer-views']) {
+      // 用出现次数而不是 querySelector：重复的 id 会让 querySelector 拿到同一个节点，看不出重复。
+      expect(drawer.querySelectorAll(id).length, id + ' 应恰好有一个，且在抽屉内').toBe(1)
+      expect(document.querySelectorAll(id).length, id + ' 不应在抽屉外重复出现').toBe(1)
+    }
+  })
+})
+
 describe('analysis panel lifecycle', () => {
+  it('打开抽屉才看数据：默认收起，可主动展开与收起，且不写存储', () => {
+    expect(node('#drawer-body').hidden).toBe(true)
+    expect(node('#drawer-toggle').getAttribute('aria-expanded')).toBe('false')
+    const storedBefore = JSON.stringify(stored)
+    node('#drawer-toggle').dispatch('click')
+    expect(node('#drawer-body').hidden).toBe(false)
+    expect(node('#drawer-toggle').getAttribute('aria-expanded')).toBe('true')
+    node('#drawer-toggle').dispatch('click')
+    expect(node('#drawer-body').hidden).toBe(true)
+    expect(node('#drawer-toggle').getAttribute('aria-expanded')).toBe('false')
+    // 展开状态只在本次会话内保留：开关抽屉不留任何可跨会话恢复的痕迹。
+    expect(JSON.stringify(stored)).toBe(storedBefore)
+  })
+
+  it('抽屉分区与视图类型一一对应：只有证据里有的类型才出现分区', async () => {
+    expect(drawerSections()).toEqual(['object-summary', 'research-record'])
+    mocks.positions.mockResolvedValue({
+      kind: 'rows',
+      rows: [keywordRow('长尾词'), keywordRow('泛词')],
+      summary: { totalKeywords: 2, rankedKeywords: 2, adKeywords: 0, sourceTypeCounts: [] },
+      cached: false,
+      ageMs: 0,
+    })
+    node('#load-positions').dispatch('click')
+    await settle()
+    // 没读评论，就没有评论的两个分区；分区集合由证据里的可用类型决定。
+    expect(drawerSections()).toEqual(['object-summary', 'keyword-summary', 'keyword-table', 'research-record'])
+  })
+
+  it('未知视图类型被忽略，不崩溃也不多出分区', () => {
+    const object = createAnalysisObject({ asin: 'B0ABCDEFGH', market: 'US', source: 'manual', owner: null, group: null })!
+    const evidence = buildAnalysisEvidence({ object })
+    const container = new Node()
+    renderAnalysisViews(
+      document,
+      container as unknown as HTMLElement,
+      { schemaVersion: 1, views: ['made-up', 'chart-magic'] as never },
+      evidence,
+    )
+    expect(container.children.map((view) => view.dataset.view)).toEqual(['object-summary'])
+  })
+
+  it('词位概览带上来源类型分布：收进抽屉不等于丢掉数据', () => {
+    const object = createAnalysisObject({ asin: 'B0ABCDEFGH', market: 'US', source: 'manual', owner: null, group: null })!
+    const evidence = buildAnalysisEvidence({
+      object,
+      keywordRows: [keywordRow('长尾词')] as never,
+      keywordSummary: {
+        totalKeywords: 12,
+        rankedKeywords: 9,
+        adKeywords: 3,
+        sourceTypeCounts: [{ code: 'NT', label: '自然搜索词', count: 9 }],
+      },
+    })
+    const container = new Node()
+    renderAnalysisViews(document, container as unknown as HTMLElement, { schemaVersion: 1, views: ['keyword-summary'] }, evidence)
+    expect(textsOf(container)).toContain('自然搜索词')
+    expect(textsOf(container)).toContain('9')
+  })
+
+  it('抽屉与对话共用同一份证据包：同一个数在两处一致，且不重复取数', async () => {
+    mocks.positions.mockResolvedValue({
+      kind: 'rows',
+      rows: [keywordRow('长尾词')],
+      summary: { totalKeywords: 1, rankedKeywords: 1, adKeywords: 0, sourceTypeCounts: [] },
+      cached: false,
+      ageMs: 0,
+    })
+    node('#load-positions').dispatch('click')
+    await settle()
+    mocks.ask.mockResolvedValue(answer)
+    const fetchesBeforeAsking = mocks.positions.mock.calls.length
+    node('#analysis-form').dispatch('submit')
+    await settle()
+    const sent = mocks.ask.mock.calls[0]![1] as { keyword: { rows: Array<{ keyword: string; natural: string }> } }
+    expect(sent.keyword.rows[0]!.keyword).toBe('长尾词')
+    expect(drawerText()).toContain('长尾词')
+    // 同一个数在两处一致：问出去的那一行，就是抽屉里显示的那一行。
+    expect(sent.keyword.rows[0]!.natural).toBe('第 1 页 · 12')
+    expect(drawerText()).toContain('第 1 页 · 12')
+    // 提问不另取一份数：对话用的是抽屉里那份证据包。
+    expect(mocks.positions.mock.calls.length).toBe(fetchesBeforeAsking)
+  })
+
+  it('切换分析对象时抽屉回到收起，且不再显示上一个对象的数据', async () => {
+    // 取数按 ASIN 给不同的结果，测试才能分清「新对象的数据」与「上一个对象的残留」。
+    mocks.positions.mockImplementation(async (asin: string) => asin === 'B0ABCDEFGH'
+      ? {
+          kind: 'rows',
+          rows: [keywordRow('长尾词')],
+          summary: { totalKeywords: 1, rankedKeywords: 1, adKeywords: 0, sourceTypeCounts: [] },
+          cached: false,
+          ageMs: 0,
+        }
+      : {
+          kind: 'rows',
+          rows: [],
+          summary: { totalKeywords: 0, rankedKeywords: 0, adKeywords: 0, sourceTypeCounts: [] },
+          cached: false,
+          ageMs: 0,
+        })
+    node('#load-positions').dispatch('click')
+    await settle()
+    node('#drawer-toggle').dispatch('click')
+    expect(drawerText()).toContain('长尾词')
+
+    stored[ANALYSIS_OBJECT_STORAGE_KEY] = createAnalysisObject({ asin: 'B0ZYXWVUTS', market: 'US', source: 'manual', owner: null, group: null })
+    changed({ [ANALYSIS_OBJECT_STORAGE_KEY]: {} }, 'local')
+    // 清屏是同步的：不等新对象的取数回来，旧数据就先离开屏幕。
+    expect(node('#drawer-body').hidden).toBe(true)
+    expect(drawerText()).not.toContain('长尾词')
+    await settle()
+    expect(drawerSections()).toEqual(['object-summary', 'research-record'])
+  })
+
+  it('切换身份时抽屉回到收起并清空', async () => {
+    mocks.positions.mockResolvedValue({
+      kind: 'rows',
+      rows: [keywordRow('长尾词')],
+      summary: { totalKeywords: 1, rankedKeywords: 1, adKeywords: 0, sourceTypeCounts: [] },
+      cached: false,
+      ageMs: 0,
+    })
+    node('#load-positions').dispatch('click')
+    await settle()
+    node('#drawer-toggle').dispatch('click')
+    stored[VIEWER_IDENTITY_STORAGE_KEY] = { token: 'Bob-token' }
+    changed({ [VIEWER_IDENTITY_STORAGE_KEY]: {} }, 'local')
+    expect(node('#drawer-body').hidden).toBe(true)
+    expect(drawerText()).not.toContain('长尾词')
+    await settle()
+  })
+
   it('renders safe fallback content for missing and insufficient review evidence', () => {
     const object = createAnalysisObject({ asin: 'B0ABCDEFGH', market: 'US', source: 'manual', owner: null, group: null })!
     const evidence = buildAnalysisEvidence({ object })

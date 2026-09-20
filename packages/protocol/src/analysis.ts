@@ -247,10 +247,15 @@ export const isAnalysisAskRequest = (value: unknown): value is AnalysisAskReques
   && value.evidence.asin === value.asin
   && value.evidence.market.toUpperCase() === String(value.market).toUpperCase()
 
-const VIEW_TYPES: readonly AnalysisViewType[] = [
+/**
+ * 固定视图类型清单，是「分区与视图类型一一对应」里那份唯一的类型表。
+ * 顺序也是展示顺序：抽屉分区与回答里的内嵌视图都按它排。
+ */
+export const ANALYSIS_VIEW_TYPES: readonly AnalysisViewType[] = [
   'object-summary', 'keyword-summary', 'keyword-table', 'keyword-trend',
   'review-summary', 'review-pain-points', 'research-record',
 ]
+const VIEW_TYPES = ANALYSIS_VIEW_TYPES
 const VIEW_ORDER = new Map(VIEW_TYPES.map((type, index) => [type, index]))
 
 const hasKeywordTrend = (evidence: AnalysisEvidence): boolean =>

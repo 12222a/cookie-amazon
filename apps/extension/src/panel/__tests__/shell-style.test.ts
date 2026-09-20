@@ -140,4 +140,20 @@ describe('共享样式来源', () => {
   it('浮层自己的布局文件同样只引用 token', () => {
     expect(literalValues(overlayCss)).toEqual([])
   })
+
+  /**
+   * 抽屉默认收起、回答区默认空着，靠的都是 hidden 属性。两壳的布局都声明了
+   * display: flex/grid，作者样式里的 display 会盖掉浏览器给 [hidden] 的默认
+   * display: none——少这条兜底，抽屉就会「收不起来」，内容一直占着第一屏。
+   */
+  it('两壳都把 hidden 属性还原成真的不显示', () => {
+    const neutralizesHidden = (css: string): boolean => {
+      const rule = /\[hidden\]\s*\{[^}]*\}/.exec(css)?.[0] ?? ''
+      return /display\s*:\s*none\s*!important/.test(rule)
+    }
+    expect(neutralizesHidden(sharedCss)).toBe(true)
+    // 侧边栏从共享来源引入，浮层把同一份文本内联进 shadow DOM，两处都拿到这条规则。
+    expect(neutralizesHidden(mountedStyle())).toBe(true)
+    expect(panelCss).toContain('shell-style.css')
+  })
 })

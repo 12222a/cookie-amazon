@@ -3,7 +3,7 @@ import { AnalysisObjectStore, ANALYSIS_OBJECT_STORAGE_KEY } from '../../src/anal
 import { createAnalysisObject, DEFAULT_MARKET, type AnalysisObject } from '../../src/analysis-object'
 import { askAnalysis, type AnalysisResult } from '../../src/panel/analysis-client'
 import { buildAnalysisEvidence } from '../../src/panel/analysis-evidence'
-import { renderAnalysisViews, renderReviewPainPointItems } from '../../src/panel/analysis-view'
+import { renderAnalysisViews, renderDrawerPartitions } from '../../src/panel/analysis-view'
 import { describeAnalysisObject } from '../../src/panel/panel-state'
 import { describeColleagueRecord, describeRecordForOwner, RESEARCH_STATUS_LABELS } from '../../src/panel/research-panel-state'
 import { requestKeywordPositionsCached, type CachedKeywordPositionResult } from '../../src/panel/keyword-position-cache-client'
@@ -12,13 +12,13 @@ import type {
   KeywordPositionRow,
   KeywordPositionSummary,
 } from '../../src/panel/keyword-positions'
-import { renderKeywordTrend } from '../../src/panel/keyword-trend-view'
 import { fetchSellerSpriteReviews, type ReviewCommentsResult } from '../../src/panel/review-comments-client'
 import { analyzeSellerSpriteReviews, type ReviewPanelData } from '../../src/panel/review-analysis'
 import { isResearchStatus, type ResearchStatus } from '../../src/research-record'
 import { describeRecordResult, ResearchRecordClient } from '../../src/panel/research-record-client'
 import { createViewerIdentity, describeViewer, ViewerIdentityStore, VIEWER_IDENTITY_STORAGE_KEY, type ViewerIdentity } from '../../src/viewer-identity'
-import type { AnalysisAskSuccess } from '@cookie-amazon/protocol'
+import type { AnalysisAskSuccess, AnalysisEvidence } from '@cookie-amazon/protocol'
+import type { ServerResearchRecord } from '../../src/panel/research-record-client'
 
 const objectStore = new AnalysisObjectStore(browser.storage.local)
 const identityStore = new ViewerIdentityStore(browser.storage.local)
@@ -39,25 +39,13 @@ const clearTokenButton = document.querySelector<HTMLButtonElement>('#viewer-clea
 const identityError = document.querySelector<HTMLParagraphElement>('#identity-error')
 const emptyElement = document.querySelector<HTMLElement>('#empty')
 const objectElement = document.querySelector<HTMLElement>('#object')
-const fieldsElement = document.querySelector<HTMLDListElement>('#fields')
 const formElement = document.querySelector<HTMLFormElement>('#manual')
   const inputElement = document.querySelector<HTMLInputElement>('#asin')
 const errorElement = document.querySelector<HTMLParagraphElement>('#error')
 const loadButton = document.querySelector<HTMLButtonElement>('#load-positions')
 const statusElement = document.querySelector<HTMLParagraphElement>('#positions-status')
-const summaryElement = document.querySelector<HTMLElement>('#positions-summary')
-const summaryCardsElement = document.querySelector<HTMLElement>('#positions-summary-cards')
-const sourceTypesElement = document.querySelector<HTMLElement>('#positions-source-types')
-const sourceTypeListElement = document.querySelector<HTMLUListElement>('#positions-source-type-list')
-const detailsElement = document.querySelector<HTMLDetailsElement>('#positions-details')
-const tableWrapElement = document.querySelector<HTMLElement>('#positions-table-wrap')
-const rowsElement = document.querySelector<HTMLTableSectionElement>('#positions-rows')
 const loadReviewsButton = document.querySelector<HTMLButtonElement>('#load-reviews')
 const reviewsStatusElement = document.querySelector<HTMLParagraphElement>('#reviews-status')
-const reviewsSummaryElement = document.querySelector<HTMLElement>('#reviews-summary')
-const reviewsSummaryCardsElement = document.querySelector<HTMLElement>('#reviews-summary-cards')
-const reviewsCoverageElement = document.querySelector<HTMLParagraphElement>('#reviews-coverage')
-const reviewPainPointsElement = document.querySelector<HTMLElement>('#review-pain-points')
 const recordSection = document.querySelector<HTMLElement>('#record')
 const recordOwnerElement = document.querySelector<HTMLSpanElement>('#record-owner')
 const recordNoteElement = document.querySelector<HTMLParagraphElement>('#record-note')
@@ -77,6 +65,9 @@ const analysisFactsElement = document.querySelector<HTMLUListElement>('#analysis
 const analysisInferencesElement = document.querySelector<HTMLUListElement>('#analysis-inferences')
 const analysisCitationsElement = document.querySelector<HTMLUListElement>('#analysis-citations')
 const analysisViewsElement = document.querySelector<HTMLElement>('#analysis-views')
+const drawerToggle = document.querySelector<HTMLButtonElement>('#drawer-toggle')
+const drawerBody = document.querySelector<HTMLElement>('#drawer-body')
+const drawerViewsElement = document.querySelector<HTMLElement>('#drawer-views')
 let current: AnalysisObject | null = null
 let viewer: ViewerIdentity | null = null
 let loading = false
@@ -86,6 +77,15 @@ let reviewsTarget: string | null = null
 let keywordRows: KeywordPositionRow[] = []
 let keywordSummary: KeywordPositionSummary | null = null
 let reviewData: ReviewPanelData | null = null
+/** 研究记录可能刚刚被同事改过，提问与渲染都以最近一次读到的为准。 */
+let currentRecord: ServerResearchRecord | null = null
+/**
+ * 抽屉与对话共用这一份证据包。
+ *
+ * 两处各自 buildAnalysisEvidence 是 bug 的温床：一次数据更新只让其中一处重算，
+ * 屏幕上就会出现两个不同的数。所以底层数据一变就重建一次，两处都只读这里。
+ */
+let evidence: AnalysisEvidence | null = null
 let analysisLoading = false
 let analysisRequestId = 0
 let lastAnalysis: Extract<AnalysisResult, { kind: 'answer' }> | null = null
@@ -142,6 +142,17 @@ const setAnalysisStatus = (message: string | null, error = false): void => {
   analysisStatusElement.dataset.kind = error ? 'error' : 'info'
 }
 
+/**
+ * 数据抽屉默认收起：第一屏留给对话，要看数据得自己打开。
+ *
+ * 展开状态只活在这次会话里——不写存储，重新打开面板就回到收起，
+ * 也不在换对象或换身份时把上一个人的抽屉留在打开状态。
+ */
+const setDrawerOpen = (open: boolean): void => {
+  if (drawerBody) drawerBody.hidden = !open
+  drawerToggle?.setAttribute('aria-expanded', open ? 'true' : 'false')
+}
+
 const renderAnalysisList = (element: HTMLUListElement | null, values: readonly string[]): void => {
   element?.replaceChildren(...values.map((value) => {
     const item = document.createElement('li')
@@ -191,125 +202,23 @@ const resetAnalysisForTarget = (message: string | null = null): void => {
   clearAnalysisAnswer(message)
 }
 
-const renderFields = (fields: readonly { label: string; value: string }[]): void => {
-  if (!fieldsElement) return
-  fieldsElement.replaceChildren(...fields.flatMap((field) => {
-    const term = document.createElement('dt')
-    term.textContent = field.label
-    const value = document.createElement('dd')
-    value.textContent = field.value
-    return [term, value]
-  }))
-}
-
 const setReviewsStatus = (message: string | null): void => {
   if (!reviewsStatusElement) return
   reviewsStatusElement.hidden = message === null
   reviewsStatusElement.textContent = message ?? ''
 }
 
-const renderReviewData = (data: ReviewPanelData | null): void => {
-  if (reviewsSummaryElement) reviewsSummaryElement.hidden = data === null
-  reviewsSummaryCardsElement?.replaceChildren()
-  if (reviewPainPointsElement) {
-    reviewPainPointsElement.hidden = data === null || data.painPoints.length === 0
-    reviewPainPointsElement.replaceChildren()
-  }
-  if (reviewsCoverageElement) reviewsCoverageElement.textContent = ''
-  if (data === null) return
-
-  const lowStarShare = data.sampled === 0 ? 0 : data.lowStarCount / data.sampled
-  const cards = [
-    { label: '评论样本', value: data.sampled + ' / ' + data.total },
-    { label: '低星样本', value: data.lowStarCount + ' / ' + data.sampled },
-    { label: '痛点主题', value: data.sampleSufficient ? data.painPoints.length : '—' },
-  ]
-  reviewsSummaryCardsElement?.replaceChildren(...cards.map(({ label, value }) => {
-    const card = document.createElement('div')
-    card.className = 'panel-summary-card'
-    const name = document.createElement('span')
-    name.textContent = label
-    const count = document.createElement('strong')
-    count.textContent = String(value)
-    card.append(name, count)
-    return card
-  }))
-  if (reviewsCoverageElement) {
-    reviewsCoverageElement.textContent = data.total > 0
-      ? '覆盖度 ' + (data.coverage * 100).toFixed(1) + '% · 低星占比 ' + (lowStarShare * 100).toFixed(1) + '%'
-      : 'SellerSprite 未返回评论总数，当前只展示已取到的样本。'
-  }
-  if (!reviewPainPointsElement) return
-  renderReviewPainPointItems(document, reviewPainPointsElement, data)
-}
-
 const describeReviewResult = (result: ReviewCommentsResult): string | null => {
   if (result.kind === 'data') {
     const data = analyzeSellerSpriteReviews(result.data)
-    renderReviewData(data)
     if (!data.sampleSufficient) return '样本不足（' + data.sampled + '/6），暂不生成痛点结论。'
     if (data.painPoints.length === 0) return '已读取评论，但未形成稳定的低星痛点主题。'
     return '已读取 ' + data.sampled + ' 条评论，识别 ' + data.painPoints.length + ' 个痛点主题。'
   }
-  renderReviewData(null)
   if (result.kind === 'unsupported-market') return '暂不支持 ' + result.market + ' 站的评论分析，目前只读取美国站。'
   if (result.kind === 'not-logged-in') return '卖家精灵登录已失效，请重新登录后重试。'
   if (result.kind === 'permission-required') return '尚未授权卖家精灵，请在扩展弹窗中授权后重试。'
   return '读取失败（' + result.reason + '），请稍后重试。'
-}
-
-/** 空行不渲染，但保留未知列的破折号：表格要能对齐着看。 */
-const renderRows = (rows: readonly KeywordPositionRow[]): void => {
-  if (!rowsElement) return
-  const cells = (row: KeywordPositionRow): string[] => [
-    row.keyword, row.natural, row.ad, row.naturalShare, row.adShare, row.types,
-  ]
-  rowsElement.replaceChildren(...rows.map((row) => {
-    const tr = document.createElement('tr')
-    for (const text of cells(row)) {
-      const td = document.createElement('td')
-      td.textContent = text
-      tr.append(td)
-    }
-    const trendCell = document.createElement('td')
-    trendCell.className = 'panel-trend-cell'
-    trendCell.append(renderKeywordTrend(document, row.trend))
-    tr.append(trendCell)
-    return tr
-  }))
-}
-
-const renderSummary = (summary: KeywordPositionSummary | null): void => {
-  if (summaryElement) summaryElement.hidden = summary === null
-  summaryCardsElement?.replaceChildren()
-  sourceTypeListElement?.replaceChildren()
-  if (sourceTypesElement) sourceTypesElement.hidden = summary === null || summary.sourceTypeCounts.length === 0
-  if (summary === null) return
-
-  const cards = [
-    { label: '关键词总数', value: summary.totalKeywords },
-    { label: '有自然排名', value: summary.rankedKeywords },
-    { label: '有广告排名', value: summary.adKeywords },
-  ]
-  summaryCardsElement?.replaceChildren(...cards.map(({ label, value }) => {
-    const card = document.createElement('div')
-    card.className = 'panel-summary-card'
-    const name = document.createElement('span')
-    name.textContent = label
-    const count = document.createElement('strong')
-    count.textContent = String(value)
-    card.append(name, count)
-    return card
-  }))
-  sourceTypeListElement?.replaceChildren(...summary.sourceTypeCounts.map(({ label, count }) => {
-    const item = document.createElement('li')
-    const name = document.createElement('span')
-    name.textContent = label
-    const value = document.createElement('strong')
-    value.textContent = String(count)
-    item.append(name, value)
-    return item
-  }))
 }
 
 /**
@@ -319,27 +228,57 @@ const renderSummary = (summary: KeywordPositionSummary | null): void => {
 const describeResult = (result: CachedKeywordPositionResult): string | null => {
   if (result.kind === 'rows') {
     const hasRows = result.rows.length > 0
-    renderSummary(hasRows ? result.summary : null)
-    if (detailsElement) {
-      detailsElement.hidden = !hasRows
-      if (!hasRows) detailsElement.open = false
-    }
-    if (tableWrapElement) tableWrapElement.hidden = !hasRows
-    renderRows(result.rows)
     return !hasRows
       ? '这个 ASIN 当前没有可读取的关键词。'
       : '已读取 ' + result.rows.length + ' 个关键词。'
   }
-  renderSummary(null)
-  if (detailsElement) {
-    detailsElement.hidden = true
-    detailsElement.open = false
-  }
-  if (tableWrapElement) tableWrapElement.hidden = true
   if (result.kind === 'unsupported-market') return `暂不支持 ${result.market} 站的关键词反查，目前只读取美国站。`
   if (result.kind === 'not-logged-in') return '卖家精灵登录已失效，请重新登录后重试。'
   if (result.kind === 'permission-required') return '尚未授权卖家精灵，请在扩展弹窗中授权后重试。'
   return `读取失败（${result.reason}），请稍后重试。`
+}
+
+/**
+ * 当前对象的证据包，抽屉与对话都从这里取数。
+ *
+ * 底层数据（词位、评论、研究记录）任一更新都会重建这一份，两处一起重渲染，
+ * 所以屏幕上不会出现「对话说 50 个词、抽屉里只有 12 行」这类分歧。
+ */
+const rebuildEvidence = (): AnalysisEvidence | null => {
+  if (current === null) {
+    evidence = null
+    return null
+  }
+  evidence = buildAnalysisEvidence({
+    object: current,
+    keywordRows,
+    keywordSummary,
+    reviewData,
+    record: currentRecord,
+  })
+  return evidence
+}
+
+/** 抽屉里的分区：证据包里有什么就显示什么，没读到的数据不占位置。 */
+const renderDrawer = (): void => {
+  if (drawerViewsElement === null || evidence === null) {
+    drawerViewsElement?.replaceChildren()
+    return
+  }
+  renderDrawerPartitions(document, drawerViewsElement, evidence)
+}
+
+/**
+ * 换对象或换身份时清抽屉：收起并立刻清空内容。
+ *
+ * 必须同步做完——等新的取数回来才清，上一对象的表格会在屏幕上停留一整个往返，
+ * 用户就可能把上一个商品的数字当成当前的（#16 对研究记录也是这个要求）。
+ */
+const resetDrawer = (): void => {
+  setDrawerOpen(false)
+  evidence = null
+  currentRecord = null
+  renderDrawer()
 }
 
 /**
@@ -350,8 +289,12 @@ const renderRecord = async (): Promise<void> => {
   if (recordSection === null || current === null) return
   const target = current
   const targetKey = positionTargetKey(target)
+  // 研究记录也是抽屉的一个分区，分区身份就是视图类型。
+  // 它不在这里由 renderDrawerPartitions 渲染（那是可写的表单），所以映射由面板自己声明。
+  recordSection.dataset.view = 'research-record'
   recordSection.hidden = false
   if (recordClient === null) {
+    currentRecord = null
     // 没设密钥就没有服务端身份，此时不能拿本地数组冒充隔离。
     if (recordOwnerElement) recordOwnerElement.textContent = ''
     if (recordNoteElement) {
@@ -366,6 +309,7 @@ const renderRecord = async (): Promise<void> => {
   const result = await recordClient.find(target.asin, target.market)
   if (current === null || positionTargetKey(current) !== targetKey) return
   const visible = result.kind === 'found' ? result.record : null
+  currentRecord = visible
   const colleague = describeColleagueRecord(visible)
   if (recordOwnerElement) recordOwnerElement.textContent = colleague.kind === 'colleague' ? colleague.owner : ''
   const notice = describeRecordResult(result)
@@ -380,6 +324,9 @@ const renderRecord = async (): Promise<void> => {
   if (recordSummaryInput && editable) recordSummaryInput.value = state.summary
   if (recordStatusSelect && editable) recordStatusSelect.value = state.status
   setRecordError(result.kind === 'unavailable' ? '暂时无法连接研究记录服务，显示的可能不是最新状态。' : null)
+  // 研究记录也是证据包的一部分：读到之后抽屉里的小组记录分区跟着重渲染。
+  rebuildEvidence()
+  renderDrawer()
 }
 
 /** 缓存命中要说出来：用户不会因为「快了」而疑惑，但会因为「同样的数据为什么又出来了」而疑惑。 */
@@ -411,6 +358,8 @@ const loadPositions = async (): Promise<void> => {
       keywordRows = []
       keywordSummary = null
     }
+    rebuildEvidence()
+    renderDrawer()
     const message = describeResult(result)
     setStatus(result.cached ? `${message}（${describeCacheAge(result.ageMs)}）` : message)
   } finally {
@@ -437,6 +386,8 @@ const loadReviews = async (): Promise<void> => {
     } else {
       reviewData = null
     }
+    rebuildEvidence()
+    renderDrawer()
     setReviewsStatus(describeReviewResult(result))
   } finally {
     reviewsLoading = false
@@ -467,18 +418,17 @@ const askCurrentAnalysis = async (): Promise<void> => {
       ? null
       : await recordClient.find(target.asin, target.market)
     if (requestId !== analysisRequestId || current === null || positionTargetKey(current) !== targetKey) return
-    const evidence = buildAnalysisEvidence({
-      object: target,
-      keywordRows,
-      keywordSummary,
-      reviewData,
-      record: recordResult?.kind === 'found' ? recordResult.record : null,
-    })
-    const result = await askAnalysis(question, evidence)
+    // 提问读的就是抽屉那一份：记录刚被同事改过也一并带进证据包，
+    // 于是「对话里引用的数」与「抽屉里显示的」始终同源。
+    currentRecord = recordResult?.kind === 'found' ? recordResult.record : null
+    const asked = rebuildEvidence()
+    renderDrawer()
+    if (asked === null) return
+    const result = await askAnalysis(question, asked)
     if (requestId !== analysisRequestId || current === null || positionTargetKey(current) !== targetKey) return
     if (result.kind === 'answer') {
       lastAnalysis = result
-      lastAnalysisEvidence = evidence
+      lastAnalysisEvidence = asked
       lastAnalysisQuestion = question
       renderAnalysisAnswer()
       setAnalysisStatus('已生成回答，引用了 ' + result.response.answer.citations.length + ' 条证据。')
@@ -506,6 +456,7 @@ const renderIdentity = async (): Promise<void> => {
   if (identityChanged) {
     resetAnalysisForTarget()
     clearRecordPanel()
+    setDrawerOpen(false)
   }
   viewer = nextViewer
   recordClient = viewer === null ? null : new ResearchRecordClient({ token: viewer.token })
@@ -520,8 +471,11 @@ const render = async (): Promise<void> => {
   const state = describeAnalysisObject(current)
   if (state.kind === 'empty') {
     positionsTarget = null
+    setDrawerOpen(false)
     keywordRows = []
     keywordSummary = null
+    evidence = null
+    currentRecord = null
     if (emptyElement) emptyElement.hidden = false
     if (objectElement) objectElement.hidden = true
     if (analysisSection) analysisSection.hidden = true
@@ -531,22 +485,14 @@ const render = async (): Promise<void> => {
     reviewsTarget = null
     reviewData = null
     setReviewsStatus(null)
-    renderReviewData(null)
     resetAnalysisForTarget()
-    renderSummary(null)
-    if (detailsElement) {
-      detailsElement.hidden = true
-      detailsElement.open = false
-    }
-    if (tableWrapElement) tableWrapElement.hidden = true
-    renderRows([])
+    renderDrawer()
     return
   }
   if (emptyElement) emptyElement.hidden = true
   if (objectElement) objectElement.hidden = false
   if (analysisSection) analysisSection.hidden = false
   if (sourceElement) sourceElement.textContent = `${state.asin} · ${state.market} · ${state.sourceLabel}`
-  renderFields(state.fields)
   const nextPositionsTarget = state.asin + ':' + state.market
   const shouldLoadPositions = positionsTarget !== nextPositionsTarget
   const shouldResetReviews = reviewsTarget !== nextPositionsTarget
@@ -554,24 +500,23 @@ const render = async (): Promise<void> => {
   if (shouldLoadPositions) {
     // 换了对象就清掉上一个对象的词位，避免把别人的数据留在屏幕上。
     positionsTarget = nextPositionsTarget
+    setDrawerOpen(false)
     keywordRows = []
     keywordSummary = null
+    currentRecord = null
+    evidence = null
     setStatus(null)
-    renderSummary(null)
-    if (detailsElement) {
-      detailsElement.hidden = true
-      detailsElement.open = false
-    }
-    if (tableWrapElement) tableWrapElement.hidden = true
-    renderRows([])
+    renderDrawer()
   }
   if (shouldResetReviews) {
     reviewsTarget = nextPositionsTarget
     reviewData = null
     setReviewsStatus(null)
-    renderReviewData(null)
   }
   if (shouldResetAnalysis) resetAnalysisForTarget()
+  // 对象换过就先把抽屉按新对象重画一遍（此时只有前台信息），再等记录与词位回来。
+  rebuildEvidence()
+  renderDrawer()
   await renderRecord()
   if (shouldLoadPositions) void loadPositions()
 }
@@ -627,6 +572,9 @@ recordForm?.addEventListener('submit', (event) => {
 
 loadButton?.addEventListener('click', () => { void loadPositions() })
 loadReviewsButton?.addEventListener('click', () => { void loadReviews() })
+drawerToggle?.addEventListener('click', () => {
+  setDrawerOpen(drawerBody?.hidden !== false)
+})
 analysisForm?.addEventListener('submit', (event) => {
   event.preventDefault()
   void askCurrentAnalysis()
@@ -663,6 +611,7 @@ inputElement?.addEventListener('input', () => setError(null))
 browser.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === 'local' && [ANALYSIS_OBJECT_STORAGE_KEY, VIEWER_IDENTITY_STORAGE_KEY].some((key) => key in changes)) {
     resetAnalysisForTarget()
+    resetDrawer()
   }
   if (areaName === 'local' && Object.keys(changes).length > 0) void render()
 })

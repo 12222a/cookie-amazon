@@ -8,6 +8,8 @@
  * 选择器写成 :root, :host，是让同一份 token 分别落在侧边栏文档与浮层的 shadow 宿主上。
  * 之后换配色只改这里的值，两处一起变。两壳用到的取值都收在这里，不按「刻度」四舍五入，
  * 也不给没人用的值起名字。
+ *
+ * 文件末尾还有一条非 token 的共享规则：把 hidden 属性还原成「真的不显示」。
  */
 :root,
 :host {
@@ -55,4 +57,14 @@
   --ca-space-14: 14px;
   --ca-space-18: 18px;
   --ca-space-26: 26px;
+}
+
+/*
+ * 作者样式里的 display 会盖掉浏览器给 [hidden] 的默认 display: none。
+ * 抽屉默认收起、回答区默认空着，靠的都是 hidden 属性；像 .panel-drawer-body 这样
+ * 声明了 display: flex 的容器，少了这条就会「收不起来」，内容一直占着第一屏。
+ * 放在共享来源里，两壳不必各自记得这件事。
+ */
+[hidden] {
+  display: none !important;
 }

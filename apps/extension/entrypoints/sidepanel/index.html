@@ -31,78 +31,6 @@
       </section>
 
       <section id="object" class="panel-object" hidden>
-        <dl id="fields" class="panel-fields"></dl>
-
-        <section id="record" class="panel-record" hidden>
-          <div class="panel-record-head">
-            <h2>研究记录</h2>
-            <span id="record-owner" class="panel-record-owner"></span>
-          </div>
-          <p id="record-note" class="panel-hint"></p>
-          <form id="record-form" class="panel-record-form" hidden>
-            <label for="record-summary">结论摘要</label>
-            <textarea id="record-summary" name="summary" rows="3" maxlength="500" placeholder="例如：自然位只在前 3 页且大量依赖广告，先观察"></textarea>
-            <label for="record-status">状态</label>
-            <select id="record-status" name="status">
-              <option value="researching">研究中</option>
-              <option value="verified">已验证</option>
-              <option value="rejected">已否决</option>
-            </select>
-            <button id="record-submit" type="submit">保存研究记录</button>
-            <p id="record-error" class="panel-error" role="alert" hidden></p>
-          </form>
-        </section>
-
-        <section class="panel-positions">
-          <div class="panel-positions-head">
-            <h2>词位情报</h2>
-            <button id="load-positions" type="button">读取词位</button>
-          </div>
-          <p class="panel-hint">看它在每个关键词上的自然位与广告位，判断是靠自然出单还是靠广告撑着。</p>
-          <p id="positions-status" class="panel-positions-status" role="status" hidden></p>
-          <section id="positions-summary" class="panel-position-summary" hidden>
-            <h3>词量概览</h3>
-            <div id="positions-summary-cards" class="panel-summary-cards"></div>
-            <div id="positions-source-types" class="panel-source-types" hidden>
-              <h4>来源类型</h4>
-              <ul id="positions-source-type-list"></ul>
-            </div>
-          </section>
-          <details id="positions-details" class="panel-positions-details" hidden>
-            <summary>展开关键词明细</summary>
-            <div id="positions-table-wrap" class="panel-table-wrap" hidden>
-              <table class="panel-table">
-                <thead>
-                  <tr>
-                    <th scope="col">关键词</th>
-                    <th scope="col">自然位</th>
-                    <th scope="col">广告位</th>
-                    <th scope="col">自然流量</th>
-                    <th scope="col">广告流量</th>
-                    <th scope="col">位置类型</th>
-                    <th scope="col">搜索量趋势</th>
-                  </tr>
-                </thead>
-                <tbody id="positions-rows"></tbody>
-              </table>
-            </div>
-          </details>
-        </section>
-
-        <section class="panel-reviews">
-          <div class="panel-reviews-head">
-            <h2>评论痛点</h2>
-            <button id="load-reviews" type="button">读取评论</button>
-          </div>
-          <p class="panel-hint">从 SellerSprite 读取当前 ASIN 的评论样本，查看反复出现的低星问题。</p>
-          <p id="reviews-status" class="panel-reviews-status" role="status" hidden></p>
-          <section id="reviews-summary" class="panel-review-summary" hidden>
-            <div id="reviews-summary-cards" class="panel-summary-cards"></div>
-            <p id="reviews-coverage" class="panel-review-coverage"></p>
-          </section>
-          <section id="review-pain-points" class="panel-pain-points" hidden></section>
-        </section>
-
         <section id="analysis" class="panel-analysis" hidden>
           <div class="panel-analysis-head">
             <div>
@@ -133,6 +61,45 @@
             </section>
             <section id="analysis-views" class="panel-analysis-views"></section>
           </section>
+        </section>
+
+        <section id="drawer" class="panel-drawer">
+          <button id="drawer-toggle" class="panel-drawer-toggle" type="button" aria-expanded="false" aria-controls="drawer-body">数据抽屉</button>
+          <div id="drawer-body" class="panel-drawer-body" hidden>
+            <div class="panel-drawer-sources">
+              <p class="panel-hint">词位与评论在这里按需读取，读到的数据同时供上面的对话使用。</p>
+              <div class="panel-drawer-source">
+                <button id="load-positions" type="button">读取词位</button>
+                <p id="positions-status" class="panel-drawer-status" role="status" hidden></p>
+              </div>
+              <div class="panel-drawer-source">
+                <button id="load-reviews" type="button">读取评论</button>
+                <p id="reviews-status" class="panel-drawer-status" role="status" hidden></p>
+              </div>
+            </div>
+
+            <div id="drawer-views" class="panel-drawer-views"></div>
+
+            <section id="record" class="panel-drawer-partition panel-record" hidden>
+              <div class="panel-record-head">
+                <h2>研究记录</h2>
+                <span id="record-owner" class="panel-record-owner"></span>
+              </div>
+              <p id="record-note" class="panel-hint"></p>
+              <form id="record-form" class="panel-record-form" hidden>
+                <label for="record-summary">结论摘要</label>
+                <textarea id="record-summary" name="summary" rows="3" maxlength="500" placeholder="例如：自然位只在前 3 页且大量依赖广告，先观察"></textarea>
+                <label for="record-status">状态</label>
+                <select id="record-status" name="status">
+                  <option value="researching">研究中</option>
+                  <option value="verified">已验证</option>
+                  <option value="rejected">已否决</option>
+                </select>
+                <button id="record-submit" type="submit">保存研究记录</button>
+                <p id="record-error" class="panel-error" role="alert" hidden></p>
+              </form>
+            </section>
+          </div>
         </section>
       </section>
 
