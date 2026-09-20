@@ -5,15 +5,17 @@ import { OverlayController } from '../src/panel/overlay-controller'
 import { initialOverlayPosition } from '../src/panel/overlay-placement'
 import { OverlayPreferenceStore } from '../src/panel/overlay-preference-store'
 import { OPEN_SIDE_PANEL_ACTION } from '../src/panel/open-side-panel'
-import { KeywordPositionCache, KEYWORD_POSITION_CACHE_STORAGE_KEY } from '../src/panel/keyword-position-cache'
-import { requestKeywordPositionsCached } from '../src/panel/keyword-position-cache-client'
-import type { KeywordPositionRow } from '../src/panel/keyword-positions'
+import { ConversationStore, CONVERSATION_STORAGE_KEY, type PublishedConversation } from '../src/panel/conversation-store'
 
 /**
  * 页面内浮层。
  *
  * 与入口注入脚本（amazon.content.ts）分开：那个只做识别与上报，本脚本只做展示。
- * issue #5 要求浮层渲染失败时静默消失，所以 DOM 操作都在 mountOverlay 与控制器内部被兜住。
+ * #5 要求浮层渲染失败时静默消失，所以 DOM 操作都在 mountOverlay 与控制器内部被兜住。
+ *
+ * 浮层不自己提问也不自己取数（#22）：提问的端点只允许扩展自己的源，从 amazon.com 页面上
+ * 直连会被挡在跨域之外，而在页面上就地再问一次也只会得到第二条与侧边栏不同的对话。
+ * 所以这里只读侧边栏发布的同一份对话（conversation-store），一处对话两个壳。
  */
 export default defineContentScript({
   matches: ['https://www.amazon.com/*'],
@@ -21,10 +23,14 @@ export default defineContentScript({
   main() {
     const objectStore = new AnalysisObjectStore(browser.storage.local)
     const preferenceStore = new OverlayPreferenceStore(browser.storage.local)
-    const positionCache = new KeywordPositionCache(browser.storage.local)
-    let keywordRows: readonly KeywordPositionRow[] = []
-    let keywordTarget: string | null = null
-    let keywordLoadingTarget: string | null = null
+    const conversationStore = new ConversationStore(browser.storage.local)
+    /**
+     * 对话是同步读出来的：渲染是同步的，而存储读取是异步的。
+     * 每次变更先把它读进内存，渲染时只读内存——否则渲染要么变成异步，要么拿到上一次的快照。
+     */
+    let conversation: PublishedConversation | null = null
+    let running = false
+    let pending = false
 
     // 先声明再赋值：createView 里的回调要引用 controller 自身（收起与拖动），
     // 直接 const 会让类型推断绕回自己（TS7022）。
@@ -43,7 +49,7 @@ export default defineContentScript({
         },
         onToggleCollapsed: () => { void controller.toggleCollapsed() },
         onMove: (position) => { void controller.move(position) },
-        readKeywordRows: () => keywordRows,
+        readConversation: () => conversation,
       }, controller.currentPosition()),
       readObject: () => objectStore.read(),
       readPreference: () => preferenceStore.read(),
@@ -51,39 +57,32 @@ export default defineContentScript({
       initialPosition: () => initialOverlayPosition({ width: window.innerWidth, height: window.innerHeight }),
     })
 
-    const syncKeywordRows = async (force = false): Promise<void> => {
-      const object = await objectStore.read()
-      if (object === null) {
-        keywordTarget = null
-        keywordLoadingTarget = null
-        keywordRows = []
-        return
+    /**
+     * 读一次对话再渲染一次，两次之间不留缝：控制器会把并发的 sync 合成一次，
+     * 若先 sync 再读，那次渲染就会用上还没更新的那一份，屏幕上一直停着旧对话。
+     * 变更可能连着来，所以忙碌时只记一个「还得再来一次」，由当前这轮收尾时补上。
+     */
+    const syncConversation = async (): Promise<void> => {
+      if (running) { pending = true; return }
+      running = true
+      try {
+        do {
+          pending = false
+          conversation = await conversationStore.read()
+          await controller.sync()
+        } while (pending)
+      } finally {
+        running = false
       }
-      const target = object.asin + ':' + object.market
-      if (keywordLoadingTarget === target || (!force && keywordTarget === target)) return
-      keywordTarget = target
-      keywordLoadingTarget = target
-      keywordRows = []
-      const result = await requestKeywordPositionsCached(object.asin, object.market, { cache: positionCache })
-      if (keywordTarget !== target) return
-      keywordLoadingTarget = null
-      keywordRows = result.kind === 'rows' ? result.rows : []
-      await controller.sync()
     }
 
     // 面板与浮层读同一份存储；任一处写入后另一处据此更新（AC 的「两处同步」）。
     browser.storage.onChanged.addListener((changes, areaName) => {
       if (areaName !== 'local' || Object.keys(changes).length === 0) return
-      if (ANALYSIS_OBJECT_STORAGE_KEY in changes) {
-        keywordTarget = null
-        keywordLoadingTarget = null
-        keywordRows = []
-      }
-      void controller.sync()
-      void syncKeywordRows(KEYWORD_POSITION_CACHE_STORAGE_KEY in changes)
+      // 切对象与换对话都只走这一条路：读到的就是当下该显示的那一份。
+      if (ANALYSIS_OBJECT_STORAGE_KEY in changes || CONVERSATION_STORAGE_KEY in changes) void syncConversation()
     })
 
-    void controller.sync()
-    void syncKeywordRows()
+    void syncConversation()
   },
 })

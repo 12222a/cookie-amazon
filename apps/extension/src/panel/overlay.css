@@ -1,27 +1,24 @@
-/* 浮层的布局。配色与字号来自 shell-style.css，浮层在 shadow DOM 里运行时由 overlay.ts 内联。 */
+/*
+ * 浮层的布局。配色、字号与共用组件的样式来自 shell-style.css，浮层在 shadow DOM 里运行时由 overlay.ts 内联。
+ *
+ * 这里只放**浮层自己的几何**：它贴在亚马逊页面上，宽度、定位与 z-index 与侧边栏不同；
+ * 对话串、数据抽屉与固定视图组件的样式一律在共享来源里，两壳渲染的是同一批节点。
+ */
 :host { all: initial; }
 .ca-root { position: fixed; z-index: 2147483646; box-sizing: border-box;
   border: 1px solid var(--ca-line-strong); background: var(--ca-bg); color: var(--ca-ink-body);
   font: var(--ca-font-md)/var(--ca-leading-compact) var(--ca-font-family); box-shadow: var(--ca-shadow); }
-.ca-card { width: 268px; padding: var(--ca-space-10) var(--ca-space-12); }
+/* 面板宽度放不下对话：气泡里的句子要能整段读，所以卡片比原来的字段卡宽，并限制高度可滚。 */
+.ca-card { display: flex; flex-direction: column; gap: var(--ca-space-10); width: 320px; max-height: 460px;
+  overflow-y: auto; padding: var(--ca-space-10) var(--ca-space-12); }
 .ca-pill { padding: var(--ca-space-4) var(--ca-space-9); cursor: pointer; color: var(--ca-ink); font-size: var(--ca-font-sm); }
 .ca-head { display: flex; align-items: baseline; gap: var(--ca-space-8); }
 .ca-card .ca-head { cursor: grab; }
 .ca-asin { color: var(--ca-ink); font-weight: 600; }
 .ca-meta { color: var(--ca-ink-muted); font-size: var(--ca-font-xs); margin-left: auto; }
-.ca-fields { display: grid; grid-template-columns: auto 1fr; gap: var(--ca-space-3) var(--ca-space-8); margin: var(--ca-space-8) 0 0; }
-.ca-fields dt { color: var(--ca-ink-muted); font-size: var(--ca-font-xs); }
-.ca-fields dd { margin: 0; color: var(--ca-ink); word-break: break-word; }
-.ca-trends { margin-top: var(--ca-space-10); padding-top: var(--ca-space-8); border-top: 1px solid var(--ca-line); }
-.ca-trends-title { margin: 0 0 var(--ca-space-5); color: var(--ca-ink-muted); font-size: var(--ca-font-xs); font-weight: 500; }
-.ca-trend-list { display: flex; flex-direction: column; gap: var(--ca-space-5); }
-.ca-trend-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--ca-space-6); }
-.ca-trend-keyword { min-width: 0; overflow: hidden; color: var(--ca-ink-body); font-size: var(--ca-font-xs); text-overflow: ellipsis; white-space: nowrap; }
-.ca-keyword-trend { display: inline-flex; min-height: 22px; align-items: center; color: var(--ca-ink-muted); font-size: var(--ca-font-micro); white-space: nowrap; }
-.ca-keyword-trend svg { display: block; width: 82px; height: 22px; overflow: visible; }
-.ca-keyword-trend polyline { fill: none; stroke: var(--ca-accent); stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.75; vector-effect: non-scaling-stroke; }
-.ca-keyword-trend circle { fill: var(--ca-accent); }
-.ca-keyword-trend.keyword-trend--insufficient { color: var(--ca-ink-muted); }
+/* 浮层窄，气泡靠外的那道缩进在这里会让可读宽度更窄，所以少缩一点；其余尺寸仍在共享来源里。 */
+.ca-card .panel-bubble-question { margin-left: var(--ca-space-14); }
+.ca-card .panel-bubble-answer { margin-right: 0; }
 .ca-actions { display: flex; gap: var(--ca-space-6); margin-top: var(--ca-space-10); }
 .ca-actions button { flex: 1; padding: var(--ca-space-5) var(--ca-space-8); border: 1px solid var(--ca-line-control); background: transparent;
   color: var(--ca-ink); font: inherit; cursor: pointer; }

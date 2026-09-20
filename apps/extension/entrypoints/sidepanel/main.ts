@@ -3,8 +3,9 @@ import { AnalysisObjectStore, ANALYSIS_OBJECT_STORAGE_KEY } from '../../src/anal
 import { createAnalysisObject, DEFAULT_MARKET, type AnalysisObject } from '../../src/analysis-object'
 import { askAnalysis, type AnalysisResult } from '../../src/panel/analysis-client'
 import { buildAnalysisEvidence } from '../../src/panel/analysis-evidence'
-import { renderBubbleViews, renderDrawerPartitions } from '../../src/panel/analysis-view'
-import { markAnswerSentences } from '../../src/panel/citation-marker'
+import { renderDrawerPartitions } from '../../src/panel/analysis-view'
+import { renderConversationThread } from '../../src/panel/conversation-view'
+import { ConversationStore, CONVERSATION_STORAGE_KEY } from '../../src/panel/conversation-store'
 import { describeAnalysisObject } from '../../src/panel/panel-state'
 import { describeColleagueRecord, describeRecordForOwner, RESEARCH_STATUS_LABELS } from '../../src/panel/research-panel-state'
 import { requestKeywordPositionsCached, type CachedKeywordPositionResult } from '../../src/panel/keyword-position-cache-client'
@@ -18,12 +19,17 @@ import { analyzeSellerSpriteReviews, type ReviewPanelData } from '../../src/pane
 import { isResearchStatus, type ResearchStatus } from '../../src/research-record'
 import { describeRecordResult, ResearchRecordClient } from '../../src/panel/research-record-client'
 import { createViewerIdentity, describeViewer, ViewerIdentityStore, VIEWER_IDENTITY_STORAGE_KEY, type ViewerIdentity } from '../../src/viewer-identity'
-import type { AnalysisAskSuccess, AnalysisEvidence, AnalysisHistoryTurn, AnalysisViewType } from '@cookie-amazon/protocol'
+import type { AnalysisEvidence, AnalysisHistoryTurn, AnalysisViewType } from '@cookie-amazon/protocol'
 import type { ServerResearchRecord } from '../../src/panel/research-record-client'
 
 const objectStore = new AnalysisObjectStore(browser.storage.local)
 const identityStore = new ViewerIdentityStore(browser.storage.local)
 const positionCache = new KeywordPositionCache(browser.storage.local)
+/**
+ * 对话的发布处：侧边栏是提问发生的地方，把同一条对话与同一份证据包交给页面内浮层（#22）。
+ * 浮层只读这一份，两处因此不可能出现不同的问答或不同的数字。
+ */
+const conversationStore = new ConversationStore(browser.storage.local)
 /**
  * 研究记录的读写在服务端（见 research-record-client），客户端不再持有记录副本：
  * 本地数组做不到跨浏览器共享，也做不到组间隔离。
@@ -242,106 +248,35 @@ const element = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: stri
   return node
 }
 
-const section = (label: string, content: HTMLElement, kind: string): HTMLElement => {
-  const node = element('section', 'panel-bubble-section')
-  node.dataset.section = kind
-  const title = element('h3')
-  title.textContent = label
-  node.append(title, content)
-  return node
-}
-
-/** 一条带句中标号的回答：标号是 sup，序号指向底部来源清单。 */
-const markedList = (
-  className: string,
-  values: readonly string[],
-  citations: AnalysisAskSuccess['answer']['citations'],
-): HTMLElement => {
-  const list = element('ul', className)
-  for (const sentence of markAnswerSentences(values, citations)) {
-    const item = element('li')
-    const text = element('span')
-    text.textContent = sentence.text
-    item.append(text)
-    for (const mark of sentence.marks) {
-      const sup = element('sup', 'panel-citation-marker')
-      sup.textContent = mark
-      sup.dataset.marker = mark
-      item.append(sup)
-    }
-    list.append(item)
-  }
-  return list
-}
-
-/** 来源清单里那句话说的是「这个值来自哪里」，所以标签要落回用户看得懂的来源名。 */
-const ANALYSIS_SOURCE_LABELS: Record<string, string> = {
-  storefront: '亚马逊前台',
-  sellersprite: 'SellerSprite',
-  derived: '计算结果',
-  'research-record': '小组研究记录',
-}
-
 /**
- * 底部来源清单：序号 + 标签 + 值 + 来自哪里，序号就是句中标号里的那个数。
+ * 把这条对话与它那一份证据包发布给页面内浮层（#22）。
  *
- * 「来自哪里」不能省：这是用户判断某个数能不能信的依据，也是 CONTEXT 里引用标号要指到的东西。
+ * 发布的是**同一个对象、同一条对话串、同一份证据包**：浮层不另取数、也不另问一次，
+ * 所以屏幕上不会出现两个版本。浮层读不到或读坏了就什么都不显示，功能仍在侧边栏可用。
+ *
+ * 主题变了才算更新：每问一句都写一次存储本可以，但切对象时那一份要先清掉，
+ * 否则浮层会在读完新对象之前先显示上一个对象的问答。
  */
-const sourceList = (citations: AnalysisAskSuccess['answer']['citations']): HTMLElement => {
-  const list = element('ol', 'panel-source-list')
-  list.dataset.section = 'sources'
-  for (const [index, citation] of citations.entries()) {
-    const item = element('li')
-    const number = element('b')
-    number.textContent = String(index + 1)
-    const label = element('span')
-    label.textContent = citation.label
-    const value = element('i')
-    value.textContent = citation.value + '（' + (ANALYSIS_SOURCE_LABELS[citation.source] ?? citation.source) + '）'
-    item.append(number, label, value)
-    list.append(item)
+const publishConversation = (): void => {
+  if (current === null) {
+    void conversationStore.write(null)
+    return
   }
-  return list
+  void conversationStore.write({
+    asin: current.asin,
+    market: current.market,
+    evidence,
+    turns: thread,
+  })
 }
 
-const renderAnswerBubble = (turn: { response: Extract<AnalysisResult, { kind: 'answer' }>['response']; evidence: AnalysisEvidence }): HTMLElement => {
-  const bubble = element('article', 'panel-bubble panel-bubble-answer')
-  bubble.dataset.bubble = 'answer'
-  const { answer } = turn.response
-  bubble.append(
-    section('事实', markedList('panel-analysis-list', answer.facts, answer.citations), 'facts'),
-    section('结论与判断', markedList('panel-analysis-list', answer.inferences, answer.citations), 'inferences'),
-    sourceList(answer.citations),
-  )
-  const views = element('div', 'panel-bubble-views')
-  views.dataset.section = 'views'
-  renderBubbleViews(document, views, turn.response.view, turn.evidence, openDrawerAt)
-  if (views.children.length > 0) bubble.append(views)
-  return bubble
-}
-
-/**
- * 对话串的渲染：整串重建。
- *
- * 一轮一轮往上叠是 bug 的温床——切对象、失败重试、重渲染都会留下上一轮的气泡。
- * 对话条数少，整串重建换的是「屏幕上永远等于 thread 里的那些」。
- */
+/** 对话串的渲染：整串重建，两壳共用同一个渲染器（conversation-view）。 */
 const renderThread = (): void => {
-  const ask = (text: string): HTMLElement => {
-    const question = element('div', 'panel-bubble panel-bubble-question')
-    question.dataset.bubble = 'question'
-    const body = element('p')
-    body.textContent = text
-    question.append(body)
-    return question
+  if (analysisThreadElement !== null) {
+    renderConversationThread(document, analysisThreadElement, thread, openDrawerAt)
   }
-  const nodes = thread.flatMap<HTMLElement>((turn) => [
-    ask(turn.question),
-    ...(turn.answer === null ? [] : [renderAnswerBubble(turn.answer)]),
-  ])
-  analysisThreadElement?.replaceChildren(...nodes)
   // 空态是「一条消息都还没有」的那一屏：提问一进对话串，它就该让位。
-  if (analysisEmptyElement) analysisEmptyElement.hidden = nodes.length > 0
+  if (analysisEmptyElement) analysisEmptyElement.hidden = thread.length > 0
 }
 
 const renderSuggestions = (): void => {
@@ -360,6 +295,8 @@ const renderAnalysisAnswer = (): void => {
   renderThread()
   renderSuggestions()
   if (analysisDataStatusElement) analysisDataStatusElement.textContent = describeDataStatus()
+  // 对话或证据包一变就发布一次：浮层读到的永远是侧边栏此刻显示的那一条。
+  publishConversation()
 }
 
 const clearAnalysisAnswer = (message: string | null = null): void => {
@@ -807,11 +744,18 @@ inputElement?.addEventListener('input', () => setError(null))
 
 // 面板同时被两处写入（亚马逊侧选中、本面板手动输入），因此订阅存储变更而不是只在打开时读一次。
 browser.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName === 'local' && [ANALYSIS_OBJECT_STORAGE_KEY, VIEWER_IDENTITY_STORAGE_KEY].some((key) => key in changes)) {
+  if (areaName !== 'local') return
+  /**
+   * 对话快照是面板自己写出去的（发布给页面内浮层），不是外部变更：
+   * 当作变更处理会让每次渲染都绕回自己重渲染一次，等于把自己写的东西再读一遍。
+   */
+  const keys = Object.keys(changes).filter((key) => key !== CONVERSATION_STORAGE_KEY)
+  if (keys.length === 0) return
+  if ([ANALYSIS_OBJECT_STORAGE_KEY, VIEWER_IDENTITY_STORAGE_KEY].some((key) => keys.includes(key))) {
     resetAnalysisForTarget()
     resetDrawer()
   }
-  if (areaName === 'local' && Object.keys(changes).length > 0) void render()
+  void render()
 })
 
 void render()

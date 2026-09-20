@@ -1,9 +1,11 @@
-import { describeAnalysisObject, type PanelField } from './panel-state'
+import type { AnalysisViewType } from '@cookie-amazon/protocol'
 import type { AnalysisObject } from '../analysis-object'
 import type { OverlayMode, OverlayPosition } from './overlay-state'
 import { clampOverlayPosition } from './overlay-state'
-import type { KeywordPositionRow } from './keyword-positions'
-import { renderKeywordTrend } from './keyword-trend-view'
+import { renderConversationThread } from './conversation-view'
+import { renderDrawerPartitions } from './analysis-view'
+import { buildAnalysisEvidence } from './analysis-evidence'
+import type { PublishedConversation } from './conversation-store'
 // 浮层在 shadow DOM 里，拿不到侧边栏那份外部样式，所以这里读同一份 CSS 文本再内联进去。
 // shell-style.css 是两套外壳共用的配色、字号与间距；overlay.css 只是浮层自己的布局。
 import shellStyle from './shell-style.css?raw'
@@ -18,8 +20,13 @@ export type OverlayHandlers = {
   onToggleCollapsed: () => void
   /** 位置变化后持久化。 */
   onMove: (position: OverlayPosition) => void
-  /** 读取与侧边栏相同的关键词证据；浮层只展示前几行。 */
-  readKeywordRows?: () => readonly KeywordPositionRow[]
+  /**
+   * 读取侧边栏发布的对话快照——同一个分析对象、同一条对话串、同一份证据包。
+   *
+   * 浮层不自己提问也不自己取数：提问的端点只允许扩展自己的源，而这里跑在 amazon.com 上，
+   * 页面上就地再问一次只会得到第二条与侧边栏不同的对话（#22 要消掉的正是这个）。
+   */
+  readConversation: () => PublishedConversation | null
 }
 
 export type OverlayHandle = {
@@ -41,14 +48,14 @@ const element = <K extends keyof HTMLElementTagNameMap>(
   return node
 }
 
-const renderFields = (document: Document, fields: readonly PanelField[]): DocumentFragment => {
-  const fragment = document.createDocumentFragment()
-  for (const field of fields) {
-    fragment.append(element(document, 'dt', undefined, field.label))
-    fragment.append(element(document, 'dd', undefined, field.value))
-  }
-  return fragment
-}
+/** 快照属于当前对象才显示：上一个对象的对话留在页面上，比没有对话更糟。 */
+const conversationOf = (
+  snapshot: PublishedConversation | null,
+  object: AnalysisObject,
+): PublishedConversation | null =>
+  snapshot !== null && snapshot.asin === object.asin && snapshot.market.toUpperCase() === object.market.toUpperCase()
+    ? snapshot
+    : null
 
 /**
  * 把浮层挂到页面上，内容放进 Shadow DOM。
@@ -77,11 +84,16 @@ export const mountOverlay = (
     const meta = element(document, 'span', 'ca-meta')
     head.append(asin, meta)
 
-    const fields = element(document, 'dl', 'ca-fields')
-    const trends = element(document, 'section', 'ca-trends')
-    const trendsTitle = element(document, 'h2', 'ca-trends-title', '关键词搜索量趋势')
-    const trendList = element(document, 'div', 'ca-trend-list')
-    trends.append(trendsTitle, trendList)
+    // 对话串与抽屉都用共享来源里的类名：渲染的是同一批节点，样式也只该有一份。
+    const thread = element(document, 'div', 'panel-thread')
+    // 数据抽屉：与侧边栏同样默认收起，展开状态只活在这次会话里。
+    const drawer = element(document, 'section', 'panel-drawer')
+    const drawerToggle = element(document, 'button', 'panel-drawer-toggle', '数据抽屉')
+    drawerToggle.type = 'button'
+    drawerToggle.setAttribute('aria-expanded', 'false')
+    const drawerViews = element(document, 'div', 'panel-drawer-views')
+    drawerViews.hidden = true
+    drawer.append(drawerToggle, drawerViews)
     const actions = element(document, 'div', 'ca-actions')
     const pin = element(document, 'button', undefined, '固定到侧边栏')
     const collapse = element(document, 'button', undefined, '收起')
@@ -104,6 +116,32 @@ export const mountOverlay = (
         height: window.innerHeight,
       })
       place()
+    }
+
+    let open = false
+    drawerToggle.addEventListener('click', () => {
+      open = !open
+      drawerViews.hidden = !open
+      drawerToggle.setAttribute('aria-expanded', open ? 'true' : 'false')
+    })
+
+    /**
+     * 气泡里的内嵌视图入口：展开抽屉并把对应分区带到眼前。
+     *
+     * 与侧边栏同一套语义——分区身份就是视图类型（两侧的分区都由 renderDrawerPartitions 产出），
+     * 所以这里只在抽屉里按 dataset.view 找那一个分区，不新增第二套「哪个入口对应哪个分区」的映射。
+     */
+    const openDrawerAt = (view: AnalysisViewType): void => {
+      open = true
+      drawerViews.hidden = false
+      drawerToggle.setAttribute('aria-expanded', 'true')
+      const partition = [...drawerViews.children]
+        .find((child) => (child as HTMLElement).dataset.view === view) as HTMLElement | undefined
+      if (partition === undefined) return
+      // 先展开再定位：收起状态下分区没有布局，滚到它身上等于没滚。
+      partition.tabIndex = -1
+      partition.focus({ preventScroll: true })
+      partition.scrollIntoView({ block: 'nearest' })
     }
 
     pin.addEventListener('click', () => {
@@ -139,7 +177,7 @@ export const mountOverlay = (
       window.addEventListener('pointerup', up)
     })
 
-    root.append(head, fields, trends, actions)
+    root.append(head, thread, drawer, actions)
     shadow.append(style, root)
     place()
     document.documentElement?.append(host)
@@ -152,32 +190,37 @@ export const mountOverlay = (
           host.style.display = 'none'
           return
         }
-        const state = describeAnalysisObject(object)
-        // 正常情况下 describeAnalysisObject 对非 null 对象都返回 ready；
-        // 若哪天不成立，隐藏而不是显示半截内容。
-        if (state.kind === 'empty') { host.style.display = 'none'; return }
         host.style.display = ''
         const isPill = mode === 'pill'
         root.className = isPill ? 'ca-root ca-pill' : 'ca-root ca-card'
-        fields.hidden = isPill
-        trends.hidden = isPill
+        thread.hidden = isPill
+        drawer.hidden = isPill
         actions.hidden = isPill
-        asin.textContent = state.asin
-        meta.textContent = isPill ? '' : state.market + ' · ' + state.sourceLabel
-        if (!isPill) {
-          fields.replaceChildren(renderFields(document, state.fields))
-          const rows = handlers.readKeywordRows?.() ?? []
-          const visibleRows = rows.slice(0, 3)
-          trends.hidden = visibleRows.length === 0
-          trendList.replaceChildren(...visibleRows.map((row) => {
-            const item = element(document, 'div', 'ca-trend-row')
-            const keyword = element(document, 'span', 'ca-trend-keyword', row.keyword)
-            keyword.title = row.keyword
-            item.append(keyword, renderKeywordTrend(document, row.trend, 'ca-keyword-trend'))
-            return item
-          }))
+        asin.textContent = object.asin
+        meta.textContent = isPill ? '' : object.market
+        // 收起态就是一颗药丸：对话串不留在 DOM 里，展开时再按当时的数据重建一遍。
+        if (isPill) {
+          thread.replaceChildren()
+          drawerViews.replaceChildren()
+          // 展开状态也不跨收起保留：药丸上那点位置藏不住一个展开的抽屉，
+          // 再展开时回到默认收起，与侧边栏「抽屉默认收起」的语义一致。
+          open = false
+          drawerViews.hidden = true
+          drawerToggle.setAttribute('aria-expanded', 'false')
         } else {
-          trendList.replaceChildren()
+          /**
+           * 读发布的那一份要兜住异常：它来自扩展存储，浮层所在的页面必须照常可用。
+           * 读不到就只有对象本身可看，一条气泡也不编。
+           */
+          let snapshot: PublishedConversation | null = null
+          try { snapshot = conversationOf(handlers.readConversation(), object) } catch { snapshot = null }
+          renderConversationThread(document, thread, snapshot?.turns ?? [], openDrawerAt)
+          /**
+           * 抽屉与对话共用同一份证据包。侧边栏还没发布过（用户从没打开过它）时，
+           * 用同一个 buildAnalysisEvidence 就当前对象现建一份——同一个纯函数、同一个对象，
+           * 得到的还是抽屉里那个前台信息分区，不会多出第二套数字。
+           */
+          renderDrawerPartitions(document, drawerViews, snapshot?.evidence ?? buildAnalysisEvidence({ object }))
         }
         clampInView()
       },

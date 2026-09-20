@@ -1,7 +1,11 @@
 import { clampOverlayPosition, type OverlayPosition, type OverlaySize } from './overlay-state'
 
-export const OVERLAY_WIDTH = 268
-export const OVERLAY_HEIGHT = 190
+/**
+ * 浮层首屏的假定尺寸，用来算首次出现的位置与夹取。
+ * 与 overlay.css 里 .ca-card 的宽度、最大高度一致：卡片里现在是对话串，比原来的字段卡大。
+ */
+export const OVERLAY_WIDTH = 320
+export const OVERLAY_HEIGHT = 460
 const MARGIN = 24
 
 /**

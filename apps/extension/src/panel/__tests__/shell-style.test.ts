@@ -107,7 +107,9 @@ const literalValues = (css: string): string[] =>
   })
 
 const mountedStyle = (): string => {
-  const handle = mountOverlay(document, { onPin: async () => true, onToggleCollapsed: () => {}, onMove: () => {} }, { x: 0, y: 0 })
+  const handle = mountOverlay(document, {
+    onPin: async () => true, onToggleCollapsed: () => {}, onMove: () => {}, readConversation: () => null,
+  }, { x: 0, y: 0 })
   expect(handle).not.toBeNull()
   const host = document.getElementById(OVERLAY_HOST_ID)
   return host!.shadowRoot!.querySelector('style')!.textContent!

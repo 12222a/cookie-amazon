@@ -9,6 +9,10 @@
  * 之后换配色只改这里的值，两处一起变。两壳用到的取值都收在这里，不按「刻度」四舍五入，
  * 也不给没人用的值起名字。
  *
+ * 文件后半是**两壳共用的组件样式**：对话串、数据抽屉的外壳、固定视图组件。
+ * 这些标记由 conversation-view.ts 与 analysis-view.ts 这两份共享渲染器产出，
+ * 侧边栏与浮层渲染的是同一批节点，所以样式也只能有一份——各写一份就是「两处看起来不一样」的起点。
+ *
  * 文件末尾还有一条非 token 的共享规则：把 hidden 属性还原成「真的不显示」。
  */
 :root,
@@ -57,6 +61,362 @@
   --ca-space-14: 14px;
   --ca-space-18: 18px;
   --ca-space-26: 26px;
+}
+
+/*
+ * 对话串：提问与回答各占一个气泡，回答里的分区与底部来源清单都长在同一个气泡里。
+ * 气泡、标号、来源清单三处的尺寸都由 token 给，两壳一致。
+ */
+.panel-thread {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ca-space-10);
+}
+
+.panel-bubble {
+  padding: var(--ca-space-10);
+  border: 1px solid var(--ca-line);
+  background: var(--ca-surface);
+}
+
+.panel-bubble-question {
+  margin-left: var(--ca-space-26);
+  background: var(--ca-surface-raised);
+}
+
+.panel-bubble p {
+  margin: 0;
+  color: var(--ca-ink);
+}
+
+.panel-bubble-answer {
+  margin-right: var(--ca-space-14);
+}
+
+.panel-bubble-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ca-space-4);
+}
+
+.panel-bubble-section h3,
+.panel-analysis-view h3,
+.panel-source-types h4 {
+  margin: 0;
+  color: var(--ca-ink);
+  font-size: var(--ca-font-md);
+}
+
+.panel-analysis-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ca-space-4);
+  margin: 0;
+  padding: 0 0 0 var(--ca-space-18);
+  color: var(--ca-ink-body);
+  font-size: var(--ca-font-sm);
+}
+
+/* 底部来源清单：序号就是句中标号里的数字，所以两者用同一个颜色。 */
+.panel-source-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ca-space-3);
+  margin: 0;
+  padding: var(--ca-space-8) 0 0;
+  border-top: 1px solid var(--ca-line);
+  list-style: none;
+}
+
+.panel-source-list li {
+  display: flex;
+  gap: var(--ca-space-7);
+  color: var(--ca-ink-muted);
+  font-size: var(--ca-font-sm);
+}
+
+.panel-source-list b,
+.panel-citation-marker {
+  color: var(--ca-accent);
+  font-size: var(--ca-font-xs);
+}
+
+.panel-citation-marker {
+  margin-left: var(--ca-space-2);
+  vertical-align: super;
+}
+
+.panel-source-list i {
+  color: var(--ca-ink-body);
+  font-style: normal;
+}
+
+/* 气泡里的内嵌视图：就地渲染摘要，宽表退成一个指向数据抽屉的入口。 */
+.panel-bubble-views {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ca-space-8);
+}
+
+.panel-view-entry {
+  align-self: flex-start;
+  padding: var(--ca-space-6) var(--ca-space-9);
+  border: 1px solid var(--ca-line-control);
+  background: transparent;
+  color: var(--ca-ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.panel-view-entry:focus-visible {
+  outline: 2px solid var(--ca-accent);
+  outline-offset: 1px;
+}
+
+/* 数据抽屉的外壳：两壳都是默认收起的一层，展开状态各活在自己的会话里。 */
+.panel-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ca-space-8);
+  padding-top: var(--ca-space-12);
+  border-top: 1px solid var(--ca-line);
+}
+
+.panel-drawer-toggle {
+  align-self: flex-start;
+  padding: var(--ca-space-6) var(--ca-space-9);
+  border: 1px solid var(--ca-line-control);
+  background: transparent;
+  color: var(--ca-ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.panel-drawer-toggle[aria-expanded='true'] {
+  border-color: var(--ca-accent);
+  color: var(--ca-accent);
+}
+
+.panel-drawer-toggle:focus-visible {
+  outline: 2px solid var(--ca-accent);
+  outline-offset: 1px;
+}
+
+.panel-drawer-views {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ca-space-10);
+}
+
+/*
+ * 固定视图组件：抽屉分区与回答里的内嵌视图都由 analysis-view.ts 产出，
+ * 同一批节点只能有同一份样式。
+ */
+.panel-summary-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ca-space-6);
+}
+
+.panel-summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ca-space-2);
+  min-width: 0;
+  padding: var(--ca-space-7);
+  border: 1px solid var(--ca-line);
+  background: var(--ca-surface-raised);
+}
+
+.panel-summary-card span {
+  color: var(--ca-ink-muted);
+  font-size: var(--ca-font-xs);
+  line-height: 1.3;
+}
+
+.panel-summary-card strong {
+  color: var(--ca-ink);
+  font-size: var(--ca-font-metric);
+  line-height: 1.2;
+}
+
+.panel-source-types {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ca-space-5);
+}
+
+.panel-source-types ul {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ca-space-4) var(--ca-space-10);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.panel-source-types li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--ca-space-8);
+  color: var(--ca-ink-body);
+  font-size: var(--ca-font-sm);
+}
+
+.panel-source-types li strong {
+  color: var(--ca-ink);
+}
+
+/* 窄栏里表格必须能横向滚动，否则关键词列会把数字列挤没。 */
+.panel-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--ca-line);
+}
+
+.panel-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--ca-font-sm);
+  white-space: nowrap;
+}
+
+.panel-table th,
+.panel-table td {
+  padding: var(--ca-space-6) var(--ca-space-8);
+  border-bottom: 1px solid var(--ca-line-soft);
+  text-align: left;
+}
+
+.panel-table th {
+  color: var(--ca-ink-muted);
+  font-weight: 500;
+}
+
+.panel-table td {
+  color: var(--ca-ink-body);
+}
+
+.panel-trend-cell {
+  min-width: 126px;
+  vertical-align: middle;
+}
+
+.keyword-trend {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  color: var(--ca-ink-muted);
+  font-size: var(--ca-font-xs);
+  white-space: nowrap;
+}
+
+.keyword-trend svg {
+  display: block;
+  width: 120px;
+  height: 28px;
+  overflow: visible;
+}
+
+.keyword-trend polyline {
+  fill: none;
+  stroke: var(--ca-accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.75;
+  vector-effect: non-scaling-stroke;
+}
+
+.keyword-trend circle {
+  fill: var(--ca-accent);
+}
+
+.keyword-trend--insufficient {
+  color: var(--ca-ink-muted);
+}
+
+.panel-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.panel-pain-point {
+  border: 1px solid var(--ca-line);
+  background: var(--ca-surface);
+}
+
+.panel-pain-point summary {
+  padding: var(--ca-space-8) var(--ca-space-10);
+  color: var(--ca-ink);
+  cursor: pointer;
+  font-size: var(--ca-font-sm);
+}
+
+.panel-pain-point summary:focus-visible {
+  outline: 2px solid var(--ca-accent);
+  outline-offset: -2px;
+}
+
+.panel-pain-point-meta {
+  margin: 0;
+  padding: 0 var(--ca-space-10) var(--ca-space-4);
+  color: var(--ca-ink-muted);
+  font-size: var(--ca-font-xs);
+}
+
+.panel-pain-point-excerpts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ca-space-5);
+  margin: 0;
+  padding: 0 var(--ca-space-10) var(--ca-space-10) var(--ca-space-26);
+  color: var(--ca-ink-body);
+  font-size: var(--ca-font-sm);
+}
+
+.panel-analysis-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ca-space-6);
+  padding-top: var(--ca-space-8);
+  border-top: 1px solid var(--ca-line);
+}
+
+.panel-analysis-trends {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ca-space-5);
+}
+
+.panel-analysis-trend {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ca-space-8);
+  padding: var(--ca-space-5) 0;
+  border-bottom: 1px solid var(--ca-line-soft);
+}
+
+.panel-analysis-trend:last-child {
+  border-bottom: 0;
+}
+
+.panel-analysis-trend > span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ca-ink-body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-analysis-record {
+  margin: 0;
+  color: var(--ca-ink-body);
+  font-size: var(--ca-font-sm);
+}
+
+.panel-review-coverage {
+  margin: 0;
+  color: var(--ca-ink-body);
+  font-size: var(--ca-font-sm);
 }
 
 /*
