@@ -33,6 +33,8 @@ type ResearchRecord = {
 const MAX_BODY_BYTES = 16 * 1024
 const MAX_SUMMARY_LENGTH = 500
 const ASIN_PATTERN = /^[A-Z0-9]{10}$/
+const CACHE_TTL_MS = 24 * 60 * 60_000
+const MAX_CACHE_BYTES = 512 * 1024
 
 const json = (body: unknown, status = 200): Response => new Response(JSON.stringify(body), {
   status,
@@ -126,6 +128,55 @@ export const handleResearchApi = async (request: Request, env: ResearchEnv): Pro
 
   const url = new URL(request.url)
   const suffix = url.pathname.slice(RESEARCH_PATH.length)
+
+  if (suffix === '/keyword-positions' && (request.method === 'GET' || request.method === 'PUT')) {
+    const asin = text(url.searchParams.get('asin')).toUpperCase()
+    const market = text(url.searchParams.get('market')).toUpperCase()
+    if (!ASIN_PATTERN.test(asin) || !/^[A-Z]{2,16}$/.test(market)) {
+      return json({ ok: false, error: 'BAD_REQUEST', message: 'asin 或 market 无效' }, 400)
+    }
+    const now = Date.now()
+    if (request.method === 'GET') {
+      const row = await env.FASHION_DB.prepare(
+        'SELECT payload, stored_at FROM keyword_position_cache WHERE asin = ? AND market = ? AND group_name = ? AND stored_at > ? AND stored_at <= ?',
+      ).bind(asin, market, member.group, now - CACHE_TTL_MS, now).first<{ payload: ArrayBuffer; stored_at: number }>()
+      if (row === null) return json({ ok: false, error: 'CACHE_MISS' }, 404)
+      return new Response(new Uint8Array(row.payload), {
+        headers: {
+          'content-type': 'application/octet-stream',
+          'cache-control': 'no-store',
+          'x-cache-age-ms': String(now - row.stored_at),
+        },
+      })
+    }
+    const declared = Number(request.headers.get('content-length'))
+    if (Number.isFinite(declared) && declared > MAX_CACHE_BYTES) {
+      return json({ ok: false, error: 'PAYLOAD_TOO_LARGE' }, 413)
+    }
+    const reader = request.body?.getReader()
+    const parts: Uint8Array[] = []
+    let size = 0
+    if (reader !== undefined) {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        size += value.byteLength
+        if (size > MAX_CACHE_BYTES) {
+          await reader.cancel()
+          return json({ ok: false, error: 'PAYLOAD_TOO_LARGE' }, 413)
+        }
+        parts.push(value)
+      }
+    }
+    const payload = new Uint8Array(size)
+    let offset = 0
+    for (const part of parts) { payload.set(part, offset); offset += part.byteLength }
+    await env.FASHION_DB.prepare(
+      'INSERT INTO keyword_position_cache (asin, market, group_name, payload, stored_at) VALUES (?, ?, ?, ?, ?)'
+      + ' ON CONFLICT (asin, market, group_name) DO UPDATE SET payload = excluded.payload, stored_at = excluded.stored_at',
+    ).bind(asin, market, member.group, payload, now).run()
+    return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } })
+  }
 
   if (suffix === '/records' && request.method === 'GET') {
     const asin = text(url.searchParams.get('asin')).toUpperCase()

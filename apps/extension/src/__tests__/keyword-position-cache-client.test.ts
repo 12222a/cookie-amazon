@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { requestKeywordPositionsCached } from '../panel/keyword-position-cache-client'
+import { ServerKeywordPositionCache } from '../panel/keyword-position-cache'
 import { KeywordPositionCache, KEYWORD_POSITION_CACHE_STORAGE_KEY, keywordPositionCacheKey } from '../panel/keyword-position-cache'
 import type { StorageArea } from '../remote-config'
 
@@ -19,6 +20,67 @@ const response = (asin: string) => ({
 })
 
 describe('requestKeywordPositionsCached', () => {
+  it('uses a colleague’s server response on a new machine, then serves the local copy', async () => {
+    const server = new Map<string, string>()
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const key = new URL(String(input)).search
+      if (init?.method === 'PUT') { server.set(key, String(init.body)); return new Response(null, { status: 204 }) }
+      const body = server.get(key)
+      return body === undefined ? new Response(null, { status: 404 }) : new Response(body, { headers: { 'x-cache-age-ms': '60000' } })
+    })
+    const send = vi.fn(async () => response('B07Z82895W'))
+    const amy = new ServerKeywordPositionCache({ token: 'amy', fetcher })
+    const ben = new ServerKeywordPositionCache({ token: 'ben', fetcher })
+    await requestKeywordPositionsCached('B07Z82895W', 'US', { cache: new KeywordPositionCache(memoryStorage().area), server: amy, send })
+    const local = new KeywordPositionCache(memoryStorage().area)
+    const shared = await requestKeywordPositionsCached('B07Z82895W', 'US', { cache: local, server: ben, send })
+    expect(shared).toMatchObject({ kind: 'rows', cached: true, source: 'server', ageMs: 60_000 })
+    expect((await requestKeywordPositionsCached('B07Z82895W', 'US', { cache: local, server: ben, send })).source).toBe('local')
+    expect(send).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to taking data when server is unavailable and only writes successful responses', async () => {
+    const fetcher = vi.fn(async () => { throw new Error('offline') })
+    const server = new ServerKeywordPositionCache({ token: 'amy', fetcher })
+    const send = vi.fn(async () => response('B07Z82895W'))
+    const result = await requestKeywordPositionsCached('B07Z82895W', 'US', { cache: new KeywordPositionCache(memoryStorage().area), server, send })
+    expect(result).toMatchObject({ kind: 'rows', cached: false, source: 'fresh' })
+    expect(send).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not trust a server hit without a valid server age or a usable payload', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ items: [] })))
+    const server = new ServerKeywordPositionCache({ token: 'amy', fetcher })
+    const send = vi.fn(async () => response('B07Z82895W'))
+    const result = await requestKeywordPositionsCached('B07Z82895W', 'US', { cache: new KeywordPositionCache(memoryStorage().area), server, send })
+    expect(result.source).toBe('fresh')
+    expect(send).toHaveBeenCalledTimes(1)
+  })
+
+  it('refetches when a server payload has unreadable items and does not cache it locally', async () => {
+    const server = new ServerKeywordPositionCache({
+      token: 'amy',
+      fetcher: vi.fn(async () => new Response('{"items":[null]}', { headers: { 'x-cache-age-ms': '1000' } })),
+    })
+    const { area } = memoryStorage()
+    const cache = new KeywordPositionCache(area)
+    const send = vi.fn(async () => {
+      expect((await cache.read('B07Z82895W', 'US')).hit).toBe(false)
+      return response('B07Z82895W')
+    })
+    const result = await requestKeywordPositionsCached('B07Z82895W', 'US', { cache, server, send })
+    expect(result).toMatchObject({ kind: 'rows', source: 'fresh' })
+    expect(send).toHaveBeenCalledTimes(1)
+    expect((await cache.read('B07Z82895W', 'US')).hit).toBe(true)
+  })
+
+  it.each([401, 413])('keeps showing results when the service responds %i', async (status) => {
+    const server = new ServerKeywordPositionCache({ token: 'amy', fetcher: vi.fn(async () => new Response(null, { status })) })
+    const send = vi.fn(async () => response('B07Z82895W'))
+    const result = await requestKeywordPositionsCached('B07Z82895W', 'US', { cache: new KeywordPositionCache(memoryStorage().area), server, send })
+    expect(result).toMatchObject({ kind: 'rows', source: 'fresh' })
+    expect(send).toHaveBeenCalledTimes(1)
+  })
   it('fetches once and serves the second call from cache', async () => {
     const { area } = memoryStorage()
     const send = vi.fn(async () => response('B07Z82895W'))

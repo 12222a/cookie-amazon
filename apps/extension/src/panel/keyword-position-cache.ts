@@ -1,4 +1,5 @@
 import type { StorageArea } from '../remote-config'
+import { REMOTE_CONFIG_ORIGIN } from '@cookie-amazon/protocol'
 
 export const KEYWORD_POSITION_CACHE_STORAGE_KEY = 'keyword-position-cache:v1'
 
@@ -52,7 +53,16 @@ export class KeywordPositionCache {
   public constructor(
     private readonly storage: StorageArea,
     private readonly now: () => number = Date.now,
+    private readonly token = '',
   ) {}
+
+  private async storageKey(): Promise<string> {
+    if (this.token.length === 0) return KEYWORD_POSITION_CACHE_STORAGE_KEY
+    // ponytail: v1 没有小组来源，无法安全迁入身份分槽；升级后首次查询可能重新取数。
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(this.token))
+    const hash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+    return 'keyword-position-cache:v2:' + hash
+  }
 
   public async read(asin: string, market: string): Promise<KeywordPositionCacheRead> {
     const entry = await this.entry(keywordPositionCacheKey(asin, market))
@@ -63,14 +73,14 @@ export class KeywordPositionCache {
     return { hit: true, data: entry.data, ageMs }
   }
 
-  public async write(asin: string, market: string, data: unknown): Promise<boolean> {
+  public async write(asin: string, market: string, data: unknown, ageMs = 0): Promise<boolean> {
     try {
       const stored = await this.allEntries()
       const now = this.now()
       const kept = Object.entries(stored)
         .filter(([, entry]) => now - entry.storedAt < CACHE_TTL_MS)
-      const next = Object.fromEntries([...kept, [keywordPositionCacheKey(asin, market), { storedAt: now, data }]])
-      await this.storage.set({ [KEYWORD_POSITION_CACHE_STORAGE_KEY]: next })
+      const next = Object.fromEntries([...kept, [keywordPositionCacheKey(asin, market), { storedAt: now - ageMs, data }]])
+      await this.storage.set({ [await this.storageKey()]: next })
       return true
     } catch {
       return false
@@ -79,7 +89,8 @@ export class KeywordPositionCache {
 
   private async allEntries(): Promise<Record<string, CacheEntry>> {
     try {
-      const raw = (await this.storage.get(KEYWORD_POSITION_CACHE_STORAGE_KEY))[KEYWORD_POSITION_CACHE_STORAGE_KEY]
+      const key = await this.storageKey()
+      const raw = (await this.storage.get(key))[key]
       if (!isRecord(raw)) return {}
       const entries: Record<string, CacheEntry> = {}
       for (const [key, value] of Object.entries(raw)) {
@@ -94,5 +105,57 @@ export class KeywordPositionCache {
 
   private async entry(key: string): Promise<CacheEntry | null> {
     return (await this.allEntries())[key] ?? null
+  }
+}
+
+type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+
+/** 服务端只保管字节；读取后仍由调用方校验卖家精灵响应形状。 */
+export class ServerKeywordPositionCache {
+  public constructor(private readonly options: { token: string; origin?: string; fetcher?: Fetcher }) {}
+
+  private endpoint(asin: string, market: string): string {
+    const url = new URL('/api/research/keyword-positions', this.options.origin ?? REMOTE_CONFIG_ORIGIN)
+    url.searchParams.set('asin', asin.trim().toUpperCase())
+    url.searchParams.set('market', market.trim().toUpperCase())
+    return url.toString()
+  }
+
+  private request(asin: string, market: string, init: RequestInit): Promise<Response> {
+    return (this.options.fetcher ?? fetch)(this.endpoint(asin, market), {
+      ...init,
+      headers: { authorization: 'Bearer ' + this.options.token, ...init.headers },
+      credentials: 'omit',
+      cache: 'no-store',
+    })
+  }
+
+  public async read(asin: string, market: string): Promise<KeywordPositionCacheRead> {
+    if (this.options.token.trim().length === 0) return { hit: false }
+    try {
+      const response = await this.request(asin, market, { method: 'GET' })
+      if (!response.ok) return { hit: false }
+      const ageHeader = response.headers.get('x-cache-age-ms')
+      if (ageHeader === null) return { hit: false }
+      const ageMs = Number(ageHeader)
+      if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs >= CACHE_TTL_MS) return { hit: false }
+      return { hit: true, data: await response.json() as unknown, ageMs }
+    } catch {
+      return { hit: false }
+    }
+  }
+
+  public async write(asin: string, market: string, data: unknown): Promise<boolean> {
+    if (this.options.token.trim().length === 0) return false
+    try {
+      const response = await this.request(asin, market, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(data),
+      })
+      return response.ok
+    } catch {
+      return false
+    }
   }
 }

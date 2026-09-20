@@ -17,7 +17,7 @@ import { ConversationStore, CONVERSATION_STORAGE_KEY, sameAnalysisTarget } from 
 import { describeAnalysisObject } from '../../src/panel/panel-state'
 import { describeColleagueRecord, describeRecordForOwner, RESEARCH_STATUS_LABELS } from '../../src/panel/research-panel-state'
 import { requestKeywordPositionsCached, type CachedKeywordPositionResult } from '../../src/panel/keyword-position-cache-client'
-import { KeywordPositionCache } from '../../src/panel/keyword-position-cache'
+import { KeywordPositionCache, ServerKeywordPositionCache } from '../../src/panel/keyword-position-cache'
 import type {
   KeywordPositionRow,
   KeywordPositionSummary,
@@ -32,7 +32,8 @@ import type { ServerResearchRecord } from '../../src/panel/research-record-clien
 
 const objectStore = new AnalysisObjectStore(browser.storage.local)
 const identityStore = new ViewerIdentityStore(browser.storage.local)
-const positionCache = new KeywordPositionCache(browser.storage.local)
+let positionCache = new KeywordPositionCache(browser.storage.local)
+let positionServer: ServerKeywordPositionCache | undefined
 /**
  * 对话的发布处：侧边栏是提问发生的地方，把同一条对话与同一份证据包交给页面内浮层（#22）。
  * 浮层只读这一份，两处因此不可能出现不同的问答或不同的数字。
@@ -486,26 +487,29 @@ const renderRecord = async (): Promise<void> => {
 }
 
 /** 缓存命中要说出来：用户不会因为「快了」而疑惑，但会因为「同样的数据为什么又出来了」而疑惑。 */
-const describeCacheAge = (ageMs: number): string => {
+const describeCacheAge = (ageMs: number, source: 'local' | 'server' | 'fresh'): string => {
+  const label = source === 'server' ? '服务端缓存' : '本地缓存'
   const minutes = Math.floor(ageMs / 60_000)
-  if (minutes < 1) return '刚刚缓存'
-  if (minutes < 60) return `${minutes} 分钟前的缓存`
+  if (minutes < 1) return label + '，刚刚缓存'
+  if (minutes < 60) return label + '，' + minutes + ' 分钟前'
   const hours = Math.floor(minutes / 60)
-  return `${hours} 小时前的缓存`
+  return label + '，' + hours + ' 小时前'
 }
 
 const loadPositions = async (): Promise<void> => {
   const target = current
   if (target === null || loading) return
   const targetKey = positionTargetKey(target)
+  const cacheForRequest = positionCache
+  const serverForRequest = positionServer
   loading = true
   if (loadButton) loadButton.disabled = true
   setStatus('正在读取…')
   try {
     const result: CachedKeywordPositionResult = await requestKeywordPositionsCached(
-      target.asin, target.market, { cache: positionCache },
+      target.asin, target.market, { cache: cacheForRequest, server: serverForRequest },
     )
-    if (positionsTarget !== targetKey) return
+    if (positionsTarget !== targetKey || cacheForRequest !== positionCache) return
     resetAnalysisForTarget('词位数据已更新，请重新提问。')
     if (result.kind === 'rows') {
       keywordRows = result.rows
@@ -517,9 +521,9 @@ const loadPositions = async (): Promise<void> => {
     rebuildEvidence()
     renderDrawer()
     const message = describeResult(result)
-    setStatus(result.cached ? `${message}（${describeCacheAge(result.ageMs)}）` : message)
+    setStatus(result.cached ? message + '（' + describeCacheAge(result.ageMs, result.source) + '）' : message)
   } finally {
-    const shouldLoadAnotherTarget = current !== null && positionsTarget !== positionTargetKey(current)
+    const shouldLoadAnotherTarget = current !== null && (positionsTarget !== positionTargetKey(current) || cacheForRequest !== positionCache)
     loading = false
     if (loadButton) loadButton.disabled = false
     if (shouldLoadAnotherTarget) void loadPositions()
@@ -629,8 +633,15 @@ const renderIdentity = async (): Promise<void> => {
     resetAnalysisForTarget()
     clearRecordPanel()
     setDrawerOpen(false)
+    positionsTarget = null
+    keywordRows = []
+    keywordSummary = null
   }
   viewer = nextViewer
+  if (identityChanged) {
+    positionCache = new KeywordPositionCache(browser.storage.local, Date.now, viewer?.token ?? '')
+    positionServer = viewer === null ? undefined : new ServerKeywordPositionCache({ token: viewer.token })
+  }
   recordClient = viewer === null ? null : new ResearchRecordClient({ token: viewer.token })
   if (viewerElement) viewerElement.textContent = describeViewer(viewer)
   if (identitySection) identitySection.hidden = viewer !== null

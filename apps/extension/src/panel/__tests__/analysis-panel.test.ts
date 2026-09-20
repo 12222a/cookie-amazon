@@ -174,6 +174,16 @@ beforeEach(async () => {
 
 afterEach(() => { vi.unstubAllGlobals() })
 
+it('shows whether keyword positions came from local or shared cache', async () => {
+  for (const source of ['local', 'server'] as const) {
+    mocks.positions.mockResolvedValue({ kind: 'rows', rows: [], summary: { totalKeywords: 0, rankedKeywords: 0, adKeywords: 0, sourceTypeCounts: [] }, cached: true, ageMs: 60_000, source })
+    node('#load-positions').dispatch('click')
+    await settle()
+    expect(node('#positions-status').textContent).toContain(source === 'local' ? '本地缓存' : '服务端缓存')
+    expect(node('#positions-status').textContent).toContain('1 分钟前')
+  }
+})
+
 /**
  * DOM double 认不出标记里少了一个 id、少了 data-view，或哪个分区藏在抽屉外面——
  * 这些正是这次改动最容易出错的地方。这个用例用真实的 sidepanel 标记跑一遍面板。
@@ -347,6 +357,22 @@ describe('analysis panel lifecycle', () => {
     expect(node('#drawer-body').hidden).toBe(true)
     expect(drawerText()).not.toContain('长尾词')
     await settle()
+  })
+
+  it('discards an in-flight keyword result from the previous identity', async () => {
+    const previousCalls = mocks.positions.mock.calls.length
+    let release!: (value: unknown) => void
+    mocks.positions.mockImplementationOnce(() => new Promise((resolve) => { release = resolve }))
+      .mockResolvedValue({ kind: 'rows', rows: [], summary: { totalKeywords: 0, rankedKeywords: 0, adKeywords: 0, sourceTypeCounts: [] }, cached: false, ageMs: 0, source: 'fresh' })
+    node('#load-positions').dispatch('click')
+    await settle()
+    stored[VIEWER_IDENTITY_STORAGE_KEY] = { token: 'Bob-token' }
+    changed({ [VIEWER_IDENTITY_STORAGE_KEY]: {} }, 'local')
+    await settle()
+    release({ kind: 'rows', rows: [keywordRow('上一组的词')], summary: { totalKeywords: 1, rankedKeywords: 1, adKeywords: 0, sourceTypeCounts: [] }, cached: true, ageMs: 1000, source: 'server' })
+    await settle()
+    expect(drawerText()).not.toContain('上一组的词')
+    expect(mocks.positions).toHaveBeenCalledTimes(previousCalls + 2)
   })
 
   it('renders safe fallback content for missing and insufficient review evidence', () => {

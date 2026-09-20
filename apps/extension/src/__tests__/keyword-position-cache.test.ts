@@ -29,6 +29,24 @@ describe('keywordPositionCacheKey', () => {
 })
 
 describe('KeywordPositionCache', () => {
+  it('keeps local entries separate when the access key changes', async () => {
+    const { area } = memoryStorage()
+    const amy = new KeywordPositionCache(area, Date.now, 'amy-token')
+    const eve = new KeywordPositionCache(area, Date.now, 'eve-token')
+    await amy.write('B07Z82895W', 'US', payload)
+    expect((await amy.read('B07Z82895W', 'US')).hit).toBe(true)
+    expect(await eve.read('B07Z82895W', 'US')).toEqual({ hit: false })
+    expect(await new KeywordPositionCache(area).read('B07Z82895W', 'US')).toEqual({ hit: false })
+  })
+
+  it('retains server age when warming local cache', async () => {
+    const { area } = memoryStorage()
+    let now = 1_700_000_000_000
+    const cache = new KeywordPositionCache(area, () => now)
+    await cache.write('B07Z82895W', 'US', payload, CACHE_TTL_MS - 60_000)
+    now += 60_000
+    expect(await cache.read('B07Z82895W', 'US')).toEqual({ hit: false })
+  })
   it('misses when nothing has been stored', async () => {
     const { area } = memoryStorage()
     const cache = new KeywordPositionCache(area)
