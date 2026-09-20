@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import worker from '../index'
 
 const rawConfig = JSON.stringify({
@@ -23,6 +23,12 @@ const createEnv = (value: string | null) => {
 }
 
 describe('config worker', () => {
+  // 缓存命中的判定用的是 RemoteConfigCache 的 TTL，而 TTL 计时默认取 Date.now()。
+  // 冻结 Worker 读到的时间，断言就不再取决于两次 fetch 之间真实经过的毫秒数——
+  // 并行跑全量测试时这个间隔会抖动，之前会偶发超过 CONFIG_TTL_MS 而落到读 KV 的分支。
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }) })
+  afterEach(() => { vi.useRealTimers() })
+
   it('returns a validated config and reuses the worker cache', async () => {
     const fixture = createEnv(rawConfig)
     const env = fixture.env as unknown as Parameters<typeof worker.fetch>[1]
@@ -41,6 +47,20 @@ describe('config worker', () => {
     expect(notModified.headers.get('etag')).toBe('W/"config-1"')
     expect(second.status).toBe(200)
     expect(fixture.reads()).toBe(1)
+  })
+
+  it('re-reads KV once the injected clock passes the TTL', async () => {
+    const fixture = createEnv(rawConfig)
+    const env = fixture.env as unknown as Parameters<typeof worker.fetch>[1]
+    const request = new Request('https://config.example/api/extension/config')
+
+    expect((await worker.fetch(request, env)).status).toBe(200)
+    vi.advanceTimersByTime(101)
+    const refreshed = await worker.fetch(request, env)
+
+    expect(refreshed.status).toBe(200)
+    expect(await refreshed.json()).toMatchObject({ ok: true, status: 'fresh', source: 'kv' })
+    expect(fixture.reads()).toBe(2)
   })
 
   it('returns a new body when the ETag does not match', async () => {
