@@ -2,7 +2,8 @@
 @import './shell-style.css';
 
 :root {
-  color-scheme: dark;
+  /* 暖白外壳（#23、ADR-0005）：留着 dark 会让输入框、滚动条按深色渲染，与纸面底直接冲突。 */
+  color-scheme: light;
 }
 
 html,

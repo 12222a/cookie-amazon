@@ -6,8 +6,8 @@
  * 浮层尺寸与定位——不入此文件。
  *
  * 选择器写成 :root, :host，是让同一份 token 分别落在侧边栏文档与浮层的 shadow 宿主上。
- * 之后换配色只改这里的值，两处一起变。两壳用到的取值都收在这里，不按「刻度」四舍五入，
- * 也不给没人用的值起名字。
+ * 之后换配色只改这里的值，两处一起变（#23 就是把深色换成暖白的那一次）。两壳用到的取值
+ * 都收在这里，不按「刻度」四舍五入，也不给没人用的值起名字。
  *
  * 文件后半是**两壳共用的组件样式**：对话串、数据抽屉的外壳、固定视图组件。
  * 这些标记由 conversation-view.ts 与 analysis-view.ts 这两份共享渲染器产出，
@@ -17,26 +17,38 @@
  */
 :root,
 :host {
-  /* 颜色 */
-  --ca-bg: #0b1015;
-  --ca-surface: #111920;
-  --ca-surface-raised: #131c23;
-  --ca-line: #29343d;
-  --ca-line-strong: #35414a;
-  --ca-line-control: #44515a;
-  --ca-line-soft: #202b33;
-  --ca-ink: #f2f5f3;
-  --ca-ink-body: #cdd5d4;
-  --ca-ink-muted: #8b9794;
-  --ca-accent: #6ea8a0;
-  --ca-danger: #c99b8d;
-  --ca-identity-surface: #2b2116;
-  --ca-identity-line: #695235;
-  --ca-identity-ink: #ddbf94;
-  --ca-shadow: 0 6px 20px rgba(0, 0, 0, .45);
+  /*
+   * 颜色：暖白纸感外壳（ADR-0005〈视觉方向〉）。深色取值不再作为第二套主题保留，
+   * 也没有主题开关——要深色就按同一组语义 token 换值，而不是复活旧样式。
+   *
+   * 取值都在暖白底上重新量过对比度，不是从深色直接搬过来的：
+   * --ca-ink-muted 是 #6b6156 而不是原型里的 #7d7368（后者压在 #fbf8f3 上只有 4.38:1，
+   * 达不到正文标准），--ca-danger 与 --ca-identity-* 同理。
+   */
+  --ca-bg: #fbf8f3;
+  --ca-surface: #fff;
+  --ca-surface-raised: #f2ece3;
+  --ca-line: #e7ded1;
+  --ca-line-strong: #8f7f66;
+  --ca-line-control: #7f6d55;
+  --ca-line-soft: #ede4d7;
+  --ca-ink: #2b2622;
+  --ca-ink-body: #4a423a;
+  --ca-ink-muted: #6b6156;
+  /* 强调色分两个：色块、圆点、按钮底色用浅的，小字用深的——浅的压在暖白底上只有 4.25:1。 */
+  --ca-accent: #b0632c;
+  --ca-accent-ink: #8f4a1e;
+  --ca-danger: #a03a24;
+  --ca-identity-surface: #f3e2d0;
+  --ca-identity-line: #ab9058;
+  --ca-identity-ink: #7b4320;
+  /* 浅底上的投影要暖、要淡：深色那版的黑影在纸面上会糊成一圈灰。 */
+  --ca-shadow: 0 8px 22px rgba(80, 60, 40, .16);
 
   /* 字体 */
   --ca-font-family: system-ui, sans-serif;
+  /* 标题走衬线，正文与数字保持无衬线（ADR-0005）。 */
+  --ca-font-heading: Georgia, "Songti SC", serif;
   --ca-leading-body: 1.55;
   --ca-leading-compact: 1.5;
   --ca-font-micro: 9px;
@@ -67,6 +79,23 @@
  * 对话串：提问与回答各占一个气泡，回答里的分区与底部来源清单都长在同一个气泡里。
  * 气泡、标号、来源清单三处的尺寸都由 token 给，两壳一致。
  */
+
+/*
+ * 两壳的标题：侧边栏的栏目名与浮层顶栏上的 ASIN 是同一层级的东西，字体只能有一份。
+ * 正文字体由各壳的布局块设在根上（panel.css 的 body、overlay.css 的 .ca-root），
+ * 标题在这里统一回到衬线体。
+ */
+.panel-head h1,
+.panel-analysis-head h2,
+.panel-drawer-partition h2,
+.panel-record-head h2,
+.panel-bubble-section h3,
+.panel-analysis-view h3,
+.panel-source-types h4,
+.ca-asin {
+  font-family: var(--ca-font-heading);
+}
+
 .panel-thread {
   display: flex;
   flex-direction: column;
@@ -103,7 +132,8 @@
 .panel-analysis-view h3,
 .panel-source-types h4 {
   margin: 0;
-  color: var(--ca-ink);
+  /* 分区标题属于「小字」，用深的那个强调色；浅的压在暖白底上只有 4.25:1。 */
+  color: var(--ca-accent-ink);
   font-size: var(--ca-font-md);
 }
 
@@ -137,7 +167,7 @@
 
 .panel-source-list b,
 .panel-citation-marker {
-  color: var(--ca-accent);
+  color: var(--ca-accent-ink);
   font-size: var(--ca-font-xs);
 }
 
@@ -194,7 +224,7 @@
 
 .panel-drawer-toggle[aria-expanded='true'] {
   border-color: var(--ca-accent);
-  color: var(--ca-accent);
+  color: var(--ca-accent-ink);
 }
 
 .panel-drawer-toggle:focus-visible {

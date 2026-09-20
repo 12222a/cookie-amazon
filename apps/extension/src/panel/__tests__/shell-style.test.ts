@@ -5,9 +5,9 @@ import sharedCss from '../shell-style.css?raw'
 import { mountOverlay, OVERLAY_HOST_ID } from '../overlay'
 
 /**
- * 两套外壳共用同一份样式来源（#18、ADR-0005）。
+ * 两套外壳共用同一份样式来源（#18、#23、ADR-0005）。
  *
- * 断言的是外部行为：共享来源里每个 token 只有一个定义、取值就是换色前的那些；两壳都不许
+ * 断言的是外部行为：共享来源里每个 token 只有一个定义、取值就是暖白外壳的那些；两壳都不许
  * 再手写配色、字号与间距，只许引用 token；浮层注入 shadow DOM 的样式来自同一份来源。
  * 不比对样式文本长相，也不比对 HTML 结构。
  */
@@ -15,25 +15,30 @@ import { mountOverlay, OVERLAY_HOST_ID } from '../overlay'
 /**
  * 取值是独立的事实来源：共享来源一旦换色，这里的字面量必须跟着改，说明它确实被引用了。
  * token 与字面量一一对应，任何取值都藏不进共享文件里游而不被钉住。
+ *
+ * 这些是 ADR-0005〈视觉方向〉定的暖白外壳取值，与浮层、侧边栏同时生效：
+ * 底 #fbf8f3、纸面 #fff、气泡 #f2ece3、分隔线 #e7ded1、正文 #2b2622。
  */
 const values = {
-  '--ca-bg': '#0b1015',
-  '--ca-surface': '#111920',
-  '--ca-surface-raised': '#131c23',
-  '--ca-line': '#29343d',
-  '--ca-line-strong': '#35414a',
-  '--ca-line-control': '#44515a',
-  '--ca-line-soft': '#202b33',
-  '--ca-ink': '#f2f5f3',
-  '--ca-ink-body': '#cdd5d4',
-  '--ca-ink-muted': '#8b9794',
-  '--ca-accent': '#6ea8a0',
-  '--ca-danger': '#c99b8d',
-  '--ca-identity-surface': '#2b2116',
-  '--ca-identity-line': '#695235',
-  '--ca-identity-ink': '#ddbf94',
-  '--ca-shadow': '0 6px 20px rgba(0, 0, 0, .45)',
+  '--ca-bg': '#fbf8f3',
+  '--ca-surface': '#fff',
+  '--ca-surface-raised': '#f2ece3',
+  '--ca-line': '#e7ded1',
+  '--ca-line-strong': '#8f7f66',
+  '--ca-line-control': '#7f6d55',
+  '--ca-line-soft': '#ede4d7',
+  '--ca-ink': '#2b2622',
+  '--ca-ink-body': '#4a423a',
+  '--ca-ink-muted': '#6b6156',
+  '--ca-accent': '#b0632c',
+  '--ca-accent-ink': '#8f4a1e',
+  '--ca-danger': '#a03a24',
+  '--ca-identity-surface': '#f3e2d0',
+  '--ca-identity-line': '#ab9058',
+  '--ca-identity-ink': '#7b4320',
+  '--ca-shadow': '0 8px 22px rgba(80, 60, 40, .16)',
   '--ca-font-family': 'system-ui, sans-serif',
+  '--ca-font-heading': 'Georgia, "Songti SC", serif',
   '--ca-leading-body': '1.55',
   '--ca-leading-compact': '1.5',
   '--ca-font-micro': '9px',
@@ -115,14 +120,63 @@ const mountedStyle = (): string => {
   return host!.shadowRoot!.querySelector('style')!.textContent!
 }
 
+/**
+ * 取出某个选择器命中的全部规则内容，用来检查「这类元素拿到了哪一类取值」。
+ *
+ * 按选择器整条匹配（逗号分隔后逐个比对），不是子串包含；同一个选择器可能分在几条规则里
+ * （标题的字体与颜色就是两条），所以合并全部命中，而不是只看先出现的那一条。
+ */
+const ruleBody = (css: string, selector: string): string => {
+  return [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter((match) => match[1]!.split(',').map((part) => part.trim()).includes(selector))
+    .map((match) => match[2]!)
+    .join('\n')
+}
+
 describe('共享样式来源', () => {
-  it('每个 token 只有一份定义，取值就是换色前的那些', () => {
+  it('每个 token 只有一份定义，取值就是暖白外壳的那些', () => {
     for (const [token, value] of Object.entries(values)) expect(declared(sharedCss, token)).toEqual([value])
     // 反向也要成立：共享文件里不许有集合之外、因此没被钉住的取值。
     expect(declaredTokens(sharedCss).sort()).toEqual(Object.keys(values).sort())
     // 一份来源同时服务文档与 shadow 宿主：两个选择器写在同一个规则块里。
     expect(sharedCss).toMatch(/:root\s*,\s*:host\s*\{/)
     expect(literalValues(sharedCss).filter((literal) => !literal.startsWith('0 '))).toEqual([])
+  })
+
+  /**
+   * 强调色分两个（ADR-0005）：#b0632c 压在暖白底上只有 4.25:1，只够做色块、圆点与描边；
+   * 小字要更深的 #8f4a1e。这一条抓的正是「小字误用了浅的那个」——那种错不会让别的测试变红。
+   */
+  it('小字用深的那个强调色，浅的只做色块与描边', () => {
+    for (const selector of ['.panel-bubble-section h3', '.panel-analysis-view h3', '.panel-source-types h4']) {
+      expect(ruleBody(sharedCss, selector)).toContain('var(--ca-accent-ink)')
+    }
+    // 引用标号与来源清单序号是同一组数字，用同一个颜色。
+    for (const selector of ['.panel-source-list b', '.panel-citation-marker']) {
+      expect(ruleBody(sharedCss, selector)).toContain('var(--ca-accent-ink)')
+    }
+    // 任何落成文字颜色的 --ca-accent 都会把小字压到标准以下：文字一律走 accent-ink。
+    expect([...sharedCss.matchAll(/(?<![\w-])color\s*:\s*var\(--ca-accent\)/g)]).toEqual([])
+    // 浅的那个仍要留在图形上：趋势线的描边与圆点（色块、圆点那一类用法）。
+    expect(ruleBody(sharedCss, '.keyword-trend polyline')).toContain('var(--ca-accent)')
+    expect(ruleBody(sharedCss, '.keyword-trend circle')).toContain('var(--ca-accent)')
+  })
+
+  /** 标题衬线、正文无衬线（ADR-0005）。标题字体只此一处，两壳的标题都落回它。 */
+  it('标题走衬线体，正文保持无衬线', () => {
+    const titled = [
+      '.panel-head h1', '.panel-analysis-head h2', '.panel-drawer-partition h2',
+      '.panel-record-head h2', '.panel-bubble-section h3', '.panel-analysis-view h3',
+      '.panel-source-types h4', '.ca-asin',
+    ]
+    for (const selector of titled) {
+      expect(ruleBody(sharedCss, selector)).toContain('font-family: var(--ca-font-heading)')
+    }
+    expect(values['--ca-font-heading']).toMatch(/serif/)
+    // 正文与数字仍是那套无衬线字体，浮层与侧边栏各自在根上设一次。
+    expect(values['--ca-font-family']).toMatch(/sans-serif/)
+    expect(panelCss).toContain('var(--ca-font-family)')
+    expect(overlayCss).toContain('var(--ca-font-family)')
   })
 
   it('侧边栏从共享来源引入，配色、字号与间距不再手写', () => {
