@@ -1,5 +1,7 @@
 import { defineContentScript } from 'wxt/utils/define-content-script'
 import { AnalysisObjectStore, ANALYSIS_OBJECT_STORAGE_KEY } from '../src/analysis-object-store'
+import { askAnalysis } from '../src/panel/analysis-client'
+import { analysisFetchThroughBackground } from '../src/panel/analysis-ask-relay'
 import { mountOverlay } from '../src/panel/overlay'
 import { OverlayController } from '../src/panel/overlay-controller'
 import { initialOverlayPosition } from '../src/panel/overlay-placement'
@@ -13,9 +15,11 @@ import { ConversationStore, CONVERSATION_STORAGE_KEY, type PublishedConversation
  * 与入口注入脚本（amazon.content.ts）分开：那个只做识别与上报，本脚本只做展示。
  * #5 要求浮层渲染失败时静默消失，所以 DOM 操作都在 mountOverlay 与控制器内部被兜住。
  *
- * 浮层不自己提问也不自己取数（#22）：提问的端点只允许扩展自己的源，从 amazon.com 页面上
- * 直连会被挡在跨域之外，而在页面上就地再问一次也只会得到第二条与侧边栏不同的对话。
- * 所以这里只读侧边栏发布的同一份对话（conversation-store），一处对话两个壳。
+ * 取数仍然只有侧边栏一处（#22）。提问从 #24 起在浮层里也能发起：端点没有 CORS 头，
+ * 页面侧直连会被同源策略挡掉，所以消息交给 background 代发（analysis-ask-relay）。
+ *
+ * 答出来的那一轮写回侧边栏发布的那条对话串（conversation-store）。两个壳订阅的是同一个键，
+ * 发布时都以「先读完再补上自己那一轮」的方式写，所以一处问、另一处看到的是同一条。
  */
 export default defineContentScript({
   matches: ['https://www.amazon.com/*'],
@@ -31,7 +35,6 @@ export default defineContentScript({
     let conversation: PublishedConversation | null = null
     let running = false
     let pending = false
-
     // 先声明再赋值：createView 里的回调要引用 controller 自身（收起与拖动），
     // 直接 const 会让类型推断绕回自己（TS7022）。
     let controller: OverlayController
@@ -50,6 +53,26 @@ export default defineContentScript({
         onToggleCollapsed: () => { void controller.toggleCollapsed() },
         onMove: (position) => { void controller.move(position) },
         readConversation: () => conversation,
+        /**
+         * 浮层里的提问：换的是传输（经 background 中转），其余——超时、提示文案、
+         * UNSUPPORTED_SCOPE 语义——与侧边栏共用 analysis-client 这一个实现。
+         */
+        askAnalysis: (question, evidence, history) => askAnalysis(question, evidence, {
+          fetcher: analysisFetchThroughBackground((message) => browser.runtime.sendMessage(message)),
+          history,
+        }),
+        /**
+         * 浮层问出来的那一轮写回共有的那条对话串。
+         *
+         * 写完立刻把内存里那一份换成新的，并重画：存储事件也会回来，但那要绕一圈，
+         * 屏幕上这一轮应当马上就在（AC 的「一处问、另一处立即看到」）。
+         */
+        publishConversation: async (next) => {
+          if (!await conversationStore.write(next)) return false
+          conversation = next
+          await controller.sync()
+          return true
+        },
       }, controller.currentPosition()),
       readObject: () => objectStore.read(),
       readPreference: () => preferenceStore.read(),

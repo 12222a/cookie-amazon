@@ -1,8 +1,11 @@
 /*
  * 浮层的布局。配色、字号与共用组件的样式来自 shell-style.css，浮层在 shadow DOM 里运行时由 overlay.ts 内联。
  *
- * 这里只放**浮层自己的几何**：它贴在亚马逊页面上，宽度、定位与 z-index 与侧边栏不同；
- * 对话串、数据抽屉与固定视图组件的样式一律在共享来源里，两壳渲染的是同一批节点。
+ * 这里只放**浮层自己的几何与它自己产出的节点**：它贴在亚马逊页面上，宽度、定位与 z-index
+ * 与侧边栏不同；对话串、数据抽屉与固定视图组件的样式一律在共享来源里，两壳渲染的是同一批节点。
+ *
+ * 提问那一行是浮层自己建的（侧边栏的表单长在 index.html 里），所以跟侧边栏把它自己的表单
+ * 放在 panel.css 一样，这里也由浮层自己收着自己的。共享的只有 token——取值一处一份。
  */
 :host { all: initial; }
 .ca-root { position: fixed; z-index: 2147483646; box-sizing: border-box;
@@ -20,3 +23,17 @@
 .ca-actions button { flex: 1; padding: var(--ca-space-5) var(--ca-space-8); border: 1px solid var(--ca-line-control); background: transparent;
   color: var(--ca-ink); font: inherit; cursor: pointer; }
 .ca-root button:focus-visible, .ca-pill:focus-visible { outline: 2px solid var(--ca-accent); outline-offset: 1px; }
+/*
+ * 就地提问的一行：输入框占满，按钮与状态在下方一行。
+ * 卡片宽度放不下「输入框 + 按钮」并排的最小可用宽度，所以提交在输入框下面而不是挤在右边。
+ */
+.ca-ask { display: flex; flex-direction: column; gap: var(--ca-space-6); padding-top: var(--ca-space-10);
+  border-top: 1px solid var(--ca-line); }
+.ca-ask-input { padding: var(--ca-space-6) var(--ca-space-8); border: 1px solid var(--ca-line-strong);
+  background: var(--ca-surface-raised); color: var(--ca-ink); font: inherit; }
+.ca-ask-submit { align-self: flex-start; padding: var(--ca-space-5) var(--ca-space-8); border: 1px solid var(--ca-line-control);
+  background: transparent; color: var(--ca-ink); font: inherit; cursor: pointer; }
+.ca-ask-submit:disabled { cursor: default; opacity: .55; }
+.ca-ask-status { margin: 0; color: var(--ca-ink-muted); font-size: var(--ca-font-xs); }
+/* 失败说成失败：与侧边栏状态行的 data-kind='error' 同一条约定、同一个 token。 */
+.ca-ask-status[data-kind='error'] { color: var(--ca-danger); }

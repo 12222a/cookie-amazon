@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
-import { renderConversationThread, type ConversationTurn } from '../conversation-view'
+import {
+  conversationHistory,
+  renderConversationThread,
+  withAnswer,
+  withQuestion,
+  type ConversationTurn,
+} from '../conversation-view'
 import { buildAnalysisEvidence } from '../analysis-evidence'
 import { createAnalysisObject } from '../../analysis-object'
 
@@ -108,5 +114,67 @@ describe('renderConversationThread', () => {
     renderConversationThread(document, container, [], vi.fn())
     expect(bubbles(container, 'question')).toHaveLength(0)
     expect(container.textContent).not.toContain('第一问？')
+  })
+})
+
+/**
+ * 往对话串上加轮次的两条规则（#24）。两壳都走这里：分叉的样子就是「一边两个问题气泡」。
+ */
+describe('withQuestion', () => {
+  it('接上新的一句', () => {
+    const next = withQuestion([answered('第一问？')], '第二问？')
+    expect(next.map((turn) => turn.question)).toEqual(['第一问？', '第二问？'])
+    expect(next[1]!.answer).toBeNull()
+  })
+
+  it('重问还没答出来的那一句时接的是同一轮，不再添一个一样的气泡', () => {
+    const pending: ConversationTurn = { question: '失败的一问？', answer: null }
+    const next = withQuestion([pending], '失败的一问？')
+    expect(next).toHaveLength(1)
+  })
+
+  it('已经答过的那一句再问一次是一次新的提问', () => {
+    const next = withQuestion([answered('问过的？')], '问过的？')
+    expect(next).toHaveLength(2)
+    expect(next[1]!.answer).toBeNull()
+  })
+
+  it('不改传进来的那份', () => {
+    const turns = [answered('第一问？')]
+    withQuestion(turns, '第二问？')
+    expect(turns).toHaveLength(1)
+  })
+})
+
+describe('withAnswer', () => {
+  const answer = answered().answer
+
+  it('把回答补回它那一轮上，不新添一条', () => {
+    const turns: ConversationTurn[] = [{ question: '第一问？', answer: null }, { question: '第二问？', answer: null }]
+    const next = withAnswer(turns, '第一问？', answer)
+    expect(next).toHaveLength(2)
+    expect(next[0]!.answer).toEqual(answer)
+    expect(next[1]!.answer).toBeNull()
+  })
+
+  it('那一轮已经不在了就接在末尾：宁可多一条，也不让回答丢掉', () => {
+    const next = withAnswer([answered('别的问？')], '已经不在的那句？', answer)
+    expect(next.map((turn) => turn.question)).toEqual(['别的问？', '已经不在的那句？'])
+    expect(next[1]!.answer).toEqual(answer)
+  })
+})
+
+describe('conversationHistory', () => {
+  it('只取已经答出来的轮次，且只带问答文本', () => {
+    const turns: ConversationTurn[] = [
+      answered('答过的？'),
+      // 还没有回答的那一轮不进上下文：里面不能有模型没说过的话。
+      { question: '还在问的？', answer: null },
+    ]
+    expect(conversationHistory(turns)).toEqual([{
+      question: '答过的？',
+      facts: ['前台价格是 19.99 美元。', '反查到的 50 个关键词里 41 个有自然排名。'],
+      inferences: ['先看低星问题。'],
+    }])
   })
 })

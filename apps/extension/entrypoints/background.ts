@@ -65,6 +65,7 @@ import { installWebTabRepair } from '../src/background/web-tab-repair'
 import { checkSellerSpriteConnection, withPageFallback } from '../src/background/sellersprite-session'
 import { isExtensionRuntimeRequestEnvelope } from '../src/runtime-bridge'
 import { registerOpenSidePanelHandler } from '../src/panel/open-side-panel'
+import { registerAnalysisAskRelay } from '../src/panel/analysis-ask-relay'
 
 const permissionManager = new TargetPermissionManager(TARGET_REGISTRY, browser.permissions)
 const configManager = new ExtensionRemoteConfigManager(browser.storage.local)
@@ -553,6 +554,15 @@ export default defineBackground(() => {
 
   // 侧边栏只能由 background 打开：sidePanel 在 content script 里不可用。
   registerOpenSidePanelHandler(browser)
+
+  /**
+   * 页面内浮层的提问从这里出去（#24）。
+   *
+   * 端点没有 CORS 头，amazon.com 页面上的内容脚本直连会被同源策略挡掉；manifest 里已经
+   * 声明了这个域名的 host 权限，background 不受页面同源策略约束。给 Worker 加 CORS 的收益
+   * 相同，却等于把这个端点对任意来源开放。
+   */
+  registerAnalysisAskRelay({ runtime: browser.runtime, fetch: (url, init) => fetch(url, init) })
 
   browser.runtime.onMessage.addListener((message: unknown) => {
     if (!isExtensionRuntimeRequestEnvelope(message)) return false

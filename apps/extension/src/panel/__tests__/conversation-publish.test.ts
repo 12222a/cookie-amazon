@@ -138,3 +138,59 @@ describe('侧边栏发布对话给页面内浮层', () => {
     expect(published()).toBeNull()
   })
 })
+
+/**
+ * 浮层问出来的那一轮也要回到侧边栏（#24）。
+ *
+ * 「一处问、另一处立即看到」是双向的：面板问的浮层读得到（上面几条），
+ * 浮层问的面板也要立刻显示。侧边栏过去把自己写的那一条整个忽略掉，
+ * 因为忽略是它唯一防自激的办法——现在改成认出自家写的那一份。
+ */
+describe('浮层问出来的那一轮回到侧边栏', () => {
+  /** 页面内浮层那一侧：往同一个存储键里写下它刚问的一轮。 */
+  const overlayAsks = (question: string): void => {
+    const snapshot = published()
+    stored[CONVERSATION_STORAGE_KEY] = {
+      asin: snapshot?.asin ?? 'B0ABCDEFGH',
+      market: 'US',
+      evidence: snapshot?.evidence ?? null,
+      turns: [...(snapshot?.turns ?? []), { question, answer: null }],
+    }
+    changed({ [CONVERSATION_STORAGE_KEY]: {} }, 'local')
+  }
+
+  it('浮层问的那一句立刻出现在侧边栏的对话串上，且不会在面板这边再问一次', async () => {
+    await ask('面板先问的一句？')
+    const askedBefore = mocks.ask.mock.calls.length
+    overlayAsks('浮层问的一句？')
+    await settle()
+    const bubbles = [...document.querySelectorAll<HTMLElement>('#analysis-thread [data-bubble]')]
+      .map((node) => node.textContent ?? '')
+    expect(bubbles.join('|')).toContain('浮层问的一句？')
+    expect(bubbles.join('|')).toContain('面板先问的一句？')
+    // 另一处问的那一句不该在面板这边重新发一次请求。
+    expect(mocks.ask.mock.calls.length).toBe(askedBefore)
+  })
+
+  it('侧边栏接着问下一句时，浮层问过的那一轮不会被它抹掉', async () => {
+    await ask('面板先问的一句？')
+    overlayAsks('浮层问的一句？')
+    await settle()
+    // 面板这边再问一句：发布出去的那一份要把浮层那一轮带上，而不是只写自己那一条。
+    await ask('面板再问的一句？')
+    expect(published()?.turns.map((turn) => turn.question)).toEqual([
+      '面板先问的一句？', '浮层问的一句？', '面板再问的一句？',
+    ])
+  })
+
+  it('别的对象的对话不会被搬到当前对象的对话串上', async () => {
+    await ask('当前对象的一句？')
+    stored[CONVERSATION_STORAGE_KEY] = {
+      asin: 'B0ZYXWVUTS', market: 'US', evidence: null,
+      turns: [{ question: '别的对象的一句？', answer: null }],
+    }
+    changed({ [CONVERSATION_STORAGE_KEY]: {} }, 'local')
+    await settle()
+    expect(document.querySelector('#analysis-thread')!.textContent).not.toContain('别的对象的一句？')
+  })
+})

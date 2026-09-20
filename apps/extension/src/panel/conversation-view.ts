@@ -1,5 +1,5 @@
 import type { AnalysisAskSuccess, AnalysisViewType } from '@cookie-amazon/protocol'
-import type { AnalysisEvidence } from '@cookie-amazon/protocol'
+import type { AnalysisEvidence, AnalysisHistoryTurn } from '@cookie-amazon/protocol'
 import { markAnswerSentences } from './citation-marker'
 import { renderBubbleViews } from './analysis-view'
 
@@ -16,6 +16,103 @@ export type ConversationTurn = {
   /** 一轮失败时留着 null：提问还在对话串里，重试接的就是它。 */
   answer: { response: AnalysisAskSuccess; evidence: AnalysisEvidence } | null
 }
+
+/**
+ * 追问的上下文：对话串里已经答出来的轮次，只取问答文本。
+ *
+ * 证据包副本、引用对象与视图规格都不进历史，每轮请求仍只发当前证据包，
+ * 请求体因此不随轮数线性膨胀（ADR-0005 的追加决定）。两壳共用这里一处，
+ * 「同一句追问在两边拿到同样的上下文」才有保证。条数上限由 analysis-client 统一裁：
+ * 出站请求体的形状是那一层的事。
+ */
+export const conversationHistory = (turns: readonly ConversationTurn[]): AnalysisHistoryTurn[] =>
+  turns.flatMap((turn) => turn.answer === null ? [] : [{
+    question: turn.question,
+    facts: turn.answer.response.answer.facts,
+    inferences: turn.answer.response.answer.inferences,
+  }])
+
+/**
+ * 一轮问答怎么接进对话串：两条规则只写这一处。
+ *
+ * 两套外壳都在这条对话串上加轮次（侧边栏与浮层都能提问），各写一份迟早分叉，
+ * 而分叉的样子就是「一边能看到两个一样的问题气泡、另一边只看到一个」。
+ */
+
+/** 哪一轮是「刚问的那句、还没回答」：回答要补回这一轮上，而不是在末尾另添一条。 */
+const pendingIndex = (turns: readonly ConversationTurn[], question: string): number => {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index]!
+    if (turn.answer === null && turn.question === question) return index
+  }
+  return -1
+}
+
+/**
+ * 接上一条提问。
+ *
+ * 用户又提交了还没有回答的那一句时接的是同一轮：同一条问句在对话串里留两个气泡，
+ * 用户会以为问了两遍。
+ */
+export const withQuestion = (turns: readonly ConversationTurn[], question: string): ConversationTurn[] =>
+  pendingIndex(turns, question) === -1 ? [...turns, { question, answer: null }] : [...turns]
+
+/**
+ * 把回答补回它那一轮。
+ *
+ * 那一轮已经不在了（比如请求在路上时对话串被换过）就接在末尾——宁可多一条，
+ * 也不要让回答悄悄丢掉。返回新数组，调用方不原地改。
+ */
+export const withAnswer = (
+  turns: readonly ConversationTurn[],
+  question: string,
+  answer: ConversationTurn['answer'],
+): ConversationTurn[] => {
+  const index = pendingIndex(turns, question)
+  return index === -1
+    ? [...turns, { question, answer }]
+    : turns.map((turn, position) => position === index ? { ...turn, answer } : turn)
+}
+
+/**
+ * 把另一处写下的那一条对话并进本地这一份。
+ *
+ * 两处都能提问，谁也不是对方的镜像：存储里那份是共有的，本地这份可能比它多（刚问出去、
+ * 写入还在路上），也可能比它少（另一处刚问了一轮）。谁按自己的那份整份覆盖，对方那一轮
+ * 就没了——所以按问句求并集。
+ *
+ * 顺序以共有的那份为准，本地多出来的接在后面：跨壳的先后没有可比的时间戳，
+ * 而「刚问出去的那句挨着自己」是用户看得见的那件事。
+ */
+export const mergeTurns = (
+  shared: readonly ConversationTurn[],
+  local: readonly ConversationTurn[],
+): ConversationTurn[] => {
+  const mine = new Map(local.map((turn) => [turn.question, turn]))
+  const merged = shared.map((turn) => {
+    const own = mine.get(turn.question)
+    mine.delete(turn.question)
+    // 同一条问句，一边答出来了、一边还挂着：留答出来的那份。
+    return own !== undefined && own.answer !== null && turn.answer === null ? own : turn
+  })
+  // 剩下的都是共有的那份还没有的轮次，按本地先后接在后面。
+  return [...merged, ...mine.values()]
+}
+
+/**
+ * 两份对话串是不是同一条。
+ *
+ * 用来判断「这次变更有没有带来新东西」——没有就别重渲染：那多半正是自己刚写出去的那一份，
+ * 绕回去照着重画就是自激。
+ */
+export const sameTurns = (
+  left: readonly ConversationTurn[],
+  right: readonly ConversationTurn[],
+): boolean =>
+  left.length === right.length && left.every((turn, index) => {
+    const other = right[index]!
+    return turn.question === other.question && (turn.answer === null) === (other.answer === null)
+  })
 
 const element = <K extends keyof HTMLElementTagNameMap>(
   document: Document,

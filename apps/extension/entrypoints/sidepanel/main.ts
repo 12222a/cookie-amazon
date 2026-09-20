@@ -4,8 +4,16 @@ import { createAnalysisObject, DEFAULT_MARKET, type AnalysisObject } from '../..
 import { askAnalysis, type AnalysisResult } from '../../src/panel/analysis-client'
 import { buildAnalysisEvidence } from '../../src/panel/analysis-evidence'
 import { renderDrawerPartitions, revealDrawerPartition } from '../../src/panel/analysis-view'
-import { renderConversationThread } from '../../src/panel/conversation-view'
-import { ConversationStore, CONVERSATION_STORAGE_KEY } from '../../src/panel/conversation-store'
+import {
+  conversationHistory,
+  mergeTurns,
+  renderConversationThread,
+  sameTurns,
+  withAnswer,
+  withQuestion,
+  type ConversationTurn,
+} from '../../src/panel/conversation-view'
+import { ConversationStore, CONVERSATION_STORAGE_KEY, sameAnalysisTarget } from '../../src/panel/conversation-store'
 import { describeAnalysisObject } from '../../src/panel/panel-state'
 import { describeColleagueRecord, describeRecordForOwner, RESEARCH_STATUS_LABELS } from '../../src/panel/research-panel-state'
 import { requestKeywordPositionsCached, type CachedKeywordPositionResult } from '../../src/panel/keyword-position-cache-client'
@@ -107,18 +115,27 @@ let thread: Array<{
 }> = []
 
 /**
- * 追问的上下文：已经答出来的那几轮的问答文本。
+ * 已经发布出去的那一条对话串。
  *
- * 只取问题与回答里的事实、判断——证据包副本、引用对象与视图规格都不进历史，
- * 每轮请求仍只发当前证据包，请求体因此不随轮数线性膨胀（ADR-0005 的追加决定）。
- * 还没有回答的那一轮（失败待重试）自然不在里面：上下文里不能有模型没说过的话。
- * 条数上限由 analysis-client 统一裁：出站请求体的形状是那一层的事。
+ * 两处都能提问，所以本地这份可能比共有的多（刚问出去、写入还在路上），也可能比共有的少
+ * （浮层刚问了一轮）。发布与读回来都以它为准求并集，谁都不会把对方那一轮覆盖掉。
+ *
+ * 它只对 publishedFor 那个对象成立：换对象时共有的那条是别的对象的，拿它求并集
+ * 会把上一个对象的问答搬到新对象上。
  */
-const analysisHistory = (): AnalysisHistoryTurn[] => thread.flatMap((turn) => {
-  if (turn.answer === null) return []
-  const { facts, inferences } = turn.answer.response.answer
-  return [{ question: turn.question, facts, inferences }]
-})
+let publishedTurns: readonly ConversationTurn[] = []
+let publishedFor: string | null = null
+
+/**
+ * 忘掉共有的那一条：这一轮之后发布的对话从空的接起。
+ *
+ * 只有「这次对话不再成立」时才用（换对象、换身份、底层数据换了要重新提问）。
+ * 发布路径上不这么做——那条路要求并集，才不会把浮层刚问的一轮抹掉。
+ */
+const forgetPublished = (): void => {
+  publishedTurns = []
+  publishedFor = null
+}
 
 const positionTargetKey = (target: AnalysisObject): string => target.asin + ':' + target.market
 
@@ -249,14 +266,44 @@ const element = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: stri
 const publishConversation = (): void => {
   if (current === null) {
     void conversationStore.write(null)
+    forgetPublished()
     return
   }
+  /**
+   * 发布出去的是本地这一条与共有那份并起来的结果：浮层问出来的那一轮也能留下来。
+   *
+   * 只写自己这一条会把浮层刚问的那一轮抹掉（它不在 thread 里），屏幕上的对话
+   * 就会在「浮层问了」和「面板重画了一次」之间来回跳。
+   */
+  const turns = mergeTurns(publishedFor === positionTargetKey(current) ? publishedTurns : [], thread)
+  publishedTurns = turns
+  publishedFor = positionTargetKey(current)
   void conversationStore.write({
     asin: current.asin,
     market: current.market,
     evidence,
-    turns: thread,
+    turns,
   })
+}
+
+/**
+ * 把存储里那一条并进本地：页面内浮层问出来的轮次由此回到面板（#24）。
+ *
+ * 只并同一对象的：另一个对象的问答留在屏幕上比没有对话更糟（sameAnalysisTarget 是
+ * 「同一个对象」唯一的那个判断）。并完没有变化就不重渲染——自己刚写出去的那一份
+ * 也会触发这个回调，照着重画就是自激，那正是这张票要小心绕开的东西。
+ */
+const adoptPublishedConversation = (): void => {
+  void (async () => {
+    const snapshot = await conversationStore.read()
+    if (snapshot === null || current === null || !sameAnalysisTarget(snapshot, current)) return
+    const merged = mergeTurns(snapshot.turns, thread)
+    if (sameTurns(merged, thread)) return
+    thread = merged
+    publishedTurns = snapshot.turns
+    publishedFor = positionTargetKey(current)
+    renderAnalysisAnswer()
+  })()
 }
 
 /** 对话串的渲染：整串重建，两壳共用同一个渲染器（conversation-view）。 */
@@ -290,6 +337,12 @@ const renderAnalysisAnswer = (): void => {
 
 const clearAnalysisAnswer = (message: string | null = null): void => {
   thread = []
+  /**
+   * 这一轮是**有意清空**：数据换了、对象换了、身份换了，旧问答不再成立。
+   * 所以连共有的那条也一起忘掉，否则下面那次发布会把刚清掉的旧问答从
+   * 「共有那份」里并回来。
+   */
+  forgetPublished()
   renderAnalysisAnswer()
   setAnalysisStatus(message)
   if (analysisRetryButton) analysisRetryButton.hidden = true
@@ -520,8 +573,8 @@ const askCurrentAnalysis = async (questionOverride?: string): Promise<void> => {
    * 上一轮如果还没有回答，就用它原来那条气泡：
    * 重试接的是同一轮，不该在对话串里留下两个一模一样的问题。
    */
-  const retrying = pendingTurn() === question
-  thread = retrying ? thread : [...thread, { question, answer: null }]
+  // 接轮次的规则与浮层共用一份：两壳各写一遍迟早分叉。
+  thread = withQuestion(thread, question)
   const turnIndex = thread.length - 1
   renderAnalysisAnswer()
   analysisLoading = true
@@ -542,13 +595,12 @@ const askCurrentAnalysis = async (questionOverride?: string): Promise<void> => {
     renderDrawer()
     if (askedEvidence === null) return
     // 上文取自对话串里已经答出来的轮次：追问的「那…呢」才有东西可指。
-    const result = await askAnalysis(question, askedEvidence, { history: analysisHistory() })
+    const result = await askAnalysis(question, askedEvidence, { history: conversationHistory(thread) })
     if (requestId !== analysisRequestId || current === null || positionTargetKey(current) !== targetKey) return
     if (result.kind === 'answer') {
-      // 回答补到本轮留下的那个位置上，不新添一轮：气泡里的问句前后是同一条。
-      thread = thread.map((turn, index) => index === turnIndex
-        ? { ...turn, answer: { response: result.response, evidence: askedEvidence } }
-        : turn)
+      // 回答补回它那一轮上，不新添一条：气泡里的问句前后是同一条。
+      // 按问句找而不是按下标找：请求在路上时别处可能也添过一轮。
+      thread = withAnswer(thread, question, { response: result.response, evidence: askedEvidence })
       renderAnalysisAnswer()
       setAnalysisStatus('已生成回答，引用了 ' + result.response.answer.citations.length + ' 条证据。')
       if (analysisRetryButton) analysisRetryButton.hidden = true
@@ -735,10 +787,13 @@ inputElement?.addEventListener('input', () => setError(null))
 browser.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'local') return
   /**
-   * 对话快照是面板自己写出去的（发布给页面内浮层），不是外部变更：
-   * 当作变更处理会让每次渲染都绕回自己重渲染一次，等于把自己写的东西再读一遍。
+   * 对话快照可能来自两处：面板自己（发布给页面内浮层）与页面内浮层（它现在也能提问，#24）。
+   *
+   * 从前这里把整个键忽略掉——那是当时唯一的防自激办法，代价是浮层问的那一轮永远回不到面板。
+   * 现在读出来比对：没有新东西（就是自己刚写的那一份）不重渲染，有新轮次就并进来重渲染。
    */
   const keys = Object.keys(changes).filter((key) => key !== CONVERSATION_STORAGE_KEY)
+  if (CONVERSATION_STORAGE_KEY in changes) adoptPublishedConversation()
   if (keys.length === 0) return
   if ([ANALYSIS_OBJECT_STORAGE_KEY, VIEWER_IDENTITY_STORAGE_KEY].some((key) => keys.includes(key))) {
     resetAnalysisForTarget()
