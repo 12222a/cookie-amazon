@@ -32,8 +32,6 @@
     "CONFIG_ENVIRONMENT": "production",
     "CONFIG_TTL_MS": "1800000",
     "IMAGE_OUTPUT_COUNT": "2",
-    "DAILY_REFERENCE_COUNT": "1",
-    "ANALYSIS_API_BASE_URL": "https://api.openai.com",
-    "ANALYSIS_MODEL": "gpt-4.1-mini"
+    "DAILY_REFERENCE_COUNT": "1"
   }
 }

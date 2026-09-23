@@ -261,6 +261,30 @@ export const parseModelAnswer = (payload: unknown, evidence: AnalysisEvidence): 
 
 const aiFailure = (message: string): Response => json({ ok: false, error: 'AI_UNAVAILABLE', message }, 503)
 
+/**
+ * 上游的报错正文，截断后拼进给用户的消息。
+ *
+ * 为什么要带出来：上游 401/404/429 的差别正是「密钥错、模型名错、额度耗尽」的差别，
+ * 只回一句「暂时不可用」，配置的人只能靠猜。
+ *
+ * 为什么要脱敏：上游偶尔会把请求内容回显进错误里，Authorization 头也可能被带进来。
+ * 任何形似密钥的串一律换成占位符，长度也压到 300 以内。
+ */
+const SECRET_LIKE = /(sk-[A-Za-z0-9_-]{8,}|Bearer\s+[A-Za-z0-9._-]{8,})/gi
+const upstreamDetail = (text: string): string => {
+  const compact = text.replace(/\s+/g, ' ').trim().replace(SECRET_LIKE, '[REDACTED]')
+  return compact.length === 0 ? '' : '：' + compact.slice(0, 300)
+}
+
+/** 读上游的报错正文；读不出来就不带细节，绝不因为读正文再抛一次。 */
+const failureText = async (response: Response): Promise<string> => {
+  try {
+    return await response.text()
+  } catch {
+    return ''
+  }
+}
+
 export const isAnalysisApiPath = (pathname: string): boolean => pathname === ANALYSIS_PATH
 
 export const handleAnalysisApi = async (
@@ -281,15 +305,22 @@ export const handleAnalysisApi = async (
   }
   if (!isAnalysisAskRequest(parsed)) return json({ ok: false, error: 'BAD_REQUEST', message: '分析请求字段无效' }, 400)
   if (forbiddenQuestion(parsed.question) || forbiddenHistory(parsed.history)) return json({ ok: false, error: 'UNSUPPORTED_SCOPE', message: '当前只能分析前台、词位、评论和研究记录，无法回答成本、利润或合规问题。' }, 422)
-  if (!env.ANALYSIS_API_BASE_URL || !env.ANALYSIS_API_KEY) return aiFailure('AI 分析服务尚未配置')
+  // 缺哪个就说哪个：只说「尚未配置」，配置的人不知道该去补哪一项。
+  const baseUrl = env.ANALYSIS_API_BASE_URL ?? ''
+  const apiKey = env.ANALYSIS_API_KEY ?? ''
+  const missingConfig = [
+    ...(baseUrl.length > 0 ? [] : ['ANALYSIS_API_BASE_URL']),
+    ...(apiKey.length > 0 ? [] : ['ANALYSIS_API_KEY']),
+  ]
+  if (missingConfig.length > 0) return aiFailure('AI 分析服务尚未配置：缺少 ' + missingConfig.join('、'))
 
   const facts = buildFacts(parsed.evidence)
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS)
   try {
-    const response = await fetcher(promptEndpoint(env.ANALYSIS_API_BASE_URL), {
+    const response = await fetcher(promptEndpoint(baseUrl), {
       method: 'POST',
-      headers: { authorization: 'Bearer ' + env.ANALYSIS_API_KEY, 'content-type': 'application/json' },
+      headers: { authorization: 'Bearer ' + apiKey, 'content-type': 'application/json' },
       signal: controller.signal,
       body: JSON.stringify({
         model: env.ANALYSIS_MODEL || 'gpt-4.1-mini',
@@ -302,7 +333,7 @@ export const handleAnalysisApi = async (
         ],
       }),
     })
-    if (!response.ok) return aiFailure('AI 分析服务暂时不可用')
+    if (!response.ok) return aiFailure('AI 分析服务暂时不可用（上游 ' + response.status + upstreamDetail(await failureText(response)) + '）')
     const body = await readBoundedBody(response, MAX_MODEL_RESPONSE_BYTES)
     const parsedAnswer = parseModelAnswer(body, parsed.evidence)
     if (!parsedAnswer) return json({ ok: false, error: 'AI_RESPONSE_INVALID', message: 'AI 返回内容无法校验' }, 502)

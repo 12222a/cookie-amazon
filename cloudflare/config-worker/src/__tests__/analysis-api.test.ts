@@ -248,11 +248,28 @@ describe('analysis worker api', () => {
     expect(await response.json()).toMatchObject({ ok: false, error: 'AI_RESPONSE_INVALID' })
   })
 
-  it('turns upstream model failures into a stable service error', async () => {
-    const fetcher = vi.fn(async () => new Response('upstream failure', { status: 500 }))
+  /**
+   * 上游的 401/404/429 对应「密钥错、模型名错、额度耗尽」三种完全不同的处置，
+   * 所以状态码与上游原文必须带出来；只回一句「暂时不可用」等于让人靠猜。
+   */
+  it('turns upstream model failures into a service error that names the upstream status and detail', async () => {
+    const fetcher = vi.fn(async () => new Response('{"error":"invalid api key"}', { status: 401 }))
     const response = await handleAnalysisApi(request(), env, fetcher as typeof fetch)
     expect(response.status).toBe(503)
-    expect(await response.json()).toEqual({ ok: false, error: 'AI_UNAVAILABLE', message: 'AI 分析服务暂时不可用' })
+    const body = await response.json() as { ok: boolean; error: string; message: string }
+    expect(body.ok).toBe(false)
+    expect(body.error).toBe('AI_UNAVAILABLE')
+    expect(body.message).toContain('401')
+    expect(body.message).toContain('invalid api key')
+  })
+
+  it('never echoes a key-shaped string from the upstream error back to the caller', async () => {
+    const fetcher = vi.fn(async () => new Response('bad auth for sk-abcdefgh12345678 (Bearer abcdefgh12345678)', { status: 401 }))
+    const response = await handleAnalysisApi(request(), env, fetcher as typeof fetch)
+    const body = await response.json() as { message: string }
+    expect(body.message).not.toContain('sk-abcdefgh12345678')
+    expect(body.message).not.toContain('abcdefgh12345678')
+    expect(body.message).toContain('[REDACTED]')
   })
 })
 describe('analysis history', () => {
