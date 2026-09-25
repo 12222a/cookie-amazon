@@ -271,6 +271,19 @@ describe('analysis worker api', () => {
     expect(body.message).not.toContain('abcdefgh12345678')
     expect(body.message).toContain('[REDACTED]')
   })
+
+  /**
+   * 形状匹配只能挡住认识的那几种，而密钥不一定长成那样（DeepSeek 的就不是 sk- 开头）。
+   * 我们手上握着真正要保护的那一串，按字面替换才是准的——形状规则只作兜底。
+   */
+  it('redacts the configured key itself even when its shape is unrecognized', async () => {
+    const key = 'ds-9f2c7a4b1e8d6305'
+    const fetcher = vi.fn(async () => new Response('incorrect api key provided: ' + key, { status: 401 }))
+    const response = await handleAnalysisApi(request(), { ...env, ANALYSIS_API_KEY: key }, fetcher as typeof fetch)
+    const body = await response.json() as { message: string }
+    expect(body.message).not.toContain(key)
+    expect(body.message).toContain('[REDACTED]')
+  })
 })
 describe('analysis history', () => {
   const turn = (question: string, facts: string[], inferences: string[] = []) => ({ question, facts, inferences })

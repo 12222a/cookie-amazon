@@ -64,3 +64,18 @@ pnpm --filter @cookie-amazon/config-worker exec vitest run src/__tests__/keyword
 pnpm --filter @cookie-amazon/extension exec vitest run src/__tests__/keyword-position-cache.test.ts src/__tests__/keyword-position-cache-client.test.ts src/panel/__tests__/analysis-panel.test.ts
 pnpm test
 ```
+
+## AI 分析服务（`/api/analysis/ask`）
+
+问答走 `ANALYSIS_API_BASE_URL` + `ANALYSIS_API_KEY`（+ 可选 `ANALYSIS_MODEL`，默认 `gpt-4.1-mini`）。
+`wrangler.jsonc` 里没有这三项：换服务商不该改仓库。密钥必须是 secret，URL 与模型名放 vars 或 secret 都可以。
+
+```bash
+cd cloudflare/config-worker
+wrangler secret put ANALYSIS_API_KEY
+wrangler secret put ANALYSIS_API_BASE_URL   # 或写进 wrangler.jsonc 的 vars，例如 https://api.deepseek.com
+wrangler secret put ANALYSIS_MODEL          # 可选
+```
+
+缺哪一项，接口就回「AI 分析服务尚未配置：缺少 X」；上游报错会带出状态码与脱敏后的正文，
+便于区分「密钥错、模型名错、额度耗尽」。

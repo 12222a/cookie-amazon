@@ -268,11 +268,14 @@ const aiFailure = (message: string): Response => json({ ok: false, error: 'AI_UN
  * 只回一句「暂时不可用」，配置的人只能靠猜。
  *
  * 为什么要脱敏：上游偶尔会把请求内容回显进错误里，Authorization 头也可能被带进来。
- * 任何形似密钥的串一律换成占位符，长度也压到 300 以内。
+ * 长度压到 300 以内，串里的密钥一律换成占位符。
  */
 const SECRET_LIKE = /(sk-[A-Za-z0-9_-]{8,}|Bearer\s+[A-Za-z0-9._-]{8,})/gi
-const upstreamDetail = (text: string): string => {
-  const compact = text.replace(/\s+/g, ' ').trim().replace(SECRET_LIKE, '[REDACTED]')
+const upstreamDetail = (text: string, secret = ''): string => {
+  // 先按字面替换我们真正握着的那一串：形状规则只能挡住认识的那几种，
+  // 而密钥不一定长成那样（DeepSeek 的就不是 sk- 开头），漏掉的会被原样回显。
+  const literal = secret.length >= 8 ? text.split(secret).join('[REDACTED]') : text
+  const compact = literal.replace(/\s+/g, ' ').trim().replace(SECRET_LIKE, '[REDACTED]')
   return compact.length === 0 ? '' : '：' + compact.slice(0, 300)
 }
 
@@ -333,7 +336,7 @@ export const handleAnalysisApi = async (
         ],
       }),
     })
-    if (!response.ok) return aiFailure('AI 分析服务暂时不可用（上游 ' + response.status + upstreamDetail(await failureText(response)) + '）')
+    if (!response.ok) return aiFailure('AI 分析服务暂时不可用（上游 ' + response.status + upstreamDetail(await failureText(response), apiKey) + '）')
     const body = await readBoundedBody(response, MAX_MODEL_RESPONSE_BYTES)
     const parsedAnswer = parseModelAnswer(body, parsed.evidence)
     if (!parsedAnswer) return json({ ok: false, error: 'AI_RESPONSE_INVALID', message: 'AI 返回内容无法校验' }, 502)

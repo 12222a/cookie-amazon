@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { requestKeywordPositionsCached } from '../panel/keyword-position-cache-client'
-import { ServerKeywordPositionCache } from '../panel/keyword-position-cache'
+import { ServerKeywordPositionCache, SERVER_CACHE_TIMEOUT_MS } from '../panel/keyword-position-cache'
 import { KeywordPositionCache, KEYWORD_POSITION_CACHE_STORAGE_KEY, keywordPositionCacheKey } from '../panel/keyword-position-cache'
 import type { StorageArea } from '../remote-config'
 
@@ -20,6 +20,39 @@ const response = (asin: string) => ({
 })
 
 describe('requestKeywordPositionsCached', () => {
+  /**
+   * 超时是「服务端不可用」的一种：不设就会永远停在「正在读取…」，
+   * 那正是这条验收标准要避免的情形。
+   */
+  it('gives up on a hanging server instead of stalling the panel', async () => {
+    vi.useFakeTimers()
+    try {
+      // 真实 fetch 会因 abort 拒绝；替身照这个契约走，才测得到超时。
+      const fetcher = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+      }))
+      const server = new ServerKeywordPositionCache({ token: 'amy', fetcher })
+      const pending = server.read('B07Z82895W', 'US')
+      await vi.advanceTimersByTimeAsync(SERVER_CACHE_TIMEOUT_MS)
+      await expect(pending).resolves.toEqual({ hit: false })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /** 有效期由服务端判定（#26）：客户端只校验表头本身是否可用，不拿自己的时钟再判一次。 */
+  it('trusts the server verdict on age instead of re-checking the window locally', async () => {
+    const server = new ServerKeywordPositionCache({
+      token: 'amy',
+      fetcher: vi.fn(async () => new Response(JSON.stringify({ items: [] }), { headers: { 'x-cache-age-ms': String(25 * 60 * 60_000) } })),
+    })
+    const { area } = memoryStorage()
+    const result = await requestKeywordPositionsCached('B07Z82895W', 'US', {
+      cache: new KeywordPositionCache(area), server, send: vi.fn(async () => response('B07Z82895W')),
+    })
+    expect(result).toMatchObject({ kind: 'rows', cached: true, source: 'server' })
+  })
+
   it('uses a colleague’s server response on a new machine, then serves the local copy', async () => {
     const server = new Map<string, string>()
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

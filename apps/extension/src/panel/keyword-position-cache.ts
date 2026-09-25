@@ -59,6 +59,7 @@ export class KeywordPositionCache {
   private async storageKey(): Promise<string> {
     if (this.token.length === 0) return KEYWORD_POSITION_CACHE_STORAGE_KEY
     // ponytail: v1 没有小组来源，无法安全迁入身份分槽；升级后首次查询可能重新取数。
+    // 要做无损迁移，得先给旧条目补上小组归属——那需要一次服务端查询，等于把这次取数提前。
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(this.token))
     const hash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
     return 'keyword-position-cache:v2:' + hash
@@ -110,6 +111,12 @@ export class KeywordPositionCache {
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 
+/**
+ * 服务端往返的上限。没有它，一个不响应的 Worker 会让面板永远停在「正在读取…」，
+ * 而这条路径的承诺是「服务端不可用就退回本地」——超时是「不可用」的一种。
+ */
+export const SERVER_CACHE_TIMEOUT_MS = 5_000
+
 /** 服务端只保管字节；读取后仍由调用方校验卖家精灵响应形状。 */
 export class ServerKeywordPositionCache {
   public constructor(private readonly options: { token: string; origin?: string; fetcher?: Fetcher }) {}
@@ -121,13 +128,20 @@ export class ServerKeywordPositionCache {
     return url.toString()
   }
 
-  private request(asin: string, market: string, init: RequestInit): Promise<Response> {
-    return (this.options.fetcher ?? fetch)(this.endpoint(asin, market), {
-      ...init,
-      headers: { authorization: 'Bearer ' + this.options.token, ...init.headers },
-      credentials: 'omit',
-      cache: 'no-store',
-    })
+  private async request(asin: string, market: string, init: RequestInit): Promise<Response> {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), SERVER_CACHE_TIMEOUT_MS)
+    try {
+      return await (this.options.fetcher ?? fetch)(this.endpoint(asin, market), {
+        ...init,
+        headers: { authorization: 'Bearer ' + this.options.token, ...init.headers },
+        credentials: 'omit',
+        cache: 'no-store',
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timeout)
+    }
   }
 
   public async read(asin: string, market: string): Promise<KeywordPositionCacheRead> {
@@ -138,7 +152,9 @@ export class ServerKeywordPositionCache {
       const ageHeader = response.headers.get('x-cache-age-ms')
       if (ageHeader === null) return { hit: false }
       const ageMs = Number(ageHeader)
-      if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs >= CACHE_TTL_MS) return { hit: false }
+      // 只确认表头本身可用：24 小时的有效期由服务端判定（#26），
+      // 客户端再按本地常量判一次，两边一旦不一致就会静默地把共享缓存关掉。
+      if (!Number.isFinite(ageMs) || ageMs < 0) return { hit: false }
       return { hit: true, data: await response.json() as unknown, ageMs }
     } catch {
       return { hit: false }
