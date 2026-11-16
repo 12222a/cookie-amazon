@@ -4,6 +4,7 @@ export const TARGET_OPERATIONS = [
   'CHECK_LOGIN', 'GET_PROFILE', 'SELLERSPRITE_KEYWORD_REVERSE', 'SELLERSPRITE_MONTHLY', 'SELLERSPRITE_MARKET_RESEARCH', 'SELLERSPRITE_ABA_PERIODS', 'SELLERSPRITE_ABA_RESEARCH', 'COMPETITOR_RESEARCH',
   'PRODUCT_SELECTION', 'MARKET_SELECTION', 'KEYWORD_PRODUCT_RESEARCH', 'KEYWORD_MINING',
   'SELLERSPRITE_CATEGORY_NODES', 'SELLERSPRITE_REVIEW_COMMENTS',
+  'SELLERSPRITE_ADS_INSIGHTS', 'SELLERSPRITE_ADS_HISTORY', 'SELLERSPRITE_ADS_KEYWORDS', 'SELLERSPRITE_ADS_HIGH_FREQUENCY',
 ] as const
 const INTERNAL_TARGET_OPERATIONS = ['SELLERSPRITE_KEYWORD_REVERSE_PREPARE'] as const
 export type PublicTargetOperation = (typeof TARGET_OPERATIONS)[number]
@@ -14,7 +15,7 @@ export type TargetOperationPolicy = {
   path: `/${string}`
   method: ConfigHttpMethod
   timeoutMs: number
-  response: 'login-status' | 'html-login-probe' | 'profile' | 'keyword-reverse' | 'monthly' | 'market-research' | 'aba-periods' | 'aba-research' | 'competitor-research' | 'product-selection' | 'html-session' | 'keyword-mining' | 'category-nodes' | 'review-comments'
+  response: 'login-status' | 'html-login-probe' | 'profile' | 'keyword-reverse' | 'monthly' | 'market-research' | 'aba-periods' | 'aba-research' | 'competitor-research' | 'product-selection' | 'html-session' | 'keyword-mining' | 'category-nodes' | 'review-comments' | 'ads-insights' | 'ads-history' | 'ads-keywords' | 'ads-high-frequency'
 }
 
 export type TargetOperationOverrides = Readonly<Record<string, {
@@ -58,6 +59,10 @@ export const resolveOperationPolicy = (
 }
 
 export const createExampleOperationPolicy = (): Readonly<Record<TargetOperation, TargetOperationPolicy>> => Object.freeze({
+  SELLERSPRITE_ADS_INSIGHTS: Object.freeze({ enabled: false, path: '/v3/api/xds/stat', method: 'GET', timeoutMs: 20_000, response: 'ads-insights' }),
+  SELLERSPRITE_ADS_HISTORY: Object.freeze({ enabled: false, path: '/v3/api/xds/stat/history', method: 'GET', timeoutMs: 20_000, response: 'ads-history' }),
+  SELLERSPRITE_ADS_KEYWORDS: Object.freeze({ enabled: false, path: '/v3/api/xds/stat/keyword', method: 'GET', timeoutMs: 20_000, response: 'ads-keywords' }),
+  SELLERSPRITE_ADS_HIGH_FREQUENCY: Object.freeze({ enabled: false, path: '/v3/api/xds/stat/keyword/high-frequency', method: 'GET', timeoutMs: 20_000, response: 'ads-high-frequency' }),
   CHECK_LOGIN: Object.freeze({
     enabled: true,
     path: '/api/me',
@@ -183,6 +188,10 @@ export const createAmazonOperationPolicy = (): Readonly<Record<TargetOperation, 
 }
 
 export const createSellerSpriteOperationPolicy = (): Readonly<Record<TargetOperation, TargetOperationPolicy>> => Object.freeze({
+  SELLERSPRITE_ADS_INSIGHTS: Object.freeze({ enabled: true, path: '/v3/api/xds/stat', method: 'GET', timeoutMs: 20_000, response: 'ads-insights' }),
+  SELLERSPRITE_ADS_HISTORY: Object.freeze({ enabled: true, path: '/v3/api/xds/stat/history', method: 'GET', timeoutMs: 20_000, response: 'ads-history' }),
+  SELLERSPRITE_ADS_KEYWORDS: Object.freeze({ enabled: true, path: '/v3/api/xds/stat/keyword', method: 'GET', timeoutMs: 20_000, response: 'ads-keywords' }),
+  SELLERSPRITE_ADS_HIGH_FREQUENCY: Object.freeze({ enabled: true, path: '/v3/api/xds/stat/keyword/high-frequency', method: 'GET', timeoutMs: 20_000, response: 'ads-high-frequency' }),
   CHECK_LOGIN: Object.freeze({
     enabled: true,
     path: '/v3/api/client',

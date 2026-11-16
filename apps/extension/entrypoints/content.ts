@@ -17,6 +17,10 @@ import {
   SELLERSPRITE_MARKET_RESEARCH_ACTION,
   SELLERSPRITE_ABA_PERIODS_ACTION,
   SELLERSPRITE_ABA_RESEARCH_ACTION,
+  SELLERSPRITE_ADS_INSIGHTS_ACTION,
+  SELLERSPRITE_ADS_HISTORY_ACTION,
+  SELLERSPRITE_ADS_KEYWORDS_ACTION,
+  SELLERSPRITE_ADS_HIGH_FREQUENCY_ACTION,
   TARGET_ACTIONS,
   isAllowedWebOrigin,
   isContentScriptProbeRequest,
@@ -33,6 +37,7 @@ import {
   isSellerSpriteMarketResearchRequest,
   isSellerSpriteAbaPeriodsRequest,
   isSellerSpriteAbaResearchRequest,
+  isSellerSpriteAdsRequest,
   isTargetRequest,
   type PingResponse,
   type ProtocolError,
@@ -120,6 +125,11 @@ const relayAbaPeriodsMessage = async ({ data }: { data: unknown }): Promise<impo
 const relayAbaResearchMessage = async ({ data }: { data: unknown }): Promise<import('@cookie-amazon/protocol').SellerSpriteAbaResearchResponse> => {
   if (!isAllowedWebOrigin(location.origin) || !isSellerSpriteAbaResearchRequest(data)) return invalidMessage()
   try { return await sendMessage(data.action, data, 'background') as unknown as import('@cookie-amazon/protocol').SellerSpriteAbaResearchResponse } catch { return extensionUnavailable(data.requestId) }
+}
+
+const relayAdsMessage = async ({ data }: { data: unknown }) => {
+  if (!isAllowedWebOrigin(location.origin) || !isSellerSpriteAdsRequest(data)) return invalidMessage()
+  try { return await sendMessage(data.action, data, 'background') } catch { return extensionUnavailable(data.requestId) }
 }
 
 const relayKeywordMiningMessage = async ({ data }: { data: unknown }): Promise<import('@cookie-amazon/protocol').SellerSpriteKeywordMiningResponse> => {
@@ -214,6 +224,9 @@ export default defineContentScript({
     onMessage(SELLERSPRITE_MARKET_RESEARCH_ACTION, relayMarketResearchMessage)
     onMessage(SELLERSPRITE_ABA_PERIODS_ACTION, relayAbaPeriodsMessage)
     onMessage(SELLERSPRITE_ABA_RESEARCH_ACTION, relayAbaResearchMessage)
+    for (const action of [SELLERSPRITE_ADS_INSIGHTS_ACTION, SELLERSPRITE_ADS_HISTORY_ACTION, SELLERSPRITE_ADS_KEYWORDS_ACTION, SELLERSPRITE_ADS_HIGH_FREQUENCY_ACTION]) {
+      onMessage(action, relayAdsMessage)
+    }
     onMessage(COMPETITOR_RESEARCH_ACTION, relayCompetitorMessage)
     onMessage(PRODUCT_SELECTION_ACTION, relayProductSelectionMessage)
     onMessage(SELLERSPRITE_CATEGORY_NODES_ACTION, relayCategoryNodesMessage)

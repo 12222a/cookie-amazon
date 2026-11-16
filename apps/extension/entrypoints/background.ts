@@ -1,4 +1,3 @@
-import { onMessage } from 'webext-bridge/background'
 import {
   CAPABILITIES,
   MESSAGE_NAMESPACE,
@@ -15,7 +14,10 @@ import {
   SELLERSPRITE_MARKET_RESEARCH_ACTION,
   SELLERSPRITE_ABA_PERIODS_ACTION,
   SELLERSPRITE_ABA_RESEARCH_ACTION,
-  TARGET_ACTIONS,
+  SELLERSPRITE_ADS_INSIGHTS_ACTION,
+  SELLERSPRITE_ADS_HISTORY_ACTION,
+  SELLERSPRITE_ADS_KEYWORDS_ACTION,
+  SELLERSPRITE_ADS_HIGH_FREQUENCY_ACTION,
   isPingRequest,
   isSellerSpriteCompetitorRequest,
   isSellerSpriteProductSelectionRequest,
@@ -28,6 +30,7 @@ import {
   isSellerSpriteMarketResearchRequest,
   isSellerSpriteAbaPeriodsRequest,
   isSellerSpriteAbaResearchRequest,
+  isSellerSpriteAdsRequest,
   isTargetRequest,
   type PingResponse,
   type ProtocolError,
@@ -59,13 +62,15 @@ import {
   selectSellerSpriteProducts,
   listSellerSpriteCategoryNodes,
   listSellerSpriteReviewComments,
+  lookupSellerSpriteAdsInsights,
+  listSellerSpriteAdsHistory,
+  listSellerSpriteAdsKeywords,
+  listSellerSpriteAdsHighFrequency,
 } from '../src/targets/sellersprite'
 import { resolveRuntimeTargetPolicy } from '../src/targets/runtime-policy'
-import { installWebTabRepair } from '../src/background/web-tab-repair'
 import { checkSellerSpriteConnection, withPageFallback } from '../src/background/sellersprite-session'
 import { isExtensionRuntimeRequestEnvelope } from '../src/runtime-bridge'
-import { registerOpenSidePanelHandler } from '../src/panel/open-side-panel'
-import { registerAnalysisAskRelay } from '../src/panel/analysis-ask-relay'
+import { installSellerSpriteMcpBridge, isAllowedSellerSpriteMcpRequest } from '../src/background/sellersprite-mcp-bridge'
 
 const permissionManager = new TargetPermissionManager(TARGET_REGISTRY, browser.permissions)
 const configManager = new ExtensionRemoteConfigManager(browser.storage.local)
@@ -105,15 +110,6 @@ const requestIdOf = (data: unknown): string =>
     && (data as { requestId: string }).requestId.length > 0
     ? (data as { requestId: string }).requestId
     : 'unknown'
-
-const guarded = <T>(handler: (message: { data: unknown }) => T | Promise<T>) =>
-  async (message: { data: unknown }): Promise<T | ProtocolError> => {
-    try {
-      return await handler(message)
-    } catch {
-      return targetError(requestIdOf(message.data), 'TARGET_API_ERROR')
-    }
-  }
 
 const descriptor = async (targetId: string, config: RemoteConfig | null): Promise<TargetDescriptor | ProtocolError> => {
   const adapter = TARGET_REGISTRY.get(targetId)
@@ -469,6 +465,39 @@ const handleAbaResearchMessage = async ({ data }: { data: unknown }): Promise<im
   }
 }
 
+const handleAdsMessage = async ({ data }: { data: unknown }) => {
+  if (!isSellerSpriteAdsRequest(data)) return invalidMessage()
+  const { requestId } = data
+  const adapter = TARGET_REGISTRY.get(data.payload.targetId)
+  if (!adapter || adapter.targetId !== 'sellersprite') return targetError(requestId, 'UNKNOWN_TARGET')
+  const runtimePolicy = resolveRuntimeTargetPolicy(adapter, await configManager.load())
+  if (!runtimePolicy.enabled) return targetError(requestId, 'TARGET_DISABLED')
+  if (!runtimePolicy.capabilities.includes(data.action)) return targetError(requestId, 'OPERATION_DISABLED')
+  if (!(await permissionManager.hasPermission(adapter.targetId))) return targetError(requestId, 'TARGET_PERMISSION_MISSING')
+  const execute = (client: TargetClient) => {
+    switch (data.action) {
+      case SELLERSPRITE_ADS_INSIGHTS_ACTION: return lookupSellerSpriteAdsInsights(client, data.payload.input)
+      case SELLERSPRITE_ADS_HISTORY_ACTION: return listSellerSpriteAdsHistory(client, data.payload.input)
+      case SELLERSPRITE_ADS_KEYWORDS_ACTION: return listSellerSpriteAdsKeywords(client, data.payload.input)
+      case SELLERSPRITE_ADS_HIGH_FREQUENCY_ACTION: return listSellerSpriteAdsHighFrequency(client, data.payload.input)
+    }
+  }
+  try {
+    const result = await withPageFallback<Awaited<ReturnType<typeof execute>>>(
+      adapter,
+      runtimePolicy,
+      () => execute(new TargetClient(adapter, undefined, runtimePolicy.operationOverrides)),
+      execute,
+    )
+    return {
+      namespace: MESSAGE_NAMESPACE, kind: 'response', protocolVersion: PROTOCOL_VERSION,
+      requestId, action: data.action, ok: true, data: result,
+    }
+  } catch (error: unknown) {
+    return targetClientError(requestId, error)
+  }
+}
+
 const handleKeywordMiningMessage = async ({ data }: { data: unknown }): Promise<SellerSpriteKeywordMiningResponse> => {
   if (!isSellerSpriteKeywordMiningRequest(data)) return invalidMessage()
   const { requestId } = data
@@ -540,6 +569,7 @@ const handleNativeRuntimeMessage = async (data: unknown): Promise<unknown> => {
   if (isSellerSpriteMarketResearchRequest(data)) return handleMarketResearchMessage({ data })
   if (isSellerSpriteAbaPeriodsRequest(data)) return handleAbaPeriodsMessage({ data })
   if (isSellerSpriteAbaResearchRequest(data)) return handleAbaResearchMessage({ data })
+  if (isSellerSpriteAdsRequest(data)) return handleAdsMessage({ data })
   if (isSellerSpriteCompetitorRequest(data)) return handleCompetitorMessage({ data })
   if (isSellerSpriteProductSelectionRequest(data)) return handleProductSelectionMessage({ data })
   if (isSellerSpriteCategoryNodesRequest(data)) return handleCategoryNodesMessage({ data })
@@ -550,40 +580,12 @@ const handleNativeRuntimeMessage = async (data: unknown): Promise<unknown> => {
 }
 
 export default defineBackground(() => {
-  installWebTabRepair()
-
-  // 侧边栏只能由 background 打开：sidePanel 在 content script 里不可用。
-  registerOpenSidePanelHandler(browser)
-
-  /**
-   * 页面内浮层的提问从这里出去（#24）。
-   *
-   * 端点没有 CORS 头，amazon.com 页面上的内容脚本直连会被同源策略挡掉；manifest 里已经
-   * 声明了这个域名的 host 权限，background 不受页面同源策略约束。给 Worker 加 CORS 的收益
-   * 相同，却等于把这个端点对任意来源开放。
-   */
-  registerAnalysisAskRelay({ runtime: browser.runtime, fetch: (url, init) => fetch(url, init) })
+  installSellerSpriteMcpBridge(handleNativeRuntimeMessage)
 
   browser.runtime.onMessage.addListener((message: unknown) => {
-    if (!isExtensionRuntimeRequestEnvelope(message)) return false
+    if (!isExtensionRuntimeRequestEnvelope(message) || !isAllowedSellerSpriteMcpRequest(message.request)) return false
     return handleNativeRuntimeMessage(message.request)
   })
-
-  onMessage('PING', guarded(handlePingMessage))
-
-  for (const action of TARGET_ACTIONS) onMessage(action, guarded(handleTargetMessage))
-  onMessage(SELLERSPRITE_KEYWORD_REVERSE_ACTION, guarded(handleKeywordReverseMessage))
-  onMessage(SELLERSPRITE_MONTHLY_ACTION, guarded(handleMonthlyMessage))
-  onMessage(SELLERSPRITE_MARKET_RESEARCH_ACTION, guarded(handleMarketResearchMessage))
-  onMessage(SELLERSPRITE_ABA_PERIODS_ACTION, guarded(handleAbaPeriodsMessage))
-  onMessage(SELLERSPRITE_ABA_RESEARCH_ACTION, guarded(handleAbaResearchMessage))
-  onMessage(COMPETITOR_RESEARCH_ACTION, guarded(handleCompetitorMessage))
-  onMessage(PRODUCT_SELECTION_ACTION, guarded(handleProductSelectionMessage))
-  onMessage(SELLERSPRITE_CATEGORY_NODES_ACTION, guarded(handleCategoryNodesMessage))
-  onMessage(SELLERSPRITE_REVIEW_COMMENTS_ACTION, guarded(handleReviewCommentsMessage))
-  onMessage(KEYWORD_MINING_ACTION, guarded(handleKeywordMiningMessage))
-  onMessage(MARKET_SELECTION_ACTION, guarded(handleHtmlSessionMessage))
-  onMessage(KEYWORD_PRODUCT_RESEARCH_ACTION, guarded(handleHtmlSessionMessage))
 })
 
 export { handleTargetMessage }

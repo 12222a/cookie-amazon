@@ -1,114 +1,98 @@
 import '../../src/popup.css'
 import {
-  CONTENT_SCRIPT_RUNTIME_PROBE_ACTION,
-  CONTENT_SCRIPT_RUNTIME_PROBE_RESPONSE,
-  isAllowedWebOrigin,
-} from '@cookie-amazon/protocol'
-import { TargetPermissionManager } from '../../src/targets/permissions'
-import { TARGET_REGISTRY } from '../../src/targets/registry'
+  SELLERSPRITE_MCP_BRIDGE_STATE_KEY,
+  SELLERSPRITE_MCP_BRIDGE_TOKEN_KEY,
+  type SellerSpriteMcpBridgeState,
+} from '../../src/background/sellersprite-mcp-bridge'
 
-const targetId = 'sellersprite'
-const statusElement = document.querySelector<HTMLParagraphElement>('#status')
-const versionElement = document.querySelector<HTMLParagraphElement>('#version')
-const pageElement = document.querySelector<HTMLParagraphElement>('#page')
-const bridgeElement = document.querySelector<HTMLParagraphElement>('#bridge-status')
-const repairBridgeButton = document.querySelector<HTMLButtonElement>('#repair-bridge')
-const grantButton = document.querySelector<HTMLButtonElement>('#grant')
-const openPanelButton = document.querySelector<HTMLButtonElement>('#open-panel')
-const permissionManager = new TargetPermissionManager(TARGET_REGISTRY, browser.permissions)
+const statusElement = document.querySelector<HTMLParagraphElement>('#mcp-status')!
+const versionElement = document.querySelector<HTMLParagraphElement>('#version')!
+const tokenForm = document.querySelector<HTMLFormElement>('#mcp-token-form')!
+const tokenInput = document.querySelector<HTMLInputElement>('#mcp-token')!
+const saveTokenButton = document.querySelector<HTMLButtonElement>('#save-mcp-token')!
+const tokenStatusElement = document.querySelector<HTMLParagraphElement>('#mcp-token-status')!
 
-const renderStatus = (granted: boolean, message?: string): void => {
-  if (statusElement) statusElement.textContent = message ?? (granted ? '已授权' : '需要授权')
-  if (grantButton) grantButton.disabled = granted
+const statusLabels: Record<SellerSpriteMcpBridgeState['status'], string> = {
+  unconfigured: '未配置 MCP 密钥',
+  connecting: '正在连接本机 MCP 服务…',
+  connected: '已连接本机 MCP 服务',
+  'waiting-for-service': '等待本机 MCP 服务，服务启动后将自动连接',
+  'authentication-error': 'MCP 密钥验证失败，请检查是否与本机服务的密钥一致',
 }
 
-const probeTab = async (tabId: number): Promise<boolean> =>
-  await browser.tabs.sendMessage(tabId, CONTENT_SCRIPT_RUNTIME_PROBE_ACTION) === CONTENT_SCRIPT_RUNTIME_PROBE_RESPONSE
+const readState = (value: unknown): SellerSpriteMcpBridgeState | undefined => {
+  if (typeof value !== 'object' || value === null
+    || !('status' in value) || typeof value.status !== 'string' || !Object.hasOwn(statusLabels, value.status)
+    || !('updatedAt' in value) || typeof value.updatedAt !== 'number' || !Number.isFinite(value.updatedAt)) return undefined
+  return value as SellerSpriteMcpBridgeState
+}
 
-const refreshBridgeStatus = async (): Promise<void> => {
-  if (versionElement) versionElement.textContent = `扩展版本：v${browser.runtime.getManifest().version}`
-  if (repairBridgeButton) repairBridgeButton.disabled = true
-  const [activeTab] = await browser.tabs.query({ active: true, currentWindow: true })
-  const url = activeTab?.url
-  if (pageElement) pageElement.textContent = `当前页面：${url ?? '无法读取'}`
-  if (typeof activeTab?.id !== 'number' || !url) {
-    if (bridgeElement) bridgeElement.textContent = '网页桥接：无法检测当前页面'
+let configured: boolean | undefined
+let state: SellerSpriteMcpBridgeState | undefined
+let storageError = false
+let readVersion = 0
+
+const renderStatus = (): void => {
+  if (storageError) {
+    statusElement.textContent = '无法读取 MCP 连接状态，请重新打开扩展'
+  } else if (configured === undefined) {
+    statusElement.textContent = '正在读取连接状态…'
+  } else if (!configured) {
+    statusElement.textContent = statusLabels.unconfigured
+  } else if (!state || state.status === 'unconfigured'
+    || (state.status === 'connected' && (Date.now() - state.updatedAt > 60_000 || state.updatedAt > Date.now()))) {
+    statusElement.textContent = '连接状态待更新'
+  } else {
+    statusElement.textContent = statusLabels[state.status]
+  }
+}
+
+const refreshStatus = async (): Promise<void> => {
+  const version = ++readVersion
+  try {
+    const values = await browser.storage.local.get([SELLERSPRITE_MCP_BRIDGE_TOKEN_KEY, SELLERSPRITE_MCP_BRIDGE_STATE_KEY])
+    if (version !== readVersion) return
+    const token = values[SELLERSPRITE_MCP_BRIDGE_TOKEN_KEY]
+    configured = typeof token === 'string' && token.trim().length >= 32
+    state = readState(values[SELLERSPRITE_MCP_BRIDGE_STATE_KEY])
+    storageError = false
+  } catch {
+    if (version !== readVersion) return
+    storageError = true
+  }
+  renderStatus()
+}
+
+browser.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === 'local'
+    && (SELLERSPRITE_MCP_BRIDGE_STATE_KEY in changes || SELLERSPRITE_MCP_BRIDGE_TOKEN_KEY in changes)) {
+    void refreshStatus()
+  }
+})
+
+tokenForm.addEventListener('submit', (event) => {
+  event.preventDefault()
+  if (saveTokenButton.disabled) return
+  const token = tokenInput.value.trim()
+  if (token.length < 32) {
+    tokenStatusElement.textContent = '密钥至少需要 32 个字符'
+    tokenInput.focus()
     return
   }
-
-  let allowed = false
-  try {
-    allowed = isAllowedWebOrigin(new URL(url).origin)
-  } catch {
-    allowed = false
-  }
-  if (!allowed) {
-    if (bridgeElement) bridgeElement.textContent = '网页桥接：当前页面不是受支持的本地地址'
-    return
-  }
-
-  try {
-    const ready = await probeTab(activeTab.id)
-    if (bridgeElement) bridgeElement.textContent = ready
-      ? '网页桥接：内容脚本已注入'
-      : '网页桥接：内容脚本响应无效'
-    if (repairBridgeButton) repairBridgeButton.disabled = ready
-  } catch (error: unknown) {
-    if (bridgeElement) bridgeElement.textContent = `网页桥接：内容脚本未注入（${error instanceof Error ? error.message : String(error)}）`
-    if (repairBridgeButton) repairBridgeButton.disabled = false
-  }
-}
-
-const refresh = async (): Promise<void> => {
-  try {
-    const [granted] = await Promise.all([
-      permissionManager.hasPermission(targetId),
-      refreshBridgeStatus(),
-    ])
-    renderStatus(granted)
-  } catch {
-    renderStatus(false, '无法读取权限状态')
-  }
-}
-
-repairBridgeButton?.addEventListener('click', () => {
-  if (repairBridgeButton) repairBridgeButton.disabled = true
-  if (bridgeElement) bridgeElement.textContent = '网页桥接：正在重新注入内容脚本…'
-  void (async () => {
-    const [activeTab] = await browser.tabs.query({ active: true, currentWindow: true })
-    if (typeof activeTab?.id !== 'number' || !activeTab.url) throw new Error('无法读取当前页面')
-    if (!isAllowedWebOrigin(new URL(activeTab.url).origin)) throw new Error('当前页面不是受支持的本地地址')
-    await browser.scripting.executeScript({
-      target: { tabId: activeTab.id },
-      files: ['/content-scripts/content.js'],
-    })
-    if (!(await probeTab(activeTab.id))) throw new Error('注入后内容脚本响应无效')
-    if (bridgeElement) bridgeElement.textContent = '网页桥接：内容脚本已恢复，请返回网页点击“检测扩展”'
-  })().catch((error: unknown) => {
-    if (bridgeElement) bridgeElement.textContent = `网页桥接：恢复失败（${error instanceof Error ? error.message : String(error)}）`
-    if (repairBridgeButton) repairBridgeButton.disabled = false
+  saveTokenButton.disabled = true
+  tokenInput.disabled = true
+  tokenStatusElement.textContent = '正在保存密钥…'
+  void browser.storage.local.set({ [SELLERSPRITE_MCP_BRIDGE_TOKEN_KEY]: token }).then(() => {
+    tokenInput.value = ''
+    tokenStatusElement.textContent = '密钥已保存，后台将自动连接，无需手动操作。'
+  }).catch(() => {
+    tokenStatusElement.textContent = '无法保存 MCP 密钥，请重试'
+  }).finally(() => {
+    saveTokenButton.disabled = false
+    tokenInput.disabled = false
   })
 })
 
-grantButton?.addEventListener('click', () => {
-  if (grantButton) grantButton.disabled = true
-  if (statusElement) statusElement.textContent = '等待 Chrome 确认…'
-  void permissionManager.requestPermission(targetId)
-    .then((granted) => renderStatus(granted))
-    .catch(() => renderStatus(false, '授权失败，请重试'))
-})
-
-// 侧边栏必须由用户手势触发，popup 里的点击正好满足；
-// 若当前窗口已有侧边栏设置，open 会沿用该窗口的设置。
-openPanelButton?.addEventListener('click', () => {
-  void (async () => {
-    const [activeTab] = await browser.tabs.query({ active: true, currentWindow: true })
-    if (typeof activeTab?.windowId !== 'number') throw new Error('NO_WINDOW')
-    await browser.sidePanel.open({ windowId: activeTab.windowId })
-    window.close()
-  })().catch(() => {
-    if (openPanelButton) openPanelButton.textContent = '无法打开面板，请重试'
-  })
-})
-
-void refresh()
+versionElement.textContent = `扩展版本：v${browser.runtime.getManifest().version}`
+void refreshStatus()
+window.setInterval(renderStatus, 5_000)

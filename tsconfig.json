@@ -8,6 +8,7 @@
     { "path": "./packages/web-sdk" },
     { "path": "./apps/web" },
     { "path": "./apps/extension" },
+    { "path": "./apps/sellersprite-mcp" },
     { "path": "./cloudflare/config-worker" }
   ]
 }

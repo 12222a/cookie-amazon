@@ -8,6 +8,14 @@ import {
   isSellerSpriteReviewCommentsInput,
   isSellerSpriteCategoryNodesInput,
   isSellerSpriteProductSelectionInput,
+  isSellerSpriteAdsInsightsInput,
+  isSellerSpriteAdsHistoryInput,
+  isSellerSpriteAdsKeywordsInput,
+  isSellerSpriteAdsHighFrequencyInput,
+  isSellerSpriteAdsInsightsData,
+  isSellerSpriteAdsHistoryData,
+  isSellerSpriteAdsKeywordsData,
+  isSellerSpriteAdsHighFrequencyData,
 } from '@cookie-amazon/protocol'
 import type {
   SellerSpriteKeywordItem,
@@ -42,6 +50,14 @@ import type {
   SellerSpriteAbaPeriodsData,
   SellerSpriteAbaResearchData,
   SellerSpriteAbaResearchInput,
+  SellerSpriteAdsInsightsInput,
+  SellerSpriteAdsInsightsData,
+  SellerSpriteAdsHistoryInput,
+  SellerSpriteAdsHistoryData,
+  SellerSpriteAdsKeywordsInput,
+  SellerSpriteAdsKeywordsData,
+  SellerSpriteAdsHighFrequencyInput,
+  SellerSpriteAdsHighFrequencyData,
 } from '@cookie-amazon/protocol'
 import { createTargetAdapter } from './adapter'
 import { TargetClient, TargetClientError } from './client'
@@ -1162,6 +1178,116 @@ export const listSellerSpriteReviewComments = (
     input,
     readReviewCommentsResponse,
   )
+}
+
+const projectAdsList = (value: unknown, project: (item: Record<string, unknown>) => unknown): unknown =>
+  value === undefined || value === null ? null
+    : Array.isArray(value) ? value.map((item) => isRecord(item) ? project(item) : undefined) : undefined
+
+const projectAdsPeriod = (value: Record<string, unknown>) => ({
+  beginDate: value.beginDate,
+  endDate: value.endDate,
+  keywordsCount: readNullableNumber(value.keywordsCount),
+})
+
+const readAdsResponse = async <T>(
+  response: Response,
+  project: (data: unknown) => unknown,
+  validate: (value: unknown) => value is T,
+): Promise<T> => {
+  const payload = await readSellerSpriteJson(response)
+  const data = project(payload.data)
+  if (!validate(data)) throw new TargetClientError('TARGET_RESPONSE_INVALID', response.status, {
+    targetMessage: '广告洞察响应字段缺失或类型无效',
+  })
+  return data
+}
+
+const adsQuery = (input: object): Record<string, string> =>
+  Object.fromEntries(Object.entries(input).map(([key, value]) => [key, String(value)]))
+
+export const lookupSellerSpriteAdsInsights = (
+  client: TargetClient,
+  input: SellerSpriteAdsInsightsInput,
+): Promise<SellerSpriteAdsInsightsData> => {
+  if (!isSellerSpriteAdsInsightsInput(input)) throw new TargetClientError('TARGET_API_ERROR')
+  return client.executeJsonGet('SELLERSPRITE_ADS_INSIGHTS', adsQuery(input), (response) => readAdsResponse(
+    response,
+    (data) => !isRecord(data) ? undefined : {
+      adCount: readNullableNumber(data.adCount),
+      campaignCount: readNullableNumber(data.campaignCount),
+      sp: readNullableNumber(data.sp),
+      spv: readNullableNumber(data.spv),
+      groups: projectAdsList(data.groups, (group) => ({
+        adId: group.adId,
+        campaignId: group.campaignId,
+        asin: group.asin ?? null,
+        asinImage: group.asinImage ?? null,
+        type: group.type ?? null,
+        history: projectAdsList(group.history, projectAdsPeriod),
+      })),
+      campaigns: projectAdsList(data.campaigns, (campaign) => ({
+        campaignId: campaign.campaignId, type: campaign.type ?? null,
+      })),
+      adIdList: data.adIdList ?? null,
+      variations: data.variations ?? null,
+    },
+    isSellerSpriteAdsInsightsData,
+  ))
+}
+
+export const listSellerSpriteAdsHistory = (
+  client: TargetClient,
+  input: SellerSpriteAdsHistoryInput,
+): Promise<SellerSpriteAdsHistoryData> => {
+  if (!isSellerSpriteAdsHistoryInput(input)) throw new TargetClientError('TARGET_API_ERROR')
+  return client.executeJsonGet('SELLERSPRITE_ADS_HISTORY', adsQuery(input), (response) => readAdsResponse(
+    response, (data) => ({ periods: projectAdsList(data, projectAdsPeriod) }), isSellerSpriteAdsHistoryData,
+  ))
+}
+
+export const listSellerSpriteAdsKeywords = (
+  client: TargetClient,
+  input: SellerSpriteAdsKeywordsInput,
+): Promise<SellerSpriteAdsKeywordsData> => {
+  if (!isSellerSpriteAdsKeywordsInput(input)) throw new TargetClientError('TARGET_API_ERROR')
+  return client.executeJsonGet('SELLERSPRITE_ADS_KEYWORDS', adsQuery(input), (response) => readAdsResponse(
+    response,
+    (data) => {
+      if (!isRecord(data)) return undefined
+      const total = readNullableNumber(data.total)
+      return {
+        pageNum: input.pageNum, pageSize: input.pageSize, total,
+        hasNextPage: typeof total === 'number' && input.pageNum * input.pageSize < total,
+        items: projectAdsList(data.items, (item) => ({
+          keyword: item.keyword,
+          keywordCn: item.keywordCn ?? null,
+          keywordJp: item.keywordJp ?? null,
+          asin: item.asin ?? null,
+          marketId: readNullableNumber(item.marketId),
+          searchesRank: readNullableNumber(item.searchesRank),
+          searches: readNullableNumber(item.searches),
+          impressions: readNullableNumber(item.impressions),
+          clicks: readNullableNumber(item.clicks),
+          cprExact: readNullableNumber(item.cprExact),
+          adProducts: readNullableNumber(item.adProducts),
+        })),
+      }
+    },
+    isSellerSpriteAdsKeywordsData,
+  ))
+}
+
+export const listSellerSpriteAdsHighFrequency = (
+  client: TargetClient,
+  input: SellerSpriteAdsHighFrequencyInput,
+): Promise<SellerSpriteAdsHighFrequencyData> => {
+  if (!isSellerSpriteAdsHighFrequencyInput(input)) throw new TargetClientError('TARGET_API_ERROR')
+  return client.executeJsonGet('SELLERSPRITE_ADS_HIGH_FREQUENCY', adsQuery(input), (response) => readAdsResponse(
+    response,
+    (data) => ({ items: projectAdsList(data, (item) => ({ keyword: item.keywords, total: readNullableNumber(item.total) })) }),
+    isSellerSpriteAdsHighFrequencyData,
+  ))
 }
 
 export const executeSellerSpriteMarketSelection = async (

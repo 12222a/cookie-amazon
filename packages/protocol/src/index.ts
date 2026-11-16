@@ -34,6 +34,10 @@ export const CAPABILITIES = [
   'KEYWORD_MINING',
   'SELLERSPRITE_CATEGORY_NODES',
   'SELLERSPRITE_REVIEW_COMMENTS',
+  'SELLERSPRITE_ADS_INSIGHTS',
+  'SELLERSPRITE_ADS_HISTORY',
+  'SELLERSPRITE_ADS_KEYWORDS',
+  'SELLERSPRITE_ADS_HIGH_FREQUENCY',
 ] as const
 
 export type Capability = (typeof CAPABILITIES)[number]
@@ -1963,3 +1967,228 @@ export const isSellerSpriteAbaResearchResponse = (value: unknown): value is Sell
 }
 
 export * from './analysis'
+
+export const SELLERSPRITE_ADS_INSIGHTS_ACTION = 'SELLERSPRITE_ADS_INSIGHTS' as const
+export const SELLERSPRITE_ADS_HISTORY_ACTION = 'SELLERSPRITE_ADS_HISTORY' as const
+export const SELLERSPRITE_ADS_KEYWORDS_ACTION = 'SELLERSPRITE_ADS_KEYWORDS' as const
+export const SELLERSPRITE_ADS_HIGH_FREQUENCY_ACTION = 'SELLERSPRITE_ADS_HIGH_FREQUENCY' as const
+export const SELLERSPRITE_ADS_MARKETS = [1, 3, 4, 5, 6, 7, 35691, 44551, 44571] as const
+export type SellerSpriteAdsDate = string | number
+export type SellerSpriteAdsInterval = 'week' | 'month'
+export type SellerSpriteAdsInsightsInput = {
+  asin: string
+  market: number
+  interval: SellerSpriteAdsInterval
+  months: 3 | 6 | 12 | 24
+  desc: boolean
+  pageNum: number
+  pageSize: number
+  orderByEffectiveness: boolean
+  type: '' | 'SP' | 'SPV'
+  campaignId: string
+  adId: string
+  variation: string
+  combination: boolean
+  brief: boolean
+}
+export type SellerSpriteAdsHistoryInput = Pick<SellerSpriteAdsInsightsInput, 'asin' | 'market' | 'interval' | 'months' | 'adId'>
+export type SellerSpriteAdsKeywordsInput = {
+  adId: string
+  market: number
+  interval: SellerSpriteAdsInterval
+  beginDate: SellerSpriteAdsDate
+  endDate: SellerSpriteAdsDate
+  pageNum: number
+  pageSize: number
+  keyword: string
+  orderField: 'keyword' | 'updatedTime'
+  desc: boolean
+}
+export type SellerSpriteAdsHighFrequencyInput = Omit<SellerSpriteAdsKeywordsInput, 'pageNum' | 'pageSize'>
+export type SellerSpriteAdsPeriod = {
+  beginDate: SellerSpriteAdsDate
+  endDate: SellerSpriteAdsDate
+  keywordsCount: number | null
+}
+export type SellerSpriteAdsGroup = {
+  adId: string
+  campaignId: string
+  asin: string | null
+  asinImage: string | null
+  type: string | null
+  history: SellerSpriteAdsPeriod[]
+}
+export type SellerSpriteAdsInsightsData = {
+  adCount: number | null
+  campaignCount: number | null
+  sp: number | null
+  spv: number | null
+  groups: SellerSpriteAdsGroup[] | null
+  campaigns: { campaignId: string; type: string | null }[] | null
+  adIdList: string[] | null
+  variations: string[] | null
+}
+export type SellerSpriteAdsHistoryData = { periods: SellerSpriteAdsPeriod[] }
+export type SellerSpriteAdsKeyword = {
+  keyword: string
+  keywordCn: string | null
+  keywordJp: string | null
+  asin: string | null
+  marketId: number | null
+  searchesRank: number | null
+  searches: number | null
+  impressions: number | null
+  clicks: number | null
+  cprExact: number | null
+  adProducts: number | null
+}
+export type SellerSpriteAdsKeywordsData = {
+  pageNum: number
+  pageSize: number
+  total: number
+  hasNextPage: boolean
+  items: SellerSpriteAdsKeyword[]
+}
+export type SellerSpriteAdsHighFrequencyData = { items: { keyword: string; total: number }[] }
+
+type AdsRequest<A extends string, I> = {
+  namespace: typeof MESSAGE_NAMESPACE
+  kind: 'request'
+  protocolVersion: typeof PROTOCOL_VERSION
+  action: A
+  requestId: string
+  payload: { targetId: string; input: I }
+}
+type AdsResponse<A extends string, D> = {
+  namespace: typeof MESSAGE_NAMESPACE
+  kind: 'response'
+  protocolVersion: typeof PROTOCOL_VERSION
+  action: A
+  requestId: string
+  ok: true
+  data: D
+} | ProtocolError
+export type SellerSpriteAdsInsightsRequest = AdsRequest<typeof SELLERSPRITE_ADS_INSIGHTS_ACTION, SellerSpriteAdsInsightsInput>
+export type SellerSpriteAdsHistoryRequest = AdsRequest<typeof SELLERSPRITE_ADS_HISTORY_ACTION, SellerSpriteAdsHistoryInput>
+export type SellerSpriteAdsKeywordsRequest = AdsRequest<typeof SELLERSPRITE_ADS_KEYWORDS_ACTION, SellerSpriteAdsKeywordsInput>
+export type SellerSpriteAdsHighFrequencyRequest = AdsRequest<typeof SELLERSPRITE_ADS_HIGH_FREQUENCY_ACTION, SellerSpriteAdsHighFrequencyInput>
+export type SellerSpriteAdsRequest = SellerSpriteAdsInsightsRequest | SellerSpriteAdsHistoryRequest | SellerSpriteAdsKeywordsRequest | SellerSpriteAdsHighFrequencyRequest
+export type SellerSpriteAdsInsightsResponse = AdsResponse<typeof SELLERSPRITE_ADS_INSIGHTS_ACTION, SellerSpriteAdsInsightsData>
+export type SellerSpriteAdsHistoryResponse = AdsResponse<typeof SELLERSPRITE_ADS_HISTORY_ACTION, SellerSpriteAdsHistoryData>
+export type SellerSpriteAdsKeywordsResponse = AdsResponse<typeof SELLERSPRITE_ADS_KEYWORDS_ACTION, SellerSpriteAdsKeywordsData>
+export type SellerSpriteAdsHighFrequencyResponse = AdsResponse<typeof SELLERSPRITE_ADS_HIGH_FREQUENCY_ACTION, SellerSpriteAdsHighFrequencyData>
+
+const adsObject = (value: unknown, keys: readonly string[]): value is Record<string, unknown> =>
+  isRecord(value) && !Array.isArray(value) && Object.keys(value).length === keys.length
+  && keys.every((key) => Object.hasOwn(value, key))
+const adsString = (value: unknown, max: number, empty = false): value is string =>
+  typeof value === 'string' && value.length <= max && (empty || value.trim().length > 0) && !/[\u0000-\u001f\u007f]/.test(value)
+const adsCount = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0
+const adsNullableCount = (value: unknown): boolean => value === null || adsCount(value)
+const adsAsin = (value: unknown): value is string => typeof value === 'string' && /^[A-Z0-9]{10}$/.test(value)
+export const isSellerSpriteAdsDate = (value: unknown): value is SellerSpriteAdsDate =>
+  adsCount(value) || (typeof value === 'string' && value.length <= 40
+    && (/^\d{8,13}$/.test(value)
+      || (/^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})?)?$/.test(value)
+        && Number.isFinite(Date.parse(value)))))
+const adsDateValue = (value: SellerSpriteAdsDate): number =>
+  typeof value === 'number' ? value : /^\d+$/.test(value) ? Number(value) : Date.parse(value)
+const adsContext = (v: Record<string, unknown>): boolean =>
+  SELLERSPRITE_ADS_MARKETS.includes(v.market as (typeof SELLERSPRITE_ADS_MARKETS)[number])
+  && (v.interval === 'week' || v.interval === 'month')
+const adsMonths = (v: Record<string, unknown>): boolean =>
+  [3, 6, 12, 24].includes(v.months as number) && (v.interval !== 'week' || v.months !== 24)
+const adsPage = (v: Record<string, unknown>): boolean =>
+  adsCount(v.pageNum) && v.pageNum >= 1 && v.pageNum <= 10_000
+  && adsCount(v.pageSize) && v.pageSize >= 1 && v.pageSize <= 50
+const adsKeywordFilter = (v: Record<string, unknown>): boolean =>
+  adsContext(v) && adsString(v.adId, 128)
+  && isSellerSpriteAdsDate(v.beginDate) && isSellerSpriteAdsDate(v.endDate)
+  && adsDateValue(v.beginDate) <= adsDateValue(v.endDate)
+  && adsString(v.keyword, 256, true) && (v.orderField === 'keyword' || v.orderField === 'updatedTime')
+  && typeof v.desc === 'boolean'
+
+export const isSellerSpriteAdsInsightsInput = (value: unknown): value is SellerSpriteAdsInsightsInput =>
+  adsObject(value, ['asin', 'market', 'interval', 'months', 'desc', 'pageNum', 'pageSize', 'orderByEffectiveness', 'type', 'campaignId', 'adId', 'variation', 'combination', 'brief'])
+  && adsAsin(value.asin) && adsContext(value) && adsMonths(value) && adsPage(value)
+  && typeof value.desc === 'boolean' && typeof value.orderByEffectiveness === 'boolean'
+  && ['', 'SP', 'SPV'].includes(value.type as string) && adsString(value.campaignId, 128, true)
+  && adsString(value.adId, 128, true) && (value.variation === '' || adsAsin(value.variation))
+  && typeof value.combination === 'boolean' && typeof value.brief === 'boolean'
+export const isSellerSpriteAdsHistoryInput = (value: unknown): value is SellerSpriteAdsHistoryInput =>
+  adsObject(value, ['asin', 'market', 'interval', 'months', 'adId'])
+  && adsAsin(value.asin) && adsContext(value) && adsMonths(value) && adsString(value.adId, 128)
+export const isSellerSpriteAdsKeywordsInput = (value: unknown): value is SellerSpriteAdsKeywordsInput =>
+  adsObject(value, ['adId', 'market', 'interval', 'beginDate', 'endDate', 'pageNum', 'pageSize', 'keyword', 'orderField', 'desc'])
+  && adsKeywordFilter(value) && adsPage(value)
+export const isSellerSpriteAdsHighFrequencyInput = (value: unknown): value is SellerSpriteAdsHighFrequencyInput =>
+  adsObject(value, ['adId', 'market', 'interval', 'beginDate', 'endDate', 'keyword', 'orderField', 'desc']) && adsKeywordFilter(value)
+
+const adsRequest = <A extends string, I>(action: A, requestId: string, targetId: string, input: I): AdsRequest<A, I> => ({
+  namespace: MESSAGE_NAMESPACE, kind: 'request', protocolVersion: PROTOCOL_VERSION,
+  action, requestId, payload: { targetId, input },
+})
+export const createSellerSpriteAdsInsightsRequest = (id: string, target: string, input: SellerSpriteAdsInsightsInput): SellerSpriteAdsInsightsRequest =>
+  adsRequest(SELLERSPRITE_ADS_INSIGHTS_ACTION, id, target, input)
+export const createSellerSpriteAdsHistoryRequest = (id: string, target: string, input: SellerSpriteAdsHistoryInput): SellerSpriteAdsHistoryRequest =>
+  adsRequest(SELLERSPRITE_ADS_HISTORY_ACTION, id, target, input)
+export const createSellerSpriteAdsKeywordsRequest = (id: string, target: string, input: SellerSpriteAdsKeywordsInput): SellerSpriteAdsKeywordsRequest =>
+  adsRequest(SELLERSPRITE_ADS_KEYWORDS_ACTION, id, target, input)
+export const createSellerSpriteAdsHighFrequencyRequest = (id: string, target: string, input: SellerSpriteAdsHighFrequencyInput): SellerSpriteAdsHighFrequencyRequest =>
+  adsRequest(SELLERSPRITE_ADS_HIGH_FREQUENCY_ACTION, id, target, input)
+
+const validAdsRequest = (value: unknown, action: string, input: (value: unknown) => boolean): boolean =>
+  isRuntimeBridgeRequest(value) && value.action === action && isBoundedString(value.requestId, 256)
+  && adsObject(value.payload, ['targetId', 'input']) && isBoundedString(value.payload.targetId, 64) && input(value.payload.input)
+export const isSellerSpriteAdsInsightsRequest = (value: unknown): value is SellerSpriteAdsInsightsRequest =>
+  validAdsRequest(value, SELLERSPRITE_ADS_INSIGHTS_ACTION, isSellerSpriteAdsInsightsInput)
+export const isSellerSpriteAdsHistoryRequest = (value: unknown): value is SellerSpriteAdsHistoryRequest =>
+  validAdsRequest(value, SELLERSPRITE_ADS_HISTORY_ACTION, isSellerSpriteAdsHistoryInput)
+export const isSellerSpriteAdsKeywordsRequest = (value: unknown): value is SellerSpriteAdsKeywordsRequest =>
+  validAdsRequest(value, SELLERSPRITE_ADS_KEYWORDS_ACTION, isSellerSpriteAdsKeywordsInput)
+export const isSellerSpriteAdsHighFrequencyRequest = (value: unknown): value is SellerSpriteAdsHighFrequencyRequest =>
+  validAdsRequest(value, SELLERSPRITE_ADS_HIGH_FREQUENCY_ACTION, isSellerSpriteAdsHighFrequencyInput)
+export const isSellerSpriteAdsRequest = (value: unknown): value is SellerSpriteAdsRequest =>
+  isSellerSpriteAdsInsightsRequest(value) || isSellerSpriteAdsHistoryRequest(value)
+  || isSellerSpriteAdsKeywordsRequest(value) || isSellerSpriteAdsHighFrequencyRequest(value)
+
+const adsPeriod = (v: unknown): boolean => adsObject(v, ['beginDate', 'endDate', 'keywordsCount'])
+  && isSellerSpriteAdsDate(v.beginDate) && isSellerSpriteAdsDate(v.endDate) && adsNullableCount(v.keywordsCount)
+const adsList = (v: unknown, max: number, item: (value: unknown) => boolean): boolean =>
+  Array.isArray(v) && v.length <= max && v.every(item)
+const adsNullableList = (v: unknown, max: number, item: (value: unknown) => boolean): boolean => v === null || adsList(v, max, item)
+const adsGroup = (v: unknown): boolean => adsObject(v, ['adId', 'campaignId', 'asin', 'asinImage', 'type', 'history'])
+  && adsString(v.adId, 128) && adsString(v.campaignId, 128)
+  && (v.asin === null || adsAsin(v.asin)) && isNullableBoundedString(v.asinImage, 2048)
+  && isNullableBoundedString(v.type, 16) && adsList(v.history, 156, adsPeriod)
+export const isSellerSpriteAdsInsightsData = (v: unknown): v is SellerSpriteAdsInsightsData =>
+  adsObject(v, ['adCount', 'campaignCount', 'sp', 'spv', 'groups', 'campaigns', 'adIdList', 'variations'])
+  && ['adCount', 'campaignCount', 'sp', 'spv'].every((key) => adsNullableCount(v[key]))
+  && adsNullableList(v.groups, 50, adsGroup)
+  && adsNullableList(v.campaigns, 10_000, (c) => adsObject(c, ['campaignId', 'type']) && adsString(c.campaignId, 128) && isNullableBoundedString(c.type, 16))
+  && adsNullableList(v.adIdList, 10_000, (id) => adsString(id, 128))
+  && adsNullableList(v.variations, 500, adsAsin)
+  && (Array.isArray(v.groups) || Array.isArray(v.campaigns))
+export const isSellerSpriteAdsHistoryData = (v: unknown): v is SellerSpriteAdsHistoryData =>
+  adsObject(v, ['periods']) && adsList(v.periods, 156, adsPeriod)
+const ADS_KEYWORD_KEYS = ['keyword', 'keywordCn', 'keywordJp', 'asin', 'marketId', 'searchesRank', 'searches', 'impressions', 'clicks', 'cprExact', 'adProducts'] as const
+const adsKeyword = (v: unknown): boolean => adsObject(v, ADS_KEYWORD_KEYS) && adsString(v.keyword, 512)
+  && isNullableBoundedString(v.keywordCn, 1024) && isNullableBoundedString(v.keywordJp, 1024)
+  && (v.asin === null || adsAsin(v.asin))
+  && ADS_KEYWORD_KEYS.slice(4).every((key) => isNullableFiniteNumber(v[key]))
+export const isSellerSpriteAdsKeywordsData = (v: unknown): v is SellerSpriteAdsKeywordsData =>
+  adsObject(v, ['pageNum', 'pageSize', 'total', 'hasNextPage', 'items']) && adsPage(v)
+  && adsCount(v.total) && typeof v.hasNextPage === 'boolean' && adsList(v.items, 50, adsKeyword)
+export const isSellerSpriteAdsHighFrequencyData = (v: unknown): v is SellerSpriteAdsHighFrequencyData =>
+  adsObject(v, ['items']) && adsList(v.items, 1000, (item) => adsObject(item, ['keyword', 'total']) && adsString(item.keyword, 512) && adsCount(item.total))
+const validAdsResponse = (v: unknown, action: string, data: (value: unknown) => boolean): boolean =>
+  isRecord(v) && v.namespace === MESSAGE_NAMESPACE && v.kind === 'response' && v.protocolVersion === PROTOCOL_VERSION
+  && isBoundedString(v.requestId, 256) && (v.ok === false ? isProtocolErrorDetails(v.error) : v.ok === true && v.action === action && data(v.data))
+export const isSellerSpriteAdsInsightsResponse = (v: unknown): v is SellerSpriteAdsInsightsResponse =>
+  validAdsResponse(v, SELLERSPRITE_ADS_INSIGHTS_ACTION, isSellerSpriteAdsInsightsData)
+export const isSellerSpriteAdsHistoryResponse = (v: unknown): v is SellerSpriteAdsHistoryResponse =>
+  validAdsResponse(v, SELLERSPRITE_ADS_HISTORY_ACTION, isSellerSpriteAdsHistoryData)
+export const isSellerSpriteAdsKeywordsResponse = (v: unknown): v is SellerSpriteAdsKeywordsResponse =>
+  validAdsResponse(v, SELLERSPRITE_ADS_KEYWORDS_ACTION, isSellerSpriteAdsKeywordsData)
+export const isSellerSpriteAdsHighFrequencyResponse = (v: unknown): v is SellerSpriteAdsHighFrequencyResponse =>
+  validAdsResponse(v, SELLERSPRITE_ADS_HIGH_FREQUENCY_ACTION, isSellerSpriteAdsHighFrequencyData)

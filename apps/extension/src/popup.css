@@ -1,8 +1,14 @@
 html,
 body {
   margin: 0;
-  min-width: 280px;
+  color: #202936;
+  background: #fff;
   font: 14px/1.5 system-ui, sans-serif;
+}
+
+body {
+  width: 340px;
+  max-width: 100vw;
 }
 
 main {
@@ -10,20 +16,84 @@ main {
 }
 
 h1 {
-  margin: 0 0 8px;
-  font-size: 16px;
+  margin: 0 0 4px;
+  font-size: 17px;
 }
 
 p {
   margin: 8px 0;
 }
 
-button {
-  width: 100%;
-  padding: 8px 12px;
+#mcp-status {
+  padding: 10px 12px;
+  border: 1px solid #d7dde3;
+  border-radius: 6px;
+  background: #f5f7f9;
+  overflow-wrap: anywhere;
 }
 
-.hint {
-  color: #666;
+a {
+  display: inline-block;
+  padding: 6px 0;
+  color: #1456ac;
+}
+
+details {
+  margin-top: 16px;
+  border-top: 1px solid #d7dde3;
+}
+
+summary {
+  padding: 12px 0;
+  cursor: pointer;
+}
+
+label {
+  display: block;
+}
+
+input,
+button {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid #8993a0;
+  border-radius: 4px;
+  font: inherit;
+}
+
+input {
+  margin: 6px 0 0;
+}
+
+button {
+  margin-top: 4px;
+  border-color: #1456ac;
+  color: #fff;
+  background: #1456ac;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+a:focus-visible,
+summary:focus-visible,
+input:focus-visible,
+button:focus-visible {
+  outline: 2px solid #1456ac;
+  outline-offset: 3px;
+}
+
+.hint,
+#version {
+  color: #566170;
   font-size: 12px;
+}
+
+#mcp-token-status:empty {
+  margin: 0;
 }

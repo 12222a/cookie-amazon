@@ -7,6 +7,8 @@
     "dev:web": "pnpm --filter @cookie-amazon/web dev",
     "dev:design": "pnpm --filter @cookie-amazon/design-service dev",
     "dev:extension": "pnpm --filter @cookie-amazon/extension dev",
+    "dev:sellersprite-mcp": "pnpm --filter @cookie-amazon/sellersprite-mcp dev",
+    "start:sellersprite-mcp": "pnpm --filter @cookie-amazon/sellersprite-mcp start",
     "dev:worker": "pnpm --filter @cookie-amazon/config-worker dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
