@@ -7,23 +7,71 @@
     <script type="module" src="./main.ts"></script>
   </head>
   <body>
-    <main>
-      <h1>SellerSprite MCP 连接器</h1>
-      <p id="version"></p>
-      <p id="mcp-status" role="status" aria-live="polite">正在读取连接状态…</p>
-      <p class="hint">配置密钥后，浏览器启动、插件重载或本机服务恢复时都会自动连接。</p>
-      <a href="https://www.sellersprite.com" target="_blank" rel="noopener noreferrer">打开卖家精灵并登录</a>
-      <p class="hint">请在浏览器打开的卖家精灵网站内登录。</p>
-      <details>
-        <summary>一次性密钥设置</summary>
+    <main class="popup-shell">
+      <header class="brand-header">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 48 48" focusable="false">
+            <rect x="2" y="2" width="44" height="44" rx="14" fill="currentColor" />
+            <path d="M13 28.5c4.4-8.8 17.6-8.8 22 0" fill="none" stroke="#9cf7dc" stroke-linecap="round" stroke-width="4.5" />
+            <path d="M13 19.5c4.4 8.8 17.6 8.8 22 0" fill="none" stroke="#fff" stroke-linecap="round" stroke-width="4.5" opacity=".92" />
+            <circle cx="13" cy="24" r="4" fill="#9cf7dc" />
+            <circle cx="35" cy="24" r="4" fill="#b6a7ff" />
+          </svg>
+        </div>
+        <div class="brand-copy">
+          <p class="eyebrow">AI CONNECTOR</p>
+          <h1>SellerSprite MCP 连接器</h1>
+          <p id="version" class="version"></p>
+        </div>
+      </header>
+
+      <section id="mcp-status-card" class="status-card" data-state="loading" aria-labelledby="mcp-status-label">
+        <div class="status-card-head">
+          <span id="mcp-status-dot" class="status-dot" aria-hidden="true"></span>
+          <div>
+            <p id="mcp-status-label" class="section-label">连接状态</p>
+            <p id="mcp-status" role="status" aria-live="polite">正在读取连接状态…</p>
+          </div>
+        </div>
+        <p id="mcp-status-detail" class="status-detail">正在读取扩展后台的最新状态。</p>
+      </section>
+
+      <section class="login-card" aria-labelledby="login-title">
+        <div class="card-icon" aria-hidden="true">↗</div>
+        <div class="card-copy">
+          <p class="section-label">使用前准备</p>
+          <h2 id="login-title">登录卖家精灵</h2>
+          <p>连接器会复用当前浏览器里的登录状态，不读取或展示 Cookie。</p>
+        </div>
+        <a class="login-link" href="https://www.sellersprite.com" target="_blank" rel="noopener noreferrer">
+          打开卖家精灵<span aria-hidden="true">↗</span>
+        </a>
+      </section>
+
+      <details class="settings-card">
+        <summary>
+          <span class="summary-leading">
+            <span class="settings-icon" aria-hidden="true">⌘</span>
+            <span>
+              <span class="summary-title">连接设置</span>
+              <span class="summary-subtitle">本机 MCP 服务密钥</span>
+            </span>
+          </span>
+          <span id="mcp-token-config-status" class="settings-badge">读取中</span>
+        </summary>
         <form id="mcp-token-form">
           <label for="mcp-token">本机 MCP 服务密钥</label>
           <input id="mcp-token" type="password" required minlength="32" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="mcp-token-hint" placeholder="粘贴 MCP 配置中的密钥" />
-          <p id="mcp-token-hint" class="hint">至少 32 个字符，保存在当前浏览器的扩展存储中。已配置后无需重复填写；更换密钥时重新保存即可。</p>
-          <button id="save-mcp-token" type="submit">保存密钥</button>
+          <p id="mcp-token-hint" class="hint">至少 32 个字符。密钥只保存在当前浏览器的扩展存储中，保存后后台会自动连接。</p>
+          <button id="save-mcp-token" type="submit">保存并连接</button>
           <p id="mcp-token-status" role="status" aria-live="polite"></p>
         </form>
       </details>
+
+      <footer class="popup-footer">
+        <span class="footer-dot" aria-hidden="true"></span>
+        <span>服务启动后会自动重试连接</span>
+      </footer>
     </main>
   </body>
 </html>

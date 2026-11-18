@@ -9,7 +9,7 @@ import {
   createSellerSpriteAdsInsightsRequest, createSellerSpriteAdsHistoryRequest,
   createSellerSpriteAdsKeywordsRequest, createSellerSpriteAdsHighFrequencyRequest,
   createSellerSpriteCompetitorRequest, createSellerSpriteHtmlSessionRequest,
-  createSellerSpriteKeywordMiningRequest, createSellerSpriteKeywordReverseRequest,
+  createSellerSpriteKeywordMiningRequest,
   createSellerSpriteMarketResearchRequest, createSellerSpriteMonthlyRequest,
   createSellerSpriteProductSelectionRequest, createSellerSpriteReviewCommentsRequest,
   createTargetRequest, isPingResponse, isSellerSpriteAbaPeriodsResponse,
@@ -17,7 +17,7 @@ import {
   isSellerSpriteAdsInsightsResponse, isSellerSpriteAdsHistoryResponse,
   isSellerSpriteAdsKeywordsResponse, isSellerSpriteAdsHighFrequencyResponse, isSellerSpriteAdsDate,
   isSellerSpriteCompetitorResponse, isSellerSpriteHtmlSessionResponse,
-  isSellerSpriteKeywordMiningResponse, isSellerSpriteKeywordReverseResponse,
+  isSellerSpriteKeywordMiningResponse,
   isSellerSpriteMarketResearchResponse, isSellerSpriteMonthlyResponse,
   isSellerSpriteProductSelectionResponse, isSellerSpriteReviewCommentsResponse,
   isTargetResponse, type SellerSpriteAbaResearchInput, type SellerSpriteCompetitorInput,
@@ -29,17 +29,18 @@ import {
 import { z } from 'zod'
 import { createBridgeServer } from './bridge.js'
 import { analyzeSellerSpriteAsinAdStructure } from './ad-analysis.js'
+import { createResultOutput } from './result-output.js'
+import { createKeywordQuery } from './keyword-query.js'
 
 const port = Number(process.env.SELLERSPRITE_MCP_PORT ?? '32123')
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid SELLERSPRITE_MCP_PORT')
 const bridge = createBridgeServer({ token: process.env.SELLERSPRITE_MCP_TOKEN ?? '' })
 const server = new McpServer({ name: 'sellersprite-browser-session', version: '0.1.0' })
 const targetId = 'sellersprite'
+const queryKeywords = createKeywordQuery(bridge.enqueue, targetId)
 
-const result = (value: unknown, isError = false) => ({
-  content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }],
-  ...(isError ? { isError: true } : {}),
-})
+const resultOutput = createResultOutput()
+const result = resultOutput.format
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
@@ -69,6 +70,18 @@ const keyword = z.string().trim().min(1).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9 &
 const page = z.number().int().min(1).max(10000).default(1)
 const primitive = z.union([z.string(), z.number(), z.boolean(), z.null()])
 
+server.registerTool<AnySchema, AnySchema>('sellersprite_read_result', {
+  title: 'Read cached SellerSprite result',
+  description: 'Read a large response cached by any SellerSprite tool, without another upstream request. Use path ["data", "items"] for keyword rows; fields selects direct row fields so trends can be read separately. Follow the returned nextOffset until hasMore is false; pages shrink to fit 16000 characters. Cache lasts 15 minutes, holds 8 large results, and clears on MCP restart. Cached row counts may be smaller than upstream total matches.',
+  inputSchema: z.object({
+    resultId: z.uuid(),
+    path: z.array(z.string().min(1).max(128)).max(16).default([]),
+    offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
+    limit: z.number().int().min(1).max(20_000).optional().describe('Default 20 rows (maximum 100), or 12000 characters for strings. Actual pages may be smaller.'),
+    fields: z.array(z.string().min(1).max(128)).min(1).max(40).optional(),
+  }).strict() as AnySchema,
+}, async (args: Parameters<typeof resultOutput.read>[0]) => resultOutput.read(args))
+
 register('sellersprite_ping', 'Ping extension', 'Check whether the local SellerSprite extension bridge is online.', none,
   (_, id) => createPingRequest(id), isPingResponse)
 register('sellersprite_status', 'SellerSprite status', 'Get extension status, permission, remote enablement, and effective capabilities.', none,
@@ -76,31 +89,39 @@ register('sellersprite_status', 'SellerSprite status', 'Get extension status, pe
 register('sellersprite_check_login', 'Check login', 'Check the current SellerSprite browser login without returning cookie values.', none,
   (_, id) => createTargetRequest('CHECK_LOGIN', id, targetId), isTargetResponse)
 
-register('sellersprite_keyword_reverse', 'Reverse ASIN keywords', 'Find indexed keywords for a US Amazon ASIN.', z.object({
+const keywordReverseSchema = z.object({
   asin, month: z.string().max(32).default(''), forceReStat: z.boolean().default(false),
   badges: z.array(primitive).max(100).default([]), limit: z.number().int().min(1).max(100).default(50),
-}).strict(), (input, id) => createSellerSpriteKeywordReverseRequest(id, targetId, {
-  asin: input.asin, marketId: 1, month: input.month, forceReStat: input.forceReStat, badges: input.badges, limit: input.limit,
-}), isSellerSpriteKeywordReverseResponse)
+  refresh: z.boolean().default(false).describe('Bypass the local 120-second keyword cache without forcing an upstream recalculation.'),
+}).strict()
+const asinAdSchema = keywordReverseSchema.omit({ badges: true })
+
+server.registerTool<AnySchema, AnySchema>('sellersprite_keyword_reverse', {
+  title: 'Reverse ASIN keywords',
+  description: 'Find indexed keywords for a US Amazon ASIN. Shares identical queries with sellersprite_asin_ad_analysis for up to 120 seconds, merging concurrent requests. Set refresh true to fetch again. For large results, use sellersprite_read_result with fields to read core metrics before trends.',
+  inputSchema: keywordReverseSchema as AnySchema,
+}, async (args: z.output<typeof keywordReverseSchema>) => {
+  try {
+    const { response, cache } = await queryKeywords({
+      asin: args.asin, marketId: 1, month: args.month, forceReStat: args.forceReStat, badges: args.badges, limit: args.limit,
+    }, args.refresh)
+    return result({ ...response, cache }, response.ok === false)
+  } catch (error) {
+    return result({ error: error instanceof Error ? error.message : 'BRIDGE_ERROR' }, true)
+  }
+})
 
 server.registerTool<AnySchema, AnySchema>('sellersprite_asin_ad_analysis', {
   title: 'ASIN ad structure analysis',
-  description: 'Summarize ad and organic positions from SellerSprite ASIN keyword reverse data. This is not an ad campaign report and does not provide ACOS, CPC, or attributed sales.',
-  inputSchema: z.object({
-    asin, month: z.string().max(32).default(''), forceReStat: z.boolean().default(false),
-    limit: z.number().int().min(1).max(100).default(50),
-  }).strict() as AnySchema,
-}, async (args: { asin: string; month: string; forceReStat: boolean; limit: number }) => {
-  const id = randomUUID()
+  description: 'Summarize ad and organic positions from SellerSprite ASIN keyword reverse data. Reuses identical keyword_reverse queries for up to 120 seconds; set refresh true to fetch again. This is not an ad campaign report and does not provide ACOS, CPC, or attributed sales.',
+  inputSchema: asinAdSchema as AnySchema,
+}, async (args: z.output<typeof asinAdSchema>) => {
   try {
-    const response = await bridge.enqueue({ requestId: id, request: createSellerSpriteKeywordReverseRequest(id, targetId, {
+    const { response, cache } = await queryKeywords({
       asin: args.asin, marketId: 1, month: args.month, forceReStat: args.forceReStat, badges: [], limit: args.limit,
-    }) })
-    if (!isSellerSpriteKeywordReverseResponse(response) || !record(response) || response.requestId !== id) {
-      return result({ error: 'INVALID_EXTENSION_RESPONSE' }, true)
-    }
-    if (!response.ok) return result(response, true)
-    return result({ source: 'sellersprite_keyword_reverse', analysis: analyzeSellerSpriteAsinAdStructure(response.data) })
+    }, args.refresh)
+    if (!response.ok) return result({ ...response, cache }, true)
+    return result({ source: 'sellersprite_keyword_reverse', cache, analysis: analyzeSellerSpriteAsinAdStructure(response.data) })
   } catch (error) {
     return result({ error: error instanceof Error ? error.message : 'BRIDGE_ERROR' }, true)
   }

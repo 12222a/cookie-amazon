@@ -2,7 +2,8 @@ import { createServer } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { isSellerSpriteAdsRequest } from '@cookie-amazon/protocol'
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js'
+import { isSellerSpriteAdsRequest, isSellerSpriteKeywordReverseRequest, type SellerSpriteKeywordItem } from '@cookie-amazon/protocol'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 const token = 'test-ads-token-with-at-least-32-characters'
@@ -50,6 +51,32 @@ const post = (path: string, body: unknown = {}) => fetch(base + path, {
   method: 'POST', headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
   body: JSON.stringify(body), signal: AbortSignal.timeout(5000),
 })
+
+const keywordItem = (index = 0, months = 0): SellerSpriteKeywordItem => ({
+  keywords: 'camping tent ' + index, searches: 1000, products: 200, supplyDemandRatio: 5,
+  trafficPercentage: 0.1, purchaseRate: 0.05, bid: 1.2, bidMin: 1, bidMax: 1.5,
+  avgPrice: 20, avgRating: 4.5, avgReviews: 50,
+  searchesTrend: Array.from({ length: months }, (_, month) => ({
+    month: 'month-' + month, searchRank: 1000 + month, searches: 2000 + month,
+  })),
+  natural: { page: 1, rank: index + 1 }, ad: null, naturalRatio: 0.8, adRatio: 0.2, positionTypes: ['NT'],
+})
+
+const answerKeywordQuery = async (items = [keywordItem()], failure = false) => {
+  const poll = await post('/v1/bridge/poll')
+  expect(poll.status).toBe(200)
+  const pending = await poll.json() as { requestId: string; request: unknown }
+  if (!isSellerSpriteKeywordReverseRequest(pending.request)) throw new Error('EXPECTED_KEYWORD_REQUEST')
+  const response = {
+    namespace: pending.request.namespace, protocolVersion: pending.request.protocolVersion,
+    kind: 'response', requestId: pending.requestId, action: pending.request.action,
+    ...(failure ? { ok: false, error: { code: 'TARGET_NOT_LOGGED_IN' } } : {
+      ok: true, data: { asin: pending.request.payload.input.asin, total: 500, items },
+    }),
+  }
+  expect((await post('/v1/bridge/result', { requestId: pending.requestId, response })).status).toBe(200)
+  return pending.request
+}
 
 describe('SellerSprite advertising tools over the MCP SDK', () => {
   it('lists four strict tools and exposes only the web API sort and pagination fields', async () => {
@@ -147,6 +174,92 @@ describe('SellerSprite advertising tools over the MCP SDK', () => {
     expect(pending.request.requestId).toBe(pending.requestId)
     expect(pending.request.payload.targetId).toBe('sellersprite')
     expect(pending.request.payload.input).toEqual(expected)
-    expect(response).toMatchObject({ isError: true, content: [{ type: 'text', text: JSON.stringify({ error: 'INVALID_EXTENSION_RESPONSE' }, null, 2) }] })
+    expect(response).toMatchObject({ isError: true, content: [{ type: 'text', text: JSON.stringify({ error: 'INVALID_EXTENSION_RESPONSE' }) }] })
+  })
+})
+
+describe('MCP output size', () => {
+  it.each([
+    { resultId: 'not-a-result-id' },
+    { resultId: '00000000-0000-4000-8000-000000000000', offset: -1 },
+    { resultId: '00000000-0000-4000-8000-000000000000', path: 'data.items' },
+    { resultId: '00000000-0000-4000-8000-000000000000', limit: 0 },
+    { resultId: '00000000-0000-4000-8000-000000000000', fields: [] },
+    { resultId: '00000000-0000-4000-8000-000000000000', unknown: true },
+  ])('rejects invalid cached-result arguments: %j', async (args) => {
+    const response = await client.callTool({ name: 'sellersprite_read_result', arguments: args })
+    expect(response.isError).toBe(true)
+    expect(JSON.stringify(response.content)).toContain('Input validation error')
+  })
+
+  it('keeps a 230k-character keyword response readable and retrieves every row from the same result', async () => {
+    const responsePromise = client.callTool({
+      name: 'sellersprite_keyword_reverse', arguments: { asin: 'B0F9XY6HXB' },
+    }, undefined, { timeout: 5000 })
+    const poll = await post('/v1/bridge/poll')
+    const pending = await poll.json() as { requestId: string; request: { namespace: string; protocolVersion: number } }
+    const items = Array.from({ length: 50 }, (_, index) => keywordItem(index, 36))
+    const original = {
+      namespace: pending.request.namespace, protocolVersion: pending.request.protocolVersion,
+      kind: 'response', requestId: pending.requestId, action: 'SELLERSPRITE_KEYWORD_REVERSE', ok: true,
+      data: { asin: 'B0F9XY6HXB', total: 500, items },
+    }
+    expect(JSON.stringify(original, null, 2).length).toBeGreaterThan(230_000)
+    expect((await post('/v1/bridge/result', { requestId: pending.requestId, response: original })).status).toBe(200)
+    const response = CallToolResultSchema.parse(await responsePromise)
+    expect(response.isError).not.toBe(true)
+    expect(response.content[0]).toMatchObject({ type: 'text' })
+    const firstText = (response.content[0] as { text: string }).text
+    expect(firstText.length).toBeLessThanOrEqual(16_000)
+    const first = JSON.parse(firstText)
+    expect(first.resultId).toEqual(expect.any(String))
+    expect(first.summary.data).toMatchObject({ asin: 'B0F9XY6HXB', total: 500 })
+    expect(first.summary.data.items).toMatchObject({ type: 'array', length: 50 })
+    const retrieved: unknown[] = []
+    let offset = 0
+    do {
+      const page = CallToolResultSchema.parse(await client.callTool({
+        name: 'sellersprite_read_result',
+        arguments: { resultId: first.resultId, path: ['data', 'items'], offset, limit: 20 },
+      }, undefined, { timeout: 3000 }))
+      expect(page.isError).not.toBe(true)
+      const text = (page.content[0] as { text: string }).text
+      expect(text.length).toBeLessThanOrEqual(16_000)
+      const parsed = JSON.parse(text)
+      expect(parsed.total).toBe(50)
+      expect(parsed.offset).toBe(offset)
+      retrieved.push(...parsed.items)
+      if (!parsed.hasMore) break
+      expect(parsed.nextOffset).toBeGreaterThan(offset)
+      offset = parsed.nextOffset
+    } while (retrieved.length <= items.length)
+    expect(retrieved).toEqual(items)
+    const projected = CallToolResultSchema.parse(await client.callTool({
+      name: 'sellersprite_read_result',
+      arguments: { resultId: first.resultId, path: ['data', 'items'], fields: ['keywords', 'searches', 'ad'], limit: 50 },
+    }))
+    expect(projected.isError).not.toBe(true)
+    const projection = JSON.parse((projected.content[0] as { text: string }).text)
+    expect(projection.items).toHaveLength(50)
+    expect(projection.items[0]).toEqual({ keywords: 'camping tent 0', searches: 1000, ad: null })
+    const trend = CallToolResultSchema.parse(await client.callTool({
+      name: 'sellersprite_read_result',
+      arguments: { resultId: first.resultId, path: ['data', 'items', '0', 'searchesTrend'], limit: 100 },
+    }))
+    expect(trend.isError).not.toBe(true)
+    expect(JSON.parse((trend.content[0] as { text: string }).text).items).toEqual(items[0].searchesTrend)
+  }, 15000)
+})
+
+describe('MCP keyword query reuse', () => {
+  it('reuses a keyword response for ad analysis without a second upstream request', async () => {
+    const args = { asin: 'B0CACHE001' }
+    const first = client.callTool({ name: 'sellersprite_keyword_reverse', arguments: args }, undefined, { timeout: 5000 })
+    await answerKeywordQuery()
+    expect((await first).isError).not.toBe(true)
+    const analysis = await client.callTool({ name: 'sellersprite_asin_ad_analysis', arguments: args }, undefined, { timeout: 2000 })
+    expect(analysis.isError).not.toBe(true)
+    const content = CallToolResultSchema.parse(analysis).content[0] as { text: string }
+    expect(JSON.parse(content.text)).toMatchObject({ cache: { hit: true }, analysis: { analyzedKeywords: 1, totalKeywords: 500 } })
   })
 })

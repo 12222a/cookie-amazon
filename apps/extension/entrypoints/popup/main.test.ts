@@ -15,6 +15,9 @@ let values: StorageValues
 let storageListener: StorageListener
 
 const status = (): string => document.querySelector('#mcp-status')!.textContent!
+const statusCard = (): HTMLElement => document.querySelector('#mcp-status-card')!
+const statusDetail = (): string => document.querySelector('#mcp-status-detail')!.textContent!
+const tokenConfigStatus = (): HTMLElement => document.querySelector('#mcp-token-config-status')!
 const tokenInput = (): HTMLInputElement => document.querySelector('#mcp-token')!
 const tokenStatus = (): string => document.querySelector('#mcp-token-status')!.textContent!
 const saveButton = (): HTMLButtonElement => document.querySelector('#save-mcp-token')!
@@ -70,6 +73,8 @@ describe('SellerSprite MCP connector popup', () => {
     expect(tokenInput().minLength).toBe(32)
     expect(tokenInput().labels).toHaveLength(1)
     expect(tokenInput().value).toBe('')
+    expect(document.querySelector('.brand-mark svg')).not.toBeNull()
+    expect(document.querySelector('.login-link')).not.toBeNull()
     expect(document.documentElement.innerHTML).not.toContain(savedToken)
     expect(document.querySelector('#mcp-status')!.getAttribute('role')).toBe('status')
   })
@@ -85,6 +90,9 @@ describe('SellerSprite MCP connector popup', () => {
     await mount()
     expect(status()).toContain(expected)
     expect(status()).not.toContain('登录失败')
+    expect(statusCard().dataset.state).toBe(state === 'unconfigured' ? 'stale' : state)
+    expect(statusDetail()).not.toBe('')
+    expect(tokenConfigStatus().textContent).toBe('已配置')
   })
 
   it('reports an absent token as unconfigured even if an old connected record remains', async () => {

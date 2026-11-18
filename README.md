@@ -4,17 +4,18 @@
 
 **当前扩展版本：0.2.0。** 这一版本只作为 MCP 连接器，安装包包含后台连接服务和连接设置弹窗。选品面板、亚马逊卡片选中、页面浮层、内容脚本注入及旧 Web 工作台桥接已移出安装包；历史研究界面源码保留。AI 通过 MCP 查询类目、筛选产品等数据能力仍然保留。
 
-## 可以调用的 20 个 MCP 工具
+## 可以调用的 21 个 MCP 工具
 
 以下名称与 [MCP 工具文档](docs/sellersprite-mcp.md)及[服务注册源码](apps/sellersprite-mcp/src/index.ts)一致。参数、支持的站点、日期格式和查询限制见 [docs/sellersprite-mcp.md](docs/sellersprite-mcp.md)。
 
-### 连接与登录（3 个）
+### 连接、登录与结果读取（4 个）
 
 | 工具名 | 用途 |
 | --- | --- |
 | `sellersprite_ping` | 检查扩展与本机 MCP 服务是否连通。 |
 | `sellersprite_status` | 读取卖家精灵站点权限、运行状态、远程启用策略和当前有效能力。 |
 | `sellersprite_check_login` | 检查当前浏览器的卖家精灵登录状态，不返回 Cookie 值。 |
+| `sellersprite_read_result` | 按路径、分页和直属字段读取当前 MCP 进程缓存的完整大结果，不发起上游请求。 |
 
 ### 关键词与 ABA 研究（4 个）
 
@@ -60,6 +61,18 @@
 | `sellersprite_open_keyword_research` | 打开关键词产品研究页，仅返回操作完成状态。 |
 
 两个页面入口工具不返回页面的完整分析数据。各工具的实际可用性受浏览器站点权限、卖家精灵登录状态、账户套餐及远程策略影响；可先通过 `sellersprite_status` 查看当前有效能力。工具清单仅列出本项目已接入的操作，不代表覆盖卖家精灵所有网页功能。
+
+### 大结果与按需读取
+
+原有 20 个工具保留。所有响应使用紧凑 JSON，移除缩进空白，保留业务字段。任何超过 **16,000 字符**的 JSON 响应改为返回 `resultId`、ISO 格式的 `expiresAt`、`totalChars`、`summary` 和 `readTool: "sellersprite_read_result"`。`summary` 仅保留短标量、有限层级对象，数组表示为 `{type: 'array', length: n}`，不是完整业务结果。
+
+完整原响应只保存在当前 MCP 进程内存中 **15 分钟，最多 8 份**，不落盘；后来的大结果可能淘汰旧结果，进程重启会清空缓存。使用 `sellersprite_read_result` 的路径段数组（如 `["data", "items"]`）读取，`fields: ["keywords", "searches", "natural", "ad", "bid"]` 可略过趋势字段，完整缓存保持不变。数组每次最多 100 行，并会为满足字符限制减少行数；必须用实际返回的 `nextOffset` 继续，直到 `hasMore: false`。
+
+这些分页只读取本次实际取回的数据；`data.total` 可能大于已取回的 `items.length`，不能据此声称已取回上游所有关键词。缓存过期、被淘汰或进程重启后返回 `RESULT_NOT_FOUND`，需重跑原工具。严格参数、过大字段处理和两个调用示例见[结果读取说明](docs/sellersprite-mcp.md#large-results-and-local-result-reading)。
+
+`sellersprite_keyword_reverse` 与 `sellersprite_asin_ad_analysis` 共用关键词查询：相同参数的在途请求合并，成功结果在本机复用 **120 秒，最多 8 个查询键**；错误不缓存。两者返回 `cache.hit` 和 `cache.expiresAt`。需要重新请求时传 `refresh: true`；`forceReStat: true` 也始终重新请求，并保留原有上游重新统计语义。这与上述 15 分钟的大结果读取缓存分别计时。
+
+调研时先读关键词、搜索量、自然位、广告位和建议竞价等核心字段，需要时再读趋势；广告洞察先看架构，再展开相关广告组和时间段。当前扩展仍按任务串行执行，本次没有新增上游并发。历史真实的 23 行关键词样本，紧凑输出使完整分页读取从 7 批降为 3 批，选取核心字段只需 1 批；这不是完整 ASIN 调研的耗时测量。
 
 ## 安装与首次配置
 
@@ -159,6 +172,8 @@ Set-Clipboard -Value $env:SELLERSPRITE_MCP_TOKEN
 弹窗依据实际桥接响应显示未配置、连接中、已连接、等待服务或密钥不匹配等状态。仅保存密钥不会被显示为连接成功；本机桥接已连接也不等于卖家精灵已登录，可分别通过状态和登录工具检查。
 
 升级已解压扩展时，重新构建后在 `chrome://extensions` 中点击一次“重新加载”以载入新版本。随后浏览器或本机服务重启时会按上述机制自动连接。
+
+本次紧凑输出、关键词查询复用和 `sellersprite_read_result` 仅修改本机 MCP 进程，无需重载扩展。更新后需在 AI 客户端重启 MCP 服务进程，以载入代码并刷新包含 21 个工具的列表；重启会清空已有查询和结果缓存。
 
 若停留在等待服务状态，检查 AI 客户端是否启动了 MCP 服务及本机端口是否可用；密钥不匹配时保存与服务相同的密钥。若返回 `TARGET_PERMISSION_MISSING`，在 **Chrome 扩展设置**中允许卖家精灵站点访问；若返回 `TARGET_NOT_LOGGED_IN`，在同一浏览器配置文件中登录后重试。其他错误见 [故障排查](docs/sellersprite-mcp.md#troubleshooting)。
 

@@ -36,6 +36,8 @@ This local MCP server exposes the SellerSprite operations already implemented by
 
    Replace the example directory with the actual repository path. Do not commit the secret or put it in a shared configuration file.
 
+   After updating, restart the MCP server process in the AI client to load the code and refresh the list of 21 tools. Compact output, keyword query reuse, and `sellersprite_read_result` affect only the local MCP process; no extension reload is needed. Restarting the process clears both query and result caches.
+
 ## Automatic connection
 
 Extension 0.2.0 is a dedicated MCP connector. Its production build contains only the background worker and connection popup. The selection panel, Amazon card selection, in-page overlay and legacy Web UI relay are excluded from the build; Amazon and local Web UI host permissions are removed. SellerSprite capabilities, including product/category queries invoked by AI through MCP, remain available.
@@ -50,11 +52,14 @@ Automatic connection does not start a native program from the browser or log int
 
 ## Available tools
 
+There are 21 tools: the original 20 remain available, with `sellersprite_read_result` added for local result reading.
+
 | Tool | Capability |
 | --- | --- |
 | sellersprite_ping | Check extension connectivity |
 | sellersprite_status | Get SellerSprite permission, runtime status, and effective supported capabilities |
 | sellersprite_check_login | Check SellerSprite login state without returning cookies |
+| sellersprite_read_result | Read a cached large result by path, page, and direct fields without an upstream request |
 | sellersprite_keyword_reverse | Find keywords for a US ASIN |
 | sellersprite_asin_ad_analysis | Summarize ad and organic keyword positions for a US ASIN |
 | sellersprite_ads_insights | Read SellerSprite's inferred competitor campaigns and ad group architecture |
@@ -76,6 +81,90 @@ Automatic connection does not start a native program from the browser or log int
 The status tool reports the actual effective capabilities after SellerSprite permission and remote policy are applied. The MCP tool list describes what this integration knows how to invoke; it does not guarantee that a logged-in account or current plan has access to each feature. Two page-opening actions do not return the page's full analysis data.
 
 `sellersprite_asin_ad_analysis` derives its summary from the same approved ASIN keyword reverse data as `sellersprite_keyword_reverse`. It reports ad/organic position counts and coverage, simple means of observed per-keyword traffic-ratio fields, and leading ad-position keywords with SellerSprite's estimated keyword bid range. Coverage is based on the returned keyword sample; bid estimates are not actual CPC. This is not SellerSprite's campaign advertising report and does not expose campaigns, ad groups, ACOS, CPC, or attributed sales.
+
+## Query reuse and faster research
+
+`sellersprite_keyword_reverse` and `sellersprite_asin_ad_analysis` share identical keyword reverse requests within the same MCP process. Matching in-flight requests use one upstream request. Successful results can be reused for **120 seconds after completion**, with at most **8 query keys**; reads do not extend expiry. The key includes ASIN, market, month, badges, and limit. The ad summary uses empty badges, so a filtered keyword query will not supply an unfiltered summary. Errors and invalid responses are not cached.
+
+Both tools add `cache: {hit, expiresAt}` to their responses. `hit: true` means the response reused a completed or in-flight query, and its upstream `requestId` remains the original one. `expiresAt` is an ISO datetime for a successful query or `null` for an error. Other data tools and login/status checks do not use this query cache.
+
+Set `refresh: true` on either tool to issue a new upstream request without forcing upstream recalculation:
+
+```json
+{
+  "name": "sellersprite_keyword_reverse",
+  "arguments": { "asin": "B0F9XY6HXB", "refresh": true }
+}
+```
+
+`refresh` is local to MCP and is not forwarded to the extension. `forceReStat: true` also always issues a new request and retains its existing upstream recalculation semantics. A successful refresh can supply subsequent ordinary queries. This 120-second query cache is separate from the 15-minute large-result cache described below.
+
+For research, read core keyword metrics first, then request trends as needed. Query advertising architecture before expanding relevant ad groups and periods. The extension still executes bridge jobs serially; this update does not add upstream concurrency. In a real historical 23-row keyword response, compact serialization reduced the JSON from 93,517 to 43,377 characters and complete row reads from 7 pages to 3; selecting `keywords`, `searches`, `natural`, `ad`, `bid`, `trafficPercentage`, `naturalRatio`, and `adRatio` took one page. These are local output measurements, not an end-to-end ASIN research timing or speed guarantee.
+
+## Large results and local result reading
+
+All responses use compact JSON without indentation; business fields are preserved. Any JSON response exceeding **16,000 characters** is replaced with `resultId`, `expiresAt` (ISO datetime), `totalChars` (the complete compact JSON length), `summary`, and `readTool: "sellersprite_read_result"`. The summary retains short scalars and objects to a limited depth; arrays become `{"type": "array", "length": n}`. It is not the complete business result.
+
+The complete original response stays only in the current MCP process's memory for **15 minutes**, with at most **8 results** cached. Later large results may evict earlier ones; a process restart clears them all. Nothing is written to disk. Reading a cached result makes no additional upstream request and does not alter the cached original. Expired, evicted, or restart-cleared IDs return `RESULT_NOT_FOUND`; rerun the original tool to get a new ID.
+
+`sellersprite_read_result` accepts a strict argument object; unknown fields are rejected:
+
+| Field | Validation and behavior | Default |
+| --- | --- | --- |
+| `resultId` | Required UUID returned by the original tool | None |
+| `path` | Array of string path segments, such as `["data", "items"]` or `["data", "items", "0", "searchesTrend"]`; use a string segment for an array index | `[]` (the original response root) |
+| `offset` | Nonnegative integer; row offset for arrays or character offset for strings | `0` |
+| `limit` | Integer from `1` to `20000`; arrays return at most 100 rows, strings can be read in chunks | `20` rows for arrays; `12000` characters for strings |
+| `fields` | Optional array of strings selecting only direct fields of the selected object or each array row; not nested paths | No field selection |
+
+Array reads return `{resultId, path, offset, total, items, hasMore, nextOffset}`. Here `total` is the selected cached array's length, and `nextOffset` is a number when more rows remain or `null` at the end. The tool automatically reduces the returned row count to keep the JSON response at or below 16,000 characters. **Continue with the actual `nextOffset` until `hasMore` is `false`; do not compute the next offset from the requested limit.**
+
+If a single row or an object is too large, the tool returns `RESULT_PATH_TOO_LARGE` with available-field hints. Select fewer direct fields or use a deeper `path`; read long strings in chunks with `offset` and `limit`. For keyword rows, `fields: ["keywords", "searches", "natural", "ad", "bid"]` can omit trends while leaving the complete cached result intact.
+
+This pagination reads only data actually fetched by the original call. An upstream `data.total` can exceed the fetched `data.items.length`; finishing the cached array does not mean all upstream keywords have been fetched.
+
+### Example 1: keyword reverse returns a result ID
+
+```json
+{
+  "name": "sellersprite_keyword_reverse",
+  "arguments": { "asin": "B0F9XY6HXB" }
+}
+```
+
+Illustrative large response (use the ID and expiry returned by your own call):
+
+```json
+{
+  "resultId": "7be3a320-6c95-4dc1-9b52-8a5c9a1247e2",
+  "expiresAt": "2026-11-17T08:15:00.000Z",
+  "totalChars": 48000,
+  "summary": {
+    "data": {
+      "total": 1200,
+      "items": { "type": "array", "length": 75 }
+    }
+  },
+  "readTool": "sellersprite_read_result"
+}
+```
+
+### Example 2: select fields and follow the returned offset
+
+```json
+{
+  "name": "sellersprite_read_result",
+  "arguments": {
+    "resultId": "7be3a320-6c95-4dc1-9b52-8a5c9a1247e2",
+    "path": ["data", "items"],
+    "offset": 0,
+    "limit": 100,
+    "fields": ["keywords", "searches", "natural", "ad", "bid"]
+  }
+}
+```
+
+If the response has `hasMore: true` and `nextOffset: 17`, repeat this read with `offset: 17`, keeping the same `resultId`, `path`, and `fields`. Continue with each actual `nextOffset` until `hasMore: false` and `nextOffset: null`. For the illustrative result above, this reads 75 cached rows; it does not fetch the remaining upstream keywords implied by `data.total: 1200`.
 
 ## Competitor advertising insights
 
@@ -165,5 +254,8 @@ Live verification on 2026-11-15 with extension 0.1.21 completed 15 successful MC
 - Waiting for service: start the MCP client/server and confirm local port 32123 is available. The extension reconnects automatically.
 - Authentication mismatch: save the same secret used by the local MCP service; saving replaces the old connection immediately.
 - EXTENSION_UNAVAILABLE: ensure the connector is enabled in the same browser profile where SellerSprite is logged in. If upgrading an unpacked extension, reload it once to load the new version.
+- RESULT_NOT_FOUND: the cached result expired, was evicted by later large results, or was cleared by an MCP process restart. Rerun the original tool and use its new result ID.
+- RESULT_PATH_TOO_LARGE: use the available-field hints to select fewer direct fields or read a deeper path; use chunks for long strings.
+- Missing sellersprite_read_result: restart the MCP server process in the AI client to load the update and refresh its 21-tool list. This MCP-only update does not require reloading the extension.
 
 Only fixed protocol actions are accepted across the bridge. It is not an arbitrary URL, HTTP-header, or cookie proxy.
